@@ -142,4 +142,77 @@ class SettingsAndPreferencesTest {
         assertTrue(supportedTimeouts.contains(3))
         assertTrue(supportedTimeouts.contains(15))
     }
+
+    @Test
+    fun testDeviceAccountRememberAndBankNamePersistence() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val appPrefs = AppPreferences(context)
+
+        // Clear initially
+        appPrefs.clearAll()
+        assertFalse(appPrefs.hasPreviousAccountOnDevice)
+        assertEquals("", appPrefs.lastBankName)
+
+        // Simulate login / onboarding completion
+        appPrefs.lastUserEmail = "test.user@gmail.com"
+        appPrefs.lastUserName = "Test User"
+        appPrefs.lastBankName = "State Bank of India"
+        appPrefs.lastUserProfilePic = "https://example.com/avatar.jpg"
+        appPrefs.lastGoogleSub = "sub_987654321"
+
+        assertTrue(appPrefs.hasPreviousAccountOnDevice)
+        assertEquals("test.user@gmail.com", appPrefs.lastUserEmail)
+        assertEquals("Test User", appPrefs.lastUserName)
+        assertEquals("State Bank of India", appPrefs.lastBankName)
+        assertEquals("https://example.com/avatar.jpg", appPrefs.lastUserProfilePic)
+        assertEquals("sub_987654321", appPrefs.lastGoogleSub)
+    }
+
+    @Test
+    fun testLogoutPreservesDeviceAccountIdentity() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val appPrefs = AppPreferences(context)
+
+        // Setup session
+        appPrefs.lastUserEmail = "yosan.developer@gmail.com"
+        appPrefs.lastUserName = "Developer"
+        appPrefs.lastBankName = "HDFC Bank"
+        appPrefs.isLoggedOut = false
+
+        // Simulate logout while preserving device account & bank name
+        val savedEmail = appPrefs.lastUserEmail
+        val savedName = appPrefs.lastUserName
+        val savedBank = appPrefs.lastBankName
+        val savedPic = appPrefs.lastUserProfilePic
+        val savedSub = appPrefs.lastGoogleSub
+
+        appPrefs.clearSession(preserveDeviceIdentity = true)
+
+        // Device identity and bank name must still be present
+        assertEquals("yosan.developer@gmail.com", appPrefs.lastUserEmail)
+        assertEquals("Developer", appPrefs.lastUserName)
+        assertEquals("HDFC Bank", appPrefs.lastBankName)
+        assertTrue(appPrefs.hasPreviousAccountOnDevice)
+        assertTrue(appPrefs.isLoggedOut)
+    }
+
+    @Test
+    fun testOAuth2AuthorizationUriGeneration() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val googleAuthManager = com.example.features.auth.GoogleAuthManager(context)
+        val uri = googleAuthManager.getOAuth2AuthorizationUri(
+            redirectUri = "yosan://auth-callback",
+            includeDriveScope = true,
+            loginHint = "test.user@gmail.com"
+        )
+
+        val uriString = uri.toString()
+        assertTrue(uriString.startsWith("https://accounts.google.com/o/oauth2/v2/auth"))
+        assertTrue(uriString.contains("redirect_uri=yosan%3A%2F%2Fauth-callback") || uriString.contains("redirect_uri=yosan://auth-callback"))
+        assertTrue(uriString.contains("response_type=id_token%20token") || uriString.contains("response_type=id_token+token"))
+        assertTrue(uriString.contains("drive.file"))
+        assertTrue(uriString.contains("login_hint=test.user%40gmail.com") || uriString.contains("login_hint=test.user@gmail.com"))
+        assertTrue(uriString.contains("nonce="))
+        assertTrue(uriString.contains("state="))
+    }
 }

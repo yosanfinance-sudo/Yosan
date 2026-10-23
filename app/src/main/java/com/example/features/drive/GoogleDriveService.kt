@@ -38,6 +38,24 @@ class GoogleDriveService(
         Log.i(TAG, "Google Drive disconnected locally")
     }
 
+    suspend fun getValidDriveToken(): String? = withContext(Dispatchers.IO) {
+        val driveEmail = tokenManager.getDriveEmail()
+        val currentToken = tokenManager.getDriveAccessToken()
+        if (!driveEmail.isNullOrBlank()) {
+            try {
+                val authManager = GoogleDriveAuthManager(context)
+                val tokenRes = authManager.fetchAccessTokenForEmail(driveEmail)
+                if (tokenRes is DriveAuthTokenResult.Success) {
+                    tokenManager.saveDriveTokens(accessToken = tokenRes.token, driveEmail = driveEmail)
+                    return@withContext tokenRes.token
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Silent Drive token refresh: ${e.message}")
+            }
+        }
+        currentToken
+    }
+
     /**
      * Resolves the root "Yosan-Backup" folder ID, creating it if it does not yet exist.
      * Prevents duplicate folder creation by querying first.
@@ -53,14 +71,17 @@ class GoogleDriveService(
                 }
             }
 
-            // Create Yosan-Backup folder
-            val folderMetadata = GoogleDriveFileDto(
-                name = "Yosan-Backup",
-                mimeType = "application/vnd.google-apps.folder"
+            // Create Yosan-Backup folder using clean metadata request
+            val folderMetadata = com.example.data.remote.GoogleDriveCreateFolderRequest(
+                name = "Yosan-Backup"
             )
-            val createRes = driveApi.createMetadata(bearerToken = "Bearer $bearerToken", metadata = folderMetadata)
+            val createRes = driveApi.createFolder(bearerToken = "Bearer $bearerToken", folder = folderMetadata)
             if (createRes.isSuccessful && createRes.body() != null) {
-                return@withContext createRes.body()!!.id
+                val createdId = createRes.body()!!.id
+                Log.i(TAG, "Root 'Yosan-Backup' folder created successfully: $createdId")
+                return@withContext createdId
+            } else {
+                Log.e(TAG, "Failed to create root folder: ${createRes.code()} ${createRes.errorBody()?.string()}")
             }
             null
         } catch (e: Exception) {
@@ -83,20 +104,44 @@ class GoogleDriveService(
                 }
             }
 
-            // Create versions subfolder
-            val folderMetadata = GoogleDriveFileDto(
+            // Create versions subfolder using clean metadata request
+            val folderMetadata = com.example.data.remote.GoogleDriveCreateFolderRequest(
                 name = "versions",
-                mimeType = "application/vnd.google-apps.folder",
                 parents = listOf(rootFolderId)
             )
-            val createRes = driveApi.createMetadata(bearerToken = "Bearer $bearerToken", metadata = folderMetadata)
+            val createRes = driveApi.createFolder(bearerToken = "Bearer $bearerToken", folder = folderMetadata)
             if (createRes.isSuccessful && createRes.body() != null) {
-                return@withContext createRes.body()!!.id
+                val createdId = createRes.body()!!.id
+                Log.i(TAG, "Versions subfolder created successfully: $createdId")
+                return@withContext createdId
+            } else {
+                Log.e(TAG, "Failed to create versions folder: ${createRes.code()} ${createRes.errorBody()?.string()}")
             }
             null
         } catch (e: Exception) {
             Log.e(TAG, "Error resolving versions subfolder: ${e.message}", e)
             null
+        }
+    }
+
+    /**
+     * Verifies and immediately provisions both the root 'Yosan-Backup' folder
+     * and the 'versions' subfolder upon account connection.
+     */
+    suspend fun ensureDriveFoldersExist(bearerToken: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val rootId = getOrCreateRootFolder(bearerToken)
+            if (!rootId.isNullOrBlank()) {
+                val versionsId = getOrCreateVersionsFolder(bearerToken, rootId)
+                Log.i(TAG, "Google Drive folders verified (root=$rootId, versions=$versionsId)")
+                true
+            } else {
+                Log.e(TAG, "Could not verify or create root Google Drive folder")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureDriveFoldersExist failed: ${e.message}", e)
+            false
         }
     }
 
@@ -186,7 +231,7 @@ class GoogleDriveService(
         database: AppDatabase,
         nextVersion: Int
     ): DriveOperationResult<DriveBackupVersionDto> = withContext(Dispatchers.IO) {
-        val driveToken = tokenManager.getDriveAccessToken()
+        val driveToken = getValidDriveToken() ?: tokenManager.getDriveAccessToken()
         if (driveToken.isNullOrBlank()) {
             return@withContext DriveOperationResult.Error(
                 "Google Drive access token missing. Please connect Google Drive in Settings.",
@@ -233,7 +278,7 @@ class GoogleDriveService(
     suspend fun restoreLatestFromDrive(
         database: AppDatabase
     ): DriveOperationResult<RestoreResult> = withContext(Dispatchers.IO) {
-        val driveToken = tokenManager.getDriveAccessToken()
+        val driveToken = getValidDriveToken() ?: tokenManager.getDriveAccessToken()
         if (driveToken.isNullOrBlank()) {
             return@withContext DriveOperationResult.Error(
                 "Google Drive not connected. Please connect Google Drive first.",

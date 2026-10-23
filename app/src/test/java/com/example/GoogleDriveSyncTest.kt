@@ -1,7 +1,6 @@
 package com.example
 
 import com.example.data.remote.DriveBackupVersionDto
-import com.example.data.remote.SupabaseBackupMetadataDto
 import com.example.utils.BackupService
 import org.json.JSONArray
 import org.json.JSONObject
@@ -14,7 +13,7 @@ import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
-class GoogleDriveAndSupabaseSyncTest {
+class GoogleDriveSyncTest {
 
     @Test
     fun testVersionSnapshotNamingConvention() {
@@ -83,7 +82,7 @@ class GoogleDriveAndSupabaseSyncTest {
         root.put("transaction_count", txArray.length())
         root.put("checksum", BackupService.calculateChecksum(txArray.toString()))
 
-        // Verify standard schema requirements from Prompt Section 8
+        // Verify standard schema requirements
         assertEquals("Yosan Finance", root.getString("application"))
         assertTrue(root.getString("backup_id").isNotBlank())
         assertEquals(3, root.getInt("backup_version"))
@@ -93,34 +92,6 @@ class GoogleDriveAndSupabaseSyncTest {
         assertEquals(1, root.getInt("transaction_count"))
         assertEquals(64, root.getString("checksum").length)
         assertTrue(root.has("transactions"))
-    }
-
-    @Test
-    fun testSupabaseMetadataDecouplingIntegrity() {
-        // Section 11 rule: Supabase stores metadata ONLY, not financial JSON
-        val metadata = SupabaseBackupMetadataDto(
-            userId = "usr_google_sub_12345",
-            driveFolderId = "Yosan-Backup",
-            currentBackupFileId = "drive_file_id_999",
-            backupVersion = 4,
-            lastBackupAt = 1729012000000L,
-            schemaVersion = 1,
-            checksum = "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
-        )
-
-        assertEquals("usr_google_sub_12345", metadata.userId)
-        assertEquals("Yosan-Backup", metadata.driveFolderId)
-        assertEquals("drive_file_id_999", metadata.currentBackupFileId)
-        assertEquals(4, metadata.backupVersion)
-        assertEquals(1729012000000L, metadata.lastBackupAt)
-        assertEquals(1, metadata.schemaVersion)
-        assertNotNull(metadata.checksum)
-
-        // Ensure metadata contains zero transaction lists
-        val fields = SupabaseBackupMetadataDto::class.java.declaredFields.map { it.name }
-        assertFalse("Metadata must not contain transactions", fields.contains("transactions"))
-        assertFalse("Metadata must not contain accounts", fields.contains("accounts"))
-        assertFalse("Metadata must not contain backupJson", fields.contains("backupJson"))
     }
 
     @Test
@@ -141,7 +112,6 @@ class GoogleDriveAndSupabaseSyncTest {
 
     @Test
     fun testCorruptBackupValidationRejection() = kotlinx.coroutines.runBlocking {
-        // A mock database is not required to verify that empty or corrupt inputs are rejected immediately
         val emptyResult = BackupService.restoreBackupJson("", com.example.data.local.AppDatabase.getDatabase(androidx.test.core.app.ApplicationProvider.getApplicationContext(), this))
         assertFalse(emptyResult.success)
         assertTrue(emptyResult.message.contains("empty", ignoreCase = true))

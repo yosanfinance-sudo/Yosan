@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
         PendingFeedbackEntity::class,
         StatementImportEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -148,6 +148,39 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `user_profile_new` (
+                        `id` INTEGER PRIMARY KEY NOT NULL,
+                        `googleSub` TEXT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `email` TEXT NOT NULL,
+                        `profilePictureUrl` TEXT NOT NULL,
+                        `emailVerified` INTEGER NOT NULL,
+                        `currencySymbol` TEXT NOT NULL,
+                        `isDarkMode` INTEGER NOT NULL,
+                        `isBiometricEnabled` INTEGER NOT NULL,
+                        `isPrivacyBlurEnabled` INTEGER NOT NULL,
+                        `blurTimeoutSeconds` INTEGER NOT NULL,
+                        `isOnboardingCompleted` INTEGER NOT NULL,
+                        `dashboardCardsConfig` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `lastLoginAt` INTEGER NOT NULL,
+                        `isActive` INTEGER NOT NULL,
+                        `storagePreference` TEXT NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    INSERT INTO `user_profile_new` (`id`, `googleSub`, `name`, `email`, `profilePictureUrl`, `emailVerified`, `currencySymbol`, `isDarkMode`, `isBiometricEnabled`, `isPrivacyBlurEnabled`, `blurTimeoutSeconds`, `isOnboardingCompleted`, `dashboardCardsConfig`, `createdAt`, `updatedAt`, `lastLoginAt`, `isActive`, `storagePreference`)
+                    SELECT `id`, `googleSub`, `name`, `email`, `profilePictureUrl`, `emailVerified`, `currencySymbol`, `isDarkMode`, `isBiometricEnabled`, `isPrivacyBlurEnabled`, `blurTimeoutSeconds`, `isOnboardingCompleted`, `dashboardCardsConfig`, `createdAt`, `updatedAt`, `lastLoginAt`, `isActive`, `storagePreference` FROM `user_profile`
+                """.trimIndent())
+                db.execSQL("DROP TABLE `user_profile`")
+                db.execSQL("ALTER TABLE `user_profile_new` RENAME TO `user_profile`")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -155,7 +188,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "finance_manager_db"
                 )
-                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                     .fallbackToDestructiveMigration(true)
                     .addCallback(AppDatabaseCallback(context.applicationContext, scope))
                     .build()

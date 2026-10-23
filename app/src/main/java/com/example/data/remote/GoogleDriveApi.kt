@@ -20,6 +20,13 @@ data class GoogleDriveFileDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class GoogleDriveCreateFolderRequest(
+    @field:Json(name = "name") val name: String,
+    @field:Json(name = "mimeType") val mimeType: String = "application/vnd.google-apps.folder",
+    @field:Json(name = "parents") val parents: List<String>? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class GoogleDriveFileListResponse(
     @field:Json(name = "files") val files: List<GoogleDriveFileDto> = emptyList(),
     @field:Json(name = "nextPageToken") val nextPageToken: String? = null
@@ -47,6 +54,12 @@ interface GoogleDriveApi {
         @Query("spaces") spaces: String = "drive",
         @Query("pageSize") pageSize: Int = 100
     ): Response<GoogleDriveFileListResponse>
+
+    @POST("drive/v3/files")
+    suspend fun createFolder(
+        @Header("Authorization") bearerToken: String,
+        @Body folder: GoogleDriveCreateFolderRequest
+    ): Response<GoogleDriveFileDto>
 
     @POST("drive/v3/files")
     suspend fun createMetadata(

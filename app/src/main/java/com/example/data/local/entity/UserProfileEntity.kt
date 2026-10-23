@@ -23,6 +23,5 @@ data class UserProfileEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val lastLoginAt: Long = System.currentTimeMillis(),
     val isActive: Boolean = true,
-    val storagePreference: String = "LOCAL", // "LOCAL", "DRIVE", "SYNC"
-    val supabaseUid: String = ""
+    val storagePreference: String = "LOCAL" // "LOCAL", "DRIVE", "SYNC"
 )

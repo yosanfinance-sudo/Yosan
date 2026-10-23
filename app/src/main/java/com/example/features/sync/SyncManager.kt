@@ -7,7 +7,6 @@ import android.util.Log
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.SyncMetadataEntity
 import com.example.data.remote.ApiClient
-import com.example.data.remote.SupabaseBackupMetadataDto
 import com.example.features.drive.DriveOperationResult
 import com.example.features.drive.GoogleDriveService
 import com.example.utils.BackupService
@@ -124,8 +123,13 @@ class SyncManager(
      */
     suspend fun triggerSync(onResult: ((Boolean, String?) -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
         if (_storageMode.value == StorageMode.LOCAL_ONLY) {
-            onResult?.invoke(true, "Local only mode active; no cloud upload needed.")
-            return@withContext true
+            if (driveService.isConnected() && !tokenManager.getDriveAccessToken().isNullOrBlank()) {
+                _storageMode.value = StorageMode.GOOGLE_DRIVE
+                tokenManager.setStoragePreference(StorageMode.GOOGLE_DRIVE.key)
+            } else {
+                onResult?.invoke(true, "Local only mode active; no cloud upload needed.")
+                return@withContext true
+            }
         }
 
         if (!isOnline()) {
@@ -160,10 +164,6 @@ class SyncManager(
                             currentVersion = nextVersion,
                             errorMessage = null
                         )
-
-                        // Update Supabase metadata
-                        syncMetadataToSupabase(nextVersion, driveResult.data.fileId, nowMs)
-
                         onResult?.invoke(true, "Google Drive sync completed (v$nextVersion)")
                         true
                     }
@@ -203,8 +203,6 @@ class SyncManager(
                     currentVersion = body.version,
                     errorMessage = null
                 )
-
-                syncMetadataToSupabase(body.version, fileId, nowMs)
                 onResult?.invoke(true, body.message ?: "Sync completed (v${body.version})")
                 true
             } else {
@@ -221,33 +219,6 @@ class SyncManager(
             database.syncDao().setMetadata(SyncMetadataEntity("sync_status", "FAILED"))
             onResult?.invoke(false, errMsg)
             false
-        }
-    }
-
-    private suspend fun syncMetadataToSupabase(version: Int, fileId: String, timestampMs: Long) {
-        if (!ApiClient.isSupabaseConfigured(context)) return
-        val supabaseApi = ApiClient.getSupabaseAuthApi(context) ?: return
-        val token = tokenManager.getAccessToken() ?: return
-        val uid = tokenManager.getSupabaseUid() ?: tokenManager.getGoogleSub() ?: return
-        val anonKey = ApiClient.getSupabaseAnonKey(context)
-
-        try {
-            supabaseApi.saveBackupMetadata(
-                apiKey = anonKey,
-                userBearerToken = "Bearer $token",
-                metadata = SupabaseBackupMetadataDto(
-                    userId = uid,
-                    driveFolderId = "Yosan-Backup",
-                    currentBackupFileId = fileId,
-                    backupVersion = version,
-                    lastBackupAt = timestampMs,
-                    schemaVersion = 1,
-                    checksum = "",
-                    syncStatus = "SYNCED"
-                )
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Notice: Supabase metadata sync skipped: ${e.message}")
         }
     }
 }

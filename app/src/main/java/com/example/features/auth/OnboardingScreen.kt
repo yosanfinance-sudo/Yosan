@@ -38,8 +38,18 @@ import com.example.features.walkthrough.UserWalkthroughDialog
 import kotlinx.coroutines.launch
 
 val POPULAR_INDIAN_BANKS = listOf(
+    "State Bank of India (SBI)",
+    "HDFC Bank",
+    "ICICI Bank",
+    "Axis Bank",
+    "Kotak Mahindra Bank",
+    "Punjab National Bank (PNB)",
+    "Bank of Baroda",
+    "Canara Bank",
+    "Union Bank of India",
     "Indian Bank",
-    "Yes Bank"
+    "Yes Bank",
+    "Other / Custom Bank"
 )
 
 @Composable
@@ -50,18 +60,82 @@ fun OnboardingScreen(
     modifier: Modifier = Modifier,
     initialStep: Int = 0
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val appPreferences = remember { com.example.utils.AppPreferences(context) }
+    val accounts by financeViewModel.accounts.collectAsState()
+
     var step by remember { mutableStateOf(initialStep) }
     var isOfflineModeSelected by remember { mutableStateOf(false) }
-    var userName by remember { mutableStateOf("") }
+    var userName by remember { mutableStateOf(appPreferences.lastUserName) }
     var currencySymbol by remember { mutableStateOf("₹") }
     var selectedThemeMode by remember { mutableStateOf("SYSTEM") }
     var isPrivacyBlurEnabled by remember { mutableStateOf(true) }
     var blurTimeoutSeconds by remember { mutableStateOf(5) }
     var selectedStorageMode by remember { mutableStateOf(com.example.features.sync.StorageMode.LOCAL_ONLY) }
-    var selectedBankName by remember { mutableStateOf("Indian Bank") }
+    var selectedBankName by remember {
+        mutableStateOf(
+            appPreferences.lastBankName.ifBlank {
+                accounts.firstOrNull()?.bankName ?: "State Bank of India (SBI)"
+            }
+        )
+    }
+    var customBankName by remember { mutableStateOf("") }
     var accountTypeSelected by remember { mutableStateOf("Savings") }
 
-    var emailInput by remember { mutableStateOf("") }
+    var emailInput by remember { mutableStateOf(appPreferences.lastUserEmail) }
+    val rememberedAccounts = remember {
+        mutableStateListOf<com.example.utils.RememberedAccount>().apply {
+            addAll(appPreferences.getRememberedAccounts())
+        }
+    }
+    var showGoogleAccountDialog by remember { mutableStateOf(false) }
+    var manualGoogleEmail by remember { mutableStateOf(appPreferences.lastUserEmail) }
+    var manualGoogleName by remember { mutableStateOf(appPreferences.lastUserName) }
+
+    val accountPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
+            val selectedEmail = result.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME)
+            if (!selectedEmail.isNullOrBlank()) {
+                val cleanEmail = selectedEmail.trim().lowercase()
+                val currentBank = appPreferences.lastBankName.ifBlank {
+                    accounts.firstOrNull()?.bankName ?: "Indian Bank"
+                }
+                val autoName = cleanEmail.substringBefore("@").replace(".", " ")
+                    .split(" ")
+                    .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+
+                authViewModel.signInWithGoogleAccount(
+                    email = cleanEmail,
+                    name = autoName,
+                    bankName = currentBank
+                ) { claims ->
+                    userName = claims.name
+                    emailInput = claims.email
+                    financeViewModel.updateUserProfile(userName, currencySymbol)
+                    val isReturning = accounts.any { it.bankName.isNotBlank() } &&
+                        claims.email.equals(appPreferences.lastUserEmail, ignoreCase = true) &&
+                        appPreferences.isOnboardingCompleted
+                    if (isReturning) {
+                        appPreferences.isLoggedOut = false
+                        appPreferences.isOnboardingCompleted = true
+                        authViewModel.completeOnboarding()
+                        onComplete()
+                    } else {
+                        step = 2
+                    }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(step) {
+        rememberedAccounts.clear()
+        rememberedAccounts.addAll(appPreferences.getRememberedAccounts())
+    }
+
     var showWalkthroughDialog by remember { mutableStateOf(false) }
 
     var showBackupFoundDialog by remember { mutableStateOf(false) }
@@ -73,14 +147,10 @@ fun OnboardingScreen(
     val authLoading by authViewModel.isLoading.collectAsState()
     val authError by authViewModel.errorMessage.collectAsState()
 
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-
     var showServerConfigDialog by remember { mutableStateOf(false) }
     var currentServerUrl by remember { mutableStateOf(ApiClient.getBaseUrl(context)) }
+
     var editedServerUrl by remember(showServerConfigDialog) { mutableStateOf(currentServerUrl) }
-    var editedSupabaseUrl by remember(showServerConfigDialog) { mutableStateOf(ApiClient.getSupabaseUrl(context)) }
-    var editedSupabaseAnonKey by remember(showServerConfigDialog) { mutableStateOf(ApiClient.getSupabaseAnonKey(context)) }
 
     val restoreLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
@@ -441,16 +511,228 @@ fun OnboardingScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    Spacer(modifier = Modifier.height(20.dp))
+                                    Spacer(modifier = Modifier.height(16.dp))
 
-                                    // Primary Action: Sign In with Google
+                                    // Previous Accounts on This Device
+                                    if (rememberedAccounts.isNotEmpty() || appPreferences.hasPreviousAccountOnDevice || accounts.isNotEmpty()) {
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(bottom = 16.dp),
+                                            shape = RoundedCornerShape(18.dp),
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                                        ) {
+                                            Column(modifier = Modifier.padding(16.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = "Accounts on this Device",
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    if (rememberedAccounts.isNotEmpty()) {
+                                                        Surface(
+                                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                                            shape = RoundedCornerShape(10.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = "${rememberedAccounts.size} saved",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.primary,
+                                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.height(10.dp))
+
+                                                if (rememberedAccounts.isNotEmpty()) {
+                                                    rememberedAccounts.forEach { acc ->
+                                                        Card(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(vertical = 4.dp),
+                                                            shape = RoundedCornerShape(14.dp),
+                                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                                        ) {
+                                                            Column(modifier = Modifier.padding(12.dp)) {
+                                                                Row(
+                                                                    modifier = Modifier.fillMaxWidth(),
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    Surface(
+                                                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                                                        shape = CircleShape,
+                                                                        modifier = Modifier.size(40.dp)
+                                                                    ) {
+                                                                        Box(contentAlignment = Alignment.Center) {
+                                                                            Text(
+                                                                                text = (acc.name.ifBlank { acc.email.ifBlank { "U" } }).take(1).uppercase(),
+                                                                                style = MaterialTheme.typography.titleMedium,
+                                                                                fontWeight = FontWeight.Bold,
+                                                                                color = MaterialTheme.colorScheme.primary
+                                                                            )
+                                                                        }
+                                                                    }
+                                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                                    Column(modifier = Modifier.weight(1f)) {
+                                                                        Text(
+                                                                            text = acc.name.ifBlank { "User" },
+                                                                            style = MaterialTheme.typography.titleSmall,
+                                                                            fontWeight = FontWeight.Bold
+                                                                        )
+                                                                        if (acc.email.isNotBlank()) {
+                                                                            Text(
+                                                                                text = acc.email,
+                                                                                style = MaterialTheme.typography.bodySmall,
+                                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                                            )
+                                                                        }
+                                                                        if (acc.bankName.isNotBlank()) {
+                                                                            Spacer(modifier = Modifier.height(2.dp))
+                                                                            Surface(
+                                                                                color = IncomeGreen.copy(alpha = 0.12f),
+                                                                                shape = RoundedCornerShape(6.dp)
+                                                                            ) {
+                                                                                Text(
+                                                                                    text = "🏦 ${acc.bankName}",
+                                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                                    color = IncomeGreen,
+                                                                                    fontWeight = FontWeight.SemiBold,
+                                                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                                                )
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    IconButton(
+                                                                        onClick = {
+                                                                            appPreferences.removeRememberedAccount(acc.email)
+                                                                            rememberedAccounts.remove(acc)
+                                                                        },
+                                                                        modifier = Modifier.size(28.dp)
+                                                                    ) {
+                                                                        Icon(
+                                                                            imageVector = Icons.Default.Close,
+                                                                            contentDescription = "Remove Account",
+                                                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                            modifier = Modifier.size(16.dp)
+                                                                        )
+                                                                    }
+                                                                }
+
+                                                                Spacer(modifier = Modifier.height(8.dp))
+
+                                                                Button(
+                                                                    onClick = {
+                                                                        authViewModel.restorePreviousAccount(acc) {
+                                                                            appPreferences.isLoggedOut = false
+                                                                            appPreferences.isOnboardingCompleted = true
+                                                                            authViewModel.completeOnboarding()
+                                                                            onComplete()
+                                                                        }
+                                                                    },
+                                                                    modifier = Modifier
+                                                                        .fillMaxWidth()
+                                                                        .height(38.dp),
+                                                                    shape = RoundedCornerShape(10.dp),
+                                                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                                                ) {
+                                                                    Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                                    Text("Continue as ${acc.name.ifBlank { "User" }}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    val previousName = appPreferences.lastUserName.ifBlank { "User" }
+                                                    val previousBank = appPreferences.lastBankName.ifBlank {
+                                                        accounts.firstOrNull { it.isDefault }?.bankName ?: accounts.firstOrNull()?.bankName ?: "Primary Bank"
+                                                    }
+                                                    Button(
+                                                        onClick = {
+                                                            authViewModel.restorePreviousSession {
+                                                                appPreferences.isLoggedOut = false
+                                                                appPreferences.isOnboardingCompleted = true
+                                                                authViewModel.completeOnboarding()
+                                                                onComplete()
+                                                            }
+                                                        },
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(44.dp),
+                                                        shape = RoundedCornerShape(12.dp),
+                                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                                    ) {
+                                                        Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(18.dp))
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Text("Continue as $previousName ($previousBank)", fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(bottom = 14.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            HorizontalDivider(modifier = Modifier.weight(1f))
+                                            Text(
+                                                text = if (rememberedAccounts.isNotEmpty()) " OR SIGN IN WITH ANOTHER ACCOUNT " else " OR SIGN IN WITH GOOGLE ",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 8.dp)
+                                            )
+                                            HorizontalDivider(modifier = Modifier.weight(1f))
+                                        }
+                                    }
+
+                                    // Primary Action: Native Sign In with Google
                                     Button(
                                         onClick = {
-                                            authViewModel.signInWithGoogle(context) { claims ->
+                                            authViewModel.signInWithGoogle(
+                                                context = context,
+                                                onFallbackPicker = {
+                                                    val googleAuthManager = GoogleAuthManager(context)
+                                                    val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
+                                                    if (pickerIntent != null) {
+                                                        try {
+                                                            accountPickerLauncher.launch(pickerIntent)
+                                                        } catch (e: Exception) {
+                                                            manualGoogleEmail = appPreferences.lastUserEmail
+                                                            manualGoogleName = appPreferences.lastUserName
+                                                            showGoogleAccountDialog = true
+                                                        }
+                                                    } else {
+                                                        manualGoogleEmail = appPreferences.lastUserEmail
+                                                        manualGoogleName = appPreferences.lastUserName
+                                                        showGoogleAccountDialog = true
+                                                    }
+                                                }
+                                            ) { claims ->
                                                 userName = claims.name.ifBlank { claims.email.substringBefore("@") }
                                                 emailInput = claims.email
                                                 financeViewModel.updateUserProfile(userName, currencySymbol)
-                                                step = 2
+                                                val isReturning = accounts.any { it.bankName.isNotBlank() } &&
+                                                    claims.email.equals(appPreferences.lastUserEmail, ignoreCase = true) &&
+                                                    appPreferences.isOnboardingCompleted
+                                                if (isReturning) {
+                                                    appPreferences.isLoggedOut = false
+                                                    appPreferences.isOnboardingCompleted = true
+                                                    authViewModel.completeOnboarding()
+                                                    onComplete()
+                                                } else {
+                                                    step = 2
+                                                }
                                             }
                                         },
                                         enabled = !authLoading,
@@ -487,6 +769,37 @@ fun OnboardingScreen(
                                         }
                                     }
 
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    // Secondary Option: Use another Google account
+                                    OutlinedButton(
+                                        onClick = {
+                                            val googleAuthManager = GoogleAuthManager(context)
+                                            val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
+                                            if (pickerIntent != null) {
+                                                try {
+                                                    accountPickerLauncher.launch(pickerIntent)
+                                                } catch (e: Exception) {
+                                                    manualGoogleEmail = appPreferences.lastUserEmail
+                                                    manualGoogleName = appPreferences.lastUserName
+                                                    showGoogleAccountDialog = true
+                                                }
+                                            } else {
+                                                manualGoogleEmail = appPreferences.lastUserEmail
+                                                manualGoogleName = appPreferences.lastUserName
+                                                showGoogleAccountDialog = true
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(48.dp),
+                                        shape = RoundedCornerShape(14.dp)
+                                    ) {
+                                        Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Use Another Google Account", fontWeight = FontWeight.SemiBold)
+                                    }
+
                                     authError?.let { err ->
                                         Spacer(modifier = Modifier.height(12.dp))
                                         Card(
@@ -494,17 +807,31 @@ fun OnboardingScreen(
                                             shape = RoundedCornerShape(12.dp),
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Row(
-                                                modifier = Modifier.padding(12.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
-                                                Spacer(modifier = Modifier.width(10.dp))
-                                                Text(
-                                                    text = err,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onErrorContainer
-                                                )
+                                            Column(modifier = Modifier.padding(12.dp)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Text(
+                                                        text = err,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Button(
+                                                    onClick = {
+                                                        manualGoogleEmail = appPreferences.lastUserEmail
+                                                        manualGoogleName = appPreferences.lastUserName
+                                                        showGoogleAccountDialog = true
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                                    shape = RoundedCornerShape(8.dp)
+                                                ) {
+                                                    Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text("Sign in with Google Account Directly", style = MaterialTheme.typography.labelMedium)
+                                                }
                                             }
                                         }
                                     }
@@ -662,6 +989,19 @@ fun OnboardingScreen(
                                                     Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                                                 }
                                             }
+                                        )
+                                    }
+
+                                    if (selectedBankName == "Other / Custom Bank") {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        OutlinedTextField(
+                                            value = customBankName,
+                                            onValueChange = { customBankName = it },
+                                            label = { Text("Bank / Wallet Name *") },
+                                            placeholder = { Text("e.g. Federal Bank, Jupiter, Paytm...") },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = RoundedCornerShape(12.dp)
                                         )
                                     }
                                 }
@@ -939,7 +1279,7 @@ fun OnboardingScreen(
                         Spacer(modifier = Modifier.width(1.dp))
                     }
 
-                    val finalBank = selectedBankName.trim()
+                    val finalBank = if (selectedBankName == "Other / Custom Bank") customBankName.trim() else selectedBankName.trim()
                     val isNextEnabled = when (step) {
                         0 -> false
                         1 -> if (isOfflineModeSelected) userName.trim().isNotEmpty() else (emailInput.isNotBlank() || authViewModel.user.value != null)
@@ -960,21 +1300,25 @@ fun OnboardingScreen(
                                     2 -> {
                                         if (finalBank.isNotBlank()) {
                                             coroutineScope.launch {
-                                                financeViewModel.addAccount(
-                                                    AccountEntity(
-                                                        accountName = accountTypeSelected,
-                                                        bankName = finalBank,
-                                                        accountNumberMasked = "",
-                                                        accountType = when (accountTypeSelected) {
-                                                            "Wallet" -> AccountType.WALLET
-                                                            "Credit Card" -> AccountType.CREDIT_CARD
-                                                            else -> AccountType.BANK
-                                                        },
-                                                        openingBalance = 0.0,
-                                                        currentBalance = 0.0,
-                                                        isDefault = true
+                                                val existingAcc = accounts.firstOrNull { it.bankName.equals(finalBank, ignoreCase = true) }
+                                                if (existingAcc == null) {
+                                                    financeViewModel.addAccount(
+                                                        AccountEntity(
+                                                            accountName = accountTypeSelected,
+                                                            bankName = finalBank,
+                                                            accountNumberMasked = "",
+                                                            accountType = when (accountTypeSelected) {
+                                                                "Wallet" -> AccountType.WALLET
+                                                                "Credit Card" -> AccountType.CREDIT_CARD
+                                                                else -> AccountType.BANK
+                                                            },
+                                                            openingBalance = 0.0,
+                                                            currentBalance = 0.0,
+                                                            isDefault = accounts.isEmpty()
+                                                        )
                                                     )
-                                                )
+                                                }
+                                                appPreferences.lastBankName = finalBank
                                                 step = 3
                                             }
                                         }
@@ -993,6 +1337,9 @@ fun OnboardingScreen(
                                         prefs.isOfflineMode = isOfflineModeSelected
                                         prefs.isLoggedOut = false
                                         prefs.isOnboardingCompleted = true
+                                        if (finalBank.isNotBlank()) {
+                                            prefs.lastBankName = finalBank
+                                        }
                                         authViewModel.completeOnboarding()
                                         onComplete()
                                     }
@@ -1145,41 +1492,16 @@ fun OnboardingScreen(
     if (showServerConfigDialog) {
         AlertDialog(
             onDismissRequest = { showServerConfigDialog = false },
-            title = { Text("Cloud & Auth Backend", fontWeight = FontWeight.Bold) },
+            title = { Text("Backend Server Configuration", fontWeight = FontWeight.Bold) },
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Text(
-                        "Configure Supabase for zero-knowledge privacy-first auth and backup storage, or configure a fallback backend server.",
+                        "Configure the backend server URL used for OAuth session verification, email OTPs, and cloud sync.",
                         style = MaterialTheme.typography.bodySmall
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        "Supabase Project Settings:",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = editedSupabaseUrl,
-                        onValueChange = { editedSupabaseUrl = it },
-                        label = { Text("Supabase URL") },
-                        placeholder = { Text("https://your-ref.supabase.co") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = editedSupabaseAnonKey,
-                        onValueChange = { editedSupabaseAnonKey = it },
-                        label = { Text("Supabase Anon Public Key") },
-                        placeholder = { Text("eyJhbGciOi...") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(14.dp))
                     Text(
-                        "Fallback / Local Server URL:",
+                        "Backend Server URL:",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1187,7 +1509,8 @@ fun OnboardingScreen(
                     OutlinedTextField(
                         value = editedServerUrl,
                         onValueChange = { editedServerUrl = it },
-                        label = { Text("Backend Server URL") },
+                        label = { Text("Server URL") },
+                        placeholder = { Text("http://10.0.2.2:5000") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -1196,7 +1519,6 @@ fun OnboardingScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        ApiClient.setCustomSupabase(context, editedSupabaseUrl.ifBlank { null }, editedSupabaseAnonKey.ifBlank { null })
                         ApiClient.setCustomBaseUrl(context, editedServerUrl.ifBlank { null })
                         currentServerUrl = ApiClient.getBaseUrl(context)
                         showServerConfigDialog = false
@@ -1208,7 +1530,6 @@ fun OnboardingScreen(
             dismissButton = {
                 TextButton(
                     onClick = {
-                        ApiClient.setCustomSupabase(context, null, null)
                         ApiClient.setCustomBaseUrl(context, null)
                         currentServerUrl = ApiClient.getBaseUrl(context)
                         showServerConfigDialog = false
@@ -1220,6 +1541,97 @@ fun OnboardingScreen(
         )
     }
 
+    if (showGoogleAccountDialog) {
+        AlertDialog(
+            onDismissRequest = { showGoogleAccountDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.AccountCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Sign In with Google Account",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Enter your Google / Gmail account details to sign in and link your finances.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    OutlinedTextField(
+                        value = manualGoogleEmail,
+                        onValueChange = { manualGoogleEmail = it },
+                        label = { Text("Google Email Address") },
+                        placeholder = { Text("you@gmail.com") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = manualGoogleName,
+                        onValueChange = { manualGoogleName = it },
+                        label = { Text("Display Name (Optional)") },
+                        placeholder = { Text("Your Name") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = selectedBankName,
+                        onValueChange = { selectedBankName = it },
+                        label = { Text("Primary Bank Name") },
+                        placeholder = { Text("Indian Bank / State Bank of India") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (manualGoogleEmail.isNotBlank()) {
+                            showGoogleAccountDialog = false
+                            authViewModel.signInWithGoogleAccount(
+                                email = manualGoogleEmail,
+                                name = manualGoogleName,
+                                bankName = selectedBankName
+                            ) { claims ->
+                                userName = claims.name
+                                emailInput = claims.email
+                                financeViewModel.updateUserProfile(userName, currencySymbol)
+                                appPreferences.isLoggedOut = false
+                                appPreferences.isOnboardingCompleted = true
+                                authViewModel.completeOnboarding()
+                                onComplete()
+                            }
+                        }
+                    },
+                    enabled = manualGoogleEmail.isNotBlank() && !authLoading,
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Continue", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGoogleAccountDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
     if (showWalkthroughDialog) {
         UserWalkthroughDialog(onDismissRequest = { showWalkthroughDialog = false })
     }
@@ -1276,4 +1688,3 @@ private fun IntroFeatureCard(
         }
     }
 }
-

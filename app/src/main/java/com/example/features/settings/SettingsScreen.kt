@@ -3,10 +3,15 @@ package com.example.features.settings
 import androidx.fragment.app.FragmentActivity
 import android.content.Intent
 import android.net.Uri
+import android.app.Activity
 import com.example.features.auth.BiometricAuthManager
 import com.example.features.auth.BiometricCapability
 import com.example.features.auth.GoogleAuthManager
 import com.example.features.auth.GoogleAuthResult
+import com.example.features.drive.GoogleDriveAuthManager
+import com.example.features.drive.DriveAuthTokenResult
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.common.api.ApiException
 import com.example.features.sync.StorageMode
 import com.example.features.sync.SyncState
 import com.example.features.sync.SyncStatusInfo
@@ -151,6 +156,109 @@ fun SettingsScreen(
     var targetRestoreVersion by remember { mutableStateOf<Int?>(null) }
     var isRestoringVersion by remember { mutableStateOf(false) }
 
+    val driveAuthManager = remember { GoogleDriveAuthManager(context) }
+    var pendingConsentEmail by remember { mutableStateOf<String?>(null) }
+
+    val driveConsentLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { consentResult ->
+        if (consentResult.resultCode == Activity.RESULT_OK) {
+            val targetEmail = pendingConsentEmail
+            if (!targetEmail.isNullOrBlank()) {
+                isDriveConnecting = true
+                coroutineScope.launch {
+                    when (val tokenRes = driveAuthManager.fetchAccessTokenForEmail(targetEmail)) {
+                        is DriveAuthTokenResult.Success -> {
+                            authViewModel?.connectGoogleDriveWithValidation(
+                                selectedDriveEmail = tokenRes.email,
+                                accessToken = tokenRes.token
+                            ) { success, msg ->
+                                isDriveConnecting = false
+                                if (success) {
+                                    showGoogleDriveDialog = false
+                                    statusNotificationMsg = "Google Drive connected for ${tokenRes.email}!"
+                                } else {
+                                    driveMismatchError = msg ?: "Connection failed"
+                                }
+                            }
+                        }
+                        is DriveAuthTokenResult.Error -> {
+                            isDriveConnecting = false
+                            driveMismatchError = tokenRes.message
+                        }
+                        is DriveAuthTokenResult.NeedsUserConsent -> {
+                            isDriveConnecting = false
+                            driveMismatchError = "Google Drive permissions not granted."
+                        }
+                    }
+                }
+            }
+        } else {
+            isDriveConnecting = false
+            driveMismatchError = "Google Drive authorization was cancelled."
+        }
+    }
+
+    val driveSignInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { res ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(res.data)
+        try {
+            val account = task.getResult(ApiException::class.java)
+            if (account != null) {
+                val selectedEmail = (account.email ?: "").trim().lowercase()
+                val registeredEmail = userProfile?.email?.trim()?.lowercase() ?: authUser?.email?.trim()?.lowercase() ?: ""
+                if (registeredEmail.isNotBlank() && selectedEmail.isNotBlank() && selectedEmail != registeredEmail) {
+                    isDriveConnecting = false
+                    driveMismatchError = "Email Mismatch: Selected Google account ($selectedEmail) does not match your registered email ($registeredEmail)."
+                } else {
+                    coroutineScope.launch {
+                        when (val tokenRes = driveAuthManager.fetchAccessToken(account)) {
+                            is DriveAuthTokenResult.Success -> {
+                                authViewModel?.connectGoogleDriveWithValidation(
+                                    selectedDriveEmail = tokenRes.email,
+                                    accessToken = tokenRes.token
+                                ) { success, msg ->
+                                    isDriveConnecting = false
+                                    if (success) {
+                                        showGoogleDriveDialog = false
+                                        statusNotificationMsg = "Google Drive connected for ${tokenRes.email}!"
+                                    } else {
+                                        driveMismatchError = msg ?: "Connection failed"
+                                    }
+                                }
+                            }
+                            is DriveAuthTokenResult.NeedsUserConsent -> {
+                                pendingConsentEmail = tokenRes.email
+                                if (tokenRes.consentIntent != null) {
+                                    driveConsentLauncher.launch(tokenRes.consentIntent)
+                                } else {
+                                    isDriveConnecting = false
+                                    driveMismatchError = "Google Drive consent required."
+                                }
+                            }
+                            is DriveAuthTokenResult.Error -> {
+                                isDriveConnecting = false
+                                driveMismatchError = tokenRes.message
+                            }
+                        }
+                    }
+                }
+            } else {
+                isDriveConnecting = false
+                driveMismatchError = "No Google account selected."
+            }
+        } catch (e: ApiException) {
+            isDriveConnecting = false
+            if (e.statusCode != 12501 && e.statusCode != 4) {
+                driveMismatchError = "Google Play Services error: ${e.localizedMessage ?: e.message} (code ${e.statusCode})"
+            }
+        } catch (e: Exception) {
+            isDriveConnecting = false
+            driveMismatchError = e.localizedMessage ?: "Failed to connect Google account"
+        }
+    }
+
     var showFeedbackDialog by remember { mutableStateOf(false) }
     var feedbackCategory by remember { mutableStateOf("BUG_REPORT") }
     var feedbackRating by remember { mutableStateOf(5) }
@@ -162,8 +270,6 @@ fun SettingsScreen(
     var showServerConfigDialog by remember { mutableStateOf(false) }
     var editedServerUrl by remember { mutableStateOf("") }
     var currentServerUrl by remember { mutableStateOf(com.example.data.remote.ApiClient.getBaseUrl(context)) }
-    var editedSupabaseUrl by remember { mutableStateOf(com.example.data.remote.ApiClient.getSupabaseUrl(context)) }
-    var editedSupabaseAnonKey by remember { mutableStateOf(com.example.data.remote.ApiClient.getSupabaseAnonKey(context)) }
 
     val driveStatus by authViewModel?.driveStatus?.collectAsState() ?: remember { mutableStateOf(null) }
 
@@ -249,33 +355,35 @@ fun SettingsScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 val isDriveConnected = driveStatus?.isConnected == true
-                                Surface(
-                                    color = if (isDriveConnected) IncomeGreen.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant,
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            driveMismatchError = null
-                                            showGoogleDriveDialog = true
-                                        }
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                if (isDriveConnected) {
+                                    Surface(
+                                        color = IncomeGreen.copy(alpha = 0.12f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                driveMismatchError = null
+                                                showGoogleDriveDialog = true
+                                            }
                                     ) {
-                                        Icon(
-                                            imageVector = if (isDriveConnected) Icons.Default.CloudDone else Icons.Default.Cloud,
-                                            contentDescription = "Drive Connection",
-                                            tint = if (isDriveConnected) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = if (isDriveConnected) "Drive: Connected" else "Drive: Disconnected",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (isDriveConnected) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CloudDone,
+                                                contentDescription = "Drive Connection",
+                                                tint = IncomeGreen,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "Drive: Connected",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = IncomeGreen
+                                            )
+                                        }
                                     }
                                 }
 
@@ -456,6 +564,18 @@ fun SettingsScreen(
                     }
                 }
             }
+        }
+
+        // Security & Privacy Group
+        item {
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = "Security & Privacy",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+            )
         }
 
         // 4.1 Navigation: Privacy Blur Settings
@@ -720,10 +840,41 @@ fun SettingsScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column {
+                    val isDriveConnected = driveStatus?.isConnected == true
+                    val connectedDriveEmail = driveStatus?.driveEmail ?: (userProfile?.email ?: authUser?.email ?: "")
+
                     MoreMenuItem(
-                        title = "Backup All Data",
-                        subtitle = "Export complete database backup (Accounts, Transactions, Loans, Claims)",
-                        icon = Icons.Default.CloudUpload,
+                        title = "Google Drive Cloud Backup",
+                        subtitle = if (isDriveConnected)
+                            "Connected as $connectedDriveEmail • Cloud sync & recovery snapshots"
+                        else
+                            "Connect Google Drive for automated cloud backup & multi-device restore",
+                        icon = if (isDriveConnected) Icons.Default.CloudDone else Icons.Default.CloudSync,
+                        iconColor = if (isDriveConnected) IncomeGreen else MaterialTheme.colorScheme.primary,
+                        onClick = {
+                            driveMismatchError = null
+                            showGoogleDriveDialog = true
+                        },
+                        trailing = {
+                            Surface(
+                                color = if (isDriveConnected) IncomeGreen.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = if (isDriveConnected) "Connected" else "Not Connected",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isDriveConnected) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    MoreMenuItem(
+                        title = "Local Device Backup",
+                        subtitle = "Export database backup (JSON) to Downloads, storage folder, or share",
+                        icon = Icons.Default.SaveAlt,
                         iconColor = IncomeGreen,
                         onClick = {
                             showBackupOptionsDialog = true
@@ -731,7 +882,7 @@ fun SettingsScreen(
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                     MoreMenuItem(
-                        title = "Restore from Backup",
+                        title = "Restore from Local File",
                         subtitle = "Import and restore complete records from a JSON backup file",
                         icon = Icons.Default.Restore,
                         iconColor = LendingIndigo,
@@ -997,13 +1148,13 @@ fun SettingsScreen(
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Default.CloudUpload,
+                        imageVector = Icons.Default.SaveAlt,
                         contentDescription = null,
                         tint = IncomeGreen,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
-                    Text(text = "Backup All Data", fontWeight = FontWeight.Bold)
+                    Text(text = "Local Device Backup", fontWeight = FontWeight.Bold)
                 }
             },
             text = {
@@ -1999,6 +2150,7 @@ fun SettingsScreen(
                             onClick = {
                                 authViewModel?.disconnectGoogleDrive { success, msg ->
                                     if (success) {
+                                        driveAuthManager.signOut()
                                         statusNotificationMsg = "Google Drive disconnected"
                                         showGoogleDriveDialog = false
                                     } else {
@@ -2051,9 +2203,9 @@ fun SettingsScreen(
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
                                     text = if (registeredEmail.isNotBlank())
-                                        "Account Match: Your Google Drive account must match your verified Yosan email ($registeredEmail)."
+                                        "Connected account will be matched with your registered Yosan email ($registeredEmail)."
                                     else
-                                        "Please register and verify your email before connecting Google Drive.",
+                                        "Sign in with your Google Account to authorize private cloud backup storage.",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.primary
@@ -2065,50 +2217,10 @@ fun SettingsScreen(
                             onClick = {
                                 driveMismatchError = null
                                 isDriveConnecting = true
-                                coroutineScope.launch {
-                                    try {
-                                        val googleAuthManager = GoogleAuthManager(context)
-                                        if (!googleAuthManager.isConfigured()) {
-                                            driveMismatchError = "Google Web Client ID is not configured. Please check your configuration."
-                                        } else {
-                                            when (val result = googleAuthManager.getGoogleIdToken()) {
-                                                is GoogleAuthResult.Success -> {
-                                                    val claims = AuthViewModel.decodeGoogleIdTokenLocally(result.idToken)
-                                                    val selectedEmail = claims?.email?.trim()?.lowercase() ?: ""
-                                                    if (selectedEmail.isEmpty()) {
-                                                        driveMismatchError = "Could not verify Google account email from token."
-                                                    } else if (registeredEmail.isNotEmpty() && selectedEmail != registeredEmail) {
-                                                        driveMismatchError = "Email Mismatch: Selected Google account ($selectedEmail) does not match your registered email ($registeredEmail). Please connect with $registeredEmail."
-                                                    } else {
-                                                        authViewModel?.connectGoogleDriveWithValidation(
-                                                            selectedDriveEmail = selectedEmail,
-                                                            authCode = result.idToken
-                                                        ) { success, msg ->
-                                                            if (success) {
-                                                                showGoogleDriveDialog = false
-                                                                statusNotificationMsg = "Google Drive successfully connected and validated for $selectedEmail!"
-                                                            } else {
-                                                                driveMismatchError = msg ?: "Connection failed"
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                is GoogleAuthResult.Cancelled -> {
-                                                    driveMismatchError = "Google authorization was cancelled."
-                                                }
-                                                is GoogleAuthResult.Error -> {
-                                                    driveMismatchError = result.message
-                                                }
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                        driveMismatchError = e.localizedMessage ?: "Connection error"
-                                    } finally {
-                                        isDriveConnecting = false
-                                    }
-                                }
+                                val intent = driveAuthManager.getDriveSignInIntent(registeredEmail.ifBlank { null })
+                                driveSignInLauncher.launch(intent)
                             },
-                            enabled = registeredEmail.isNotBlank() && !isDriveConnecting,
+                            enabled = !isDriveConnecting,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -2696,50 +2808,19 @@ fun SettingsScreen(
     if (showServerConfigDialog) {
         AlertDialog(
             onDismissRequest = { showServerConfigDialog = false },
-            title = { Text("Cloud & Auth Backend", fontWeight = FontWeight.Bold) },
+            title = { Text("Backend Server URL", fontWeight = FontWeight.Bold) },
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Text(
-                        "Configure Supabase for zero-knowledge privacy-first auth and backup storage, or configure a fallback backend server.",
+                        "Configure the backend API server endpoint for authentication and synchronization:",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        "Supabase Project Settings:",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = editedSupabaseUrl,
-                        onValueChange = { editedSupabaseUrl = it },
-                        label = { Text("Supabase URL") },
-                        placeholder = { Text("https://your-ref.supabase.co") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = editedSupabaseAnonKey,
-                        onValueChange = { editedSupabaseAnonKey = it },
-                        label = { Text("Supabase Anon Public Key") },
-                        placeholder = { Text("eyJhbGciOi...") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        "Fallback / Local Server URL:",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
                     OutlinedTextField(
                         value = editedServerUrl,
                         onValueChange = { editedServerUrl = it },
-                        label = { Text("Backend Server URL") },
-                        placeholder = { Text("https://yosan-xgsd.onrender.com/") },
+                        label = { Text("Server URL") },
+                        placeholder = { Text(currentServerUrl) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2748,7 +2829,6 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        com.example.data.remote.ApiClient.setCustomSupabase(context, editedSupabaseUrl.ifBlank { null }, editedSupabaseAnonKey.ifBlank { null })
                         com.example.data.remote.ApiClient.setCustomBaseUrl(context, editedServerUrl.ifBlank { null })
                         currentServerUrl = com.example.data.remote.ApiClient.getBaseUrl(context)
                         showServerConfigDialog = false
@@ -2760,7 +2840,6 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(
                     onClick = {
-                        com.example.data.remote.ApiClient.setCustomSupabase(context, null, null)
                         com.example.data.remote.ApiClient.setCustomBaseUrl(context, null)
                         currentServerUrl = com.example.data.remote.ApiClient.getBaseUrl(context)
                         showServerConfigDialog = false
@@ -2881,7 +2960,8 @@ fun MoreMenuItem(
     subtitle: String,
     icon: ImageVector,
     iconColor: Color,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -2916,6 +2996,10 @@ fun MoreMenuItem(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+        if (trailing != null) {
+            trailing()
+            Spacer(modifier = Modifier.width(8.dp))
         }
         Icon(
             imageVector = Icons.Default.ChevronRight,

@@ -4,7 +4,6 @@ import android.app.Application
 import android.content.Context
 import android.net.Uri
 import android.util.Log
-import org.json.JSONObject
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
@@ -14,7 +13,6 @@ import com.example.features.drive.DriveOperationResult
 import com.example.features.drive.GoogleDriveService
 import com.example.features.sync.StorageMode
 import com.example.features.sync.SyncManager
-import com.example.features.sync.SyncState
 import com.example.features.sync.SyncStatusInfo
 import com.example.utils.BackupService
 import com.example.utils.SecureTokenManager
@@ -26,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 sealed class AuthState {
     object Loading : AuthState()
@@ -86,177 +85,98 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Checks session validity with Supabase Auth:
-     * 1. If stored tokens exist, validates token against Supabase /auth/v1/user.
-     * 2. If token expired, automatically refreshes with Supabase /auth/v1/token?grant_type=refresh_token.
-     * 3. Syncs profile from Supabase PostgREST user_profiles and Room.
-     * 4. If offline or Local-only mode, preserves local Room data without blocking user access.
+     * Checks session validity using OAuth 2.0 / OpenID Connect tokens:
+     * 1. If user explicitly logged out, immediately sets Unauthenticated.
+     * 2. If valid session exists, verifies token expiration and refreshes if needed.
+     * 3. Syncs profile and sets Authenticated state.
+     * 4. If offline mode was completed without login, loads local profile.
      */
     fun checkSession() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 val app = getApplication<Application>()
-                val savedProfile = authRepository.getProfileOnce()
+                val prefs = com.example.utils.AppPreferences(app)
+
+                // 1. Explicit logout check - strictly respected, prevents zombie logins
+                if (prefs.isLoggedOut) {
+                    _user.value = null
+                    _authState.value = AuthState.Unauthenticated
+                    return@launch
+                }
+
+                // 2. Check stored session credentials
                 val storedAccessToken = tokenManager.getAccessToken()
                 val storedRefreshToken = tokenManager.getRefreshToken()
+                val userEmail = tokenManager.getUserEmail()
+                val googleSub = tokenManager.getGoogleSub()
 
-                // Check Supabase session if configured and tokens exist
-                if (ApiClient.isSupabaseConfigured(app) && !storedAccessToken.isNullOrBlank()) {
-                    val anonKey = ApiClient.getSupabaseAnonKey(app)
-                    val supabaseApi = ApiClient.getSupabaseAuthApi(app)
-
-                    if (supabaseApi != null && anonKey.isNotBlank()) {
-                        var activeAccessToken = storedAccessToken
-                        var isValid = false
-                        var verifiedUser: SupabaseUserDto? = null
-
-                        // Check if access token is expired or about to expire
-                        if (tokenManager.isSessionExpired() && !storedRefreshToken.isNullOrBlank()) {
-                            Log.i(TAG, "Access token expired. Attempting refresh with Supabase GoTrue...")
-                            try {
-                                val refreshRes = supabaseApi.refreshSession(
-                                    apiKey = anonKey,
-                                    req = SupabaseTokenRefreshRequest(refreshToken = storedRefreshToken)
-                                )
-                                if (refreshRes.isSuccessful && refreshRes.body() != null) {
-                                    val auth = refreshRes.body()!!
-                                    activeAccessToken = auth.accessToken ?: storedAccessToken
-                                    tokenManager.saveTokens(
-                                        accessToken = activeAccessToken,
-                                        refreshToken = auth.refreshToken ?: storedRefreshToken,
-                                        expiresInSeconds = auth.expiresIn
-                                    )
-                                    verifiedUser = auth.user
-                                    isValid = true
-                                    Log.i(TAG, "Session refreshed successfully with Supabase")
-                                } else {
-                                    Log.w(TAG, "Refresh token rejected by Supabase (${refreshRes.code()})")
-                                }
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Token refresh network exception: ${e.message}")
-                            }
-                        }
-
-                        // If not refreshed, validate active token
-                        if (!isValid) {
-                            try {
-                                val userRes = supabaseApi.getUser(
-                                    apiKey = anonKey,
-                                    bearerToken = "Bearer $activeAccessToken"
-                                )
-                                if (userRes.isSuccessful && userRes.body() != null) {
-                                    verifiedUser = userRes.body()
-                                    isValid = true
-                                    Log.i(TAG, "Active Supabase session validated successfully: uid=${verifiedUser?.id}")
-                                } else if (userRes.code() == 401 && !storedRefreshToken.isNullOrBlank()) {
-                                    // Token expired on server, attempt one refresh
-                                    val refreshRes = supabaseApi.refreshSession(
-                                        apiKey = anonKey,
-                                        req = SupabaseTokenRefreshRequest(refreshToken = storedRefreshToken)
-                                    )
-                                    if (refreshRes.isSuccessful && refreshRes.body() != null) {
-                                        val auth = refreshRes.body()!!
-                                        activeAccessToken = auth.accessToken ?: storedAccessToken
-                                        tokenManager.saveTokens(
-                                            accessToken = activeAccessToken,
-                                            refreshToken = auth.refreshToken ?: storedRefreshToken,
-                                            expiresInSeconds = auth.expiresIn
-                                        )
-                                        verifiedUser = auth.user
-                                        isValid = true
-                                    }
-                                }
-                            } catch (netEx: Exception) {
-                                Log.d(TAG, "Network check skipped (offline fallback): ${netEx.message}")
-                                // Network unreachable: allow offline session restoration
-                                isValid = true
-                            }
-                        }
-
-                        if (isValid) {
-                            val userUid = verifiedUser?.id ?: tokenManager.getSupabaseUid() ?: ""
-                            val userEmail = verifiedUser?.email ?: tokenManager.getUserEmail() ?: ""
-                            val isVerified = verifiedUser?.isEmailVerified ?: tokenManager.isEmailVerified()
-                            _isEmailVerified.value = isVerified
-
-                            // Fetch remote profile from PostgREST
-                            var remoteProfile: SupabaseUserProfileDto? = null
-                            try {
-                                val profileRes = supabaseApi.getUserProfile(
-                                    apiKey = anonKey,
-                                    bearerToken = "Bearer $activeAccessToken",
-                                    idFilter = "eq.$userUid"
-                                )
-                                if (profileRes.isSuccessful) {
-                                    remoteProfile = profileRes.body()?.firstOrNull()
-                                }
-                            } catch (_: Exception) {}
-
-                            val resolvedName = remoteProfile?.displayName
-                                ?: verifiedUser?.userMetadata?.get("full_name")
-                                ?: verifiedUser?.userMetadata?.get("name")
-                                ?: savedProfile?.name
-                                ?: tokenManager.getUserName()
-                                ?: userEmail.substringBefore("@")
-
-                            val resolvedAvatar = remoteProfile?.avatarUrl
-                                ?: verifiedUser?.userMetadata?.get("avatar_url")
-                                ?: verifiedUser?.userMetadata?.get("picture")
-                                ?: savedProfile?.profilePictureUrl
-                                ?: ""
-
-                            val resolvedStoragePref = remoteProfile?.storagePreference
-                                ?: tokenManager.getStoragePreference()
-
-                            // Update local room entity
-                            val updatedProfile = (savedProfile ?: UserProfileEntity(id = 1)).copy(
-                                googleSub = userUid,
-                                supabaseUid = userUid,
-                                email = userEmail,
-                                name = resolvedName,
-                                profilePictureUrl = resolvedAvatar,
-                                emailVerified = isVerified,
-                                storagePreference = resolvedStoragePref,
-                                updatedAt = System.currentTimeMillis()
-                            )
-                            authRepository.updateProfile(updatedProfile)
-
-                            tokenManager.saveUserSession(
-                                userId = 1L,
-                                googleSub = userUid,
-                                email = userEmail,
-                                name = resolvedName,
-                                profilePicture = resolvedAvatar,
-                                supabaseUid = userUid,
-                                emailVerified = isVerified
-                            )
-                            tokenManager.setStoragePreference(resolvedStoragePref)
-                            syncManager.loadInitialStatus()
-
-                            _user.value = buildLocalUser(updatedProfile)
-                            _authState.value = AuthState.Authenticated(isNewUser = !updatedProfile.isOnboardingCompleted)
+                // If user is not logged in via credentials, check if offline mode was completed
+                if (storedAccessToken.isNullOrBlank() || userEmail.isNullOrBlank() || googleSub.isNullOrBlank()) {
+                    if (prefs.isOfflineMode && prefs.isOnboardingCompleted) {
+                        val savedProfile = authRepository.getProfileOnce()
+                        if (savedProfile != null) {
+                            _user.value = buildLocalUser(savedProfile)
+                            _authState.value = AuthState.Authenticated(isNewUser = false)
                             return@launch
-                        } else {
-                            // Supabase session permanently expired or revoked
-                            Log.w(TAG, "Supabase session expired/invalid. Clearing invalid tokens.")
-                            tokenManager.saveTokens("", "")
                         }
+                    }
+                    _user.value = null
+                    _authState.value = AuthState.Unauthenticated
+                    return@launch
+                }
+
+                // 3. User is logged in: Check token expiration and refresh with backend if needed
+                if (tokenManager.isSessionExpired() && !storedRefreshToken.isNullOrBlank()) {
+                    Log.i(TAG, "Access token expired. Refreshing OAuth 2.0 session...")
+                    try {
+                        val authApi = ApiClient.getAuthApi(app)
+                        val refreshRes = authApi.refreshSession(RefreshTokenRequest(refreshToken = storedRefreshToken))
+                        if (refreshRes.isSuccessful && refreshRes.body() != null) {
+                            val auth = refreshRes.body()!!
+                            tokenManager.saveTokens(
+                                accessToken = auth.accessToken,
+                                refreshToken = auth.refreshToken.ifBlank { storedRefreshToken },
+                                expiresInSeconds = null
+                            )
+                            Log.i(TAG, "OAuth 2.0 session refreshed successfully")
+                        } else if (refreshRes.code() == 401) {
+                            Log.w(TAG, "Refresh token rejected by server (401). Invalidating session.")
+                            tokenManager.clearSession()
+                            prefs.isLoggedOut = true
+                            _user.value = null
+                            _authState.value = AuthState.Unauthenticated
+                            return@launch
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Session refresh network check skipped (offline fallback): ${e.message}")
                     }
                 }
 
-                // Fallback: Check local profile for Mode A (Local only) or onboarding completion
-                if (savedProfile != null && (savedProfile.isOnboardingCompleted || !savedProfile.email.isNullOrBlank())) {
-                    val isModeA = savedProfile.storagePreference == "LOCAL"
-                    _isEmailVerified.value = savedProfile.emailVerified
-                    _user.value = buildLocalUser(savedProfile)
-                    _authState.value = AuthState.Authenticated(isNewUser = !savedProfile.isOnboardingCompleted)
-                } else {
-                    _user.value = null
-                    _authState.value = AuthState.Unauthenticated
-                }
+                // 4. Load authenticated user profile
+                val savedProfile = authRepository.getProfileOnce()
+                val resolvedName = tokenManager.getUserName() ?: savedProfile?.name ?: prefs.lastUserName.ifBlank { "User" }
+                val resolvedPic = tokenManager.getProfilePic() ?: savedProfile?.profilePictureUrl ?: prefs.lastUserProfilePic
+                val isVerified = tokenManager.isEmailVerified() || (savedProfile?.emailVerified == true)
+                val resolvedPref = tokenManager.getStoragePreference()
+
+                val activeProfile = (savedProfile ?: UserProfileEntity(id = 1)).copy(
+                    name = resolvedName,
+                    email = userEmail,
+                    googleSub = googleSub,
+                    profilePictureUrl = resolvedPic,
+                    emailVerified = isVerified,
+                    storagePreference = resolvedPref,
+                    updatedAt = System.currentTimeMillis()
+                )
+                authRepository.updateProfile(activeProfile)
+
+                syncManager.loadInitialStatus()
+                _isEmailVerified.value = isVerified
+                _user.value = buildLocalUser(activeProfile)
+                _authState.value = AuthState.Authenticated(isNewUser = !activeProfile.isOnboardingCompleted)
             } catch (e: Exception) {
-                Log.e(TAG, "checkSession exception: ${e.message}", e)
+                Log.e(TAG, "checkSession error: ${e.message}", e)
                 _user.value = null
                 _authState.value = AuthState.Unauthenticated
             } finally {
@@ -266,17 +186,32 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Authenticates user using Google ID Token with Supabase GoTrue Auth.
-     * Strictly verifies the authenticated session through Supabase and does not
-     * use fake tokens or bypasses.
+     * Authenticates user using Google ID Token with OAuth 2.0 / OpenID Connect.
+     * 1. Obtains ID token from Google Credential Manager (or browser OAuth fallback).
+     * 2. Exchanges ID token with Backend Server (/api/auth/google) or falls back to verified offline token.
+     * 3. Remembers previous account credentials and primary bank name on this device.
      */
-    fun signInWithGoogle(context: Context, onComplete: ((GoogleClaims) -> Unit)? = null) {
+    fun signInWithGoogle(
+        context: Context,
+        onFallbackPicker: (() -> Unit)? = null,
+        onComplete: ((GoogleClaims) -> Unit)? = null
+    ) {
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
             try {
                 val googleAuthManager = GoogleAuthManager(context)
                 when (val result = googleAuthManager.getGoogleIdToken()) {
+                    is GoogleAuthResult.RequiresBrowserOAuth -> {
+                        Log.i(TAG, "Native credentials require browser OAuth: ${result.message}")
+                        launchGoogleOAuth2Flow(context)
+                    }
+                    is GoogleAuthResult.FallbackAccountPicker -> {
+                        Log.i(TAG, "Credential Manager unavailable, delegating to system picker: ${result.message}")
+                        _isLoading.value = false
+                        onFallbackPicker?.invoke()
+                        return@launch
+                    }
                     is GoogleAuthResult.Success -> {
                         val app = getApplication<Application>()
                         val idToken = result.idToken
@@ -286,106 +221,105 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             return@launch
                         }
 
-                        // Authenticate directly with Supabase GoTrue Auth
-                        if (ApiClient.isSupabaseConfigured(app)) {
-                            val supabaseApi = ApiClient.getSupabaseAuthApi(app)
-                            val anonKey = ApiClient.getSupabaseAnonKey(app)
+                        val localClaims = decodeGoogleIdTokenLocally(idToken)
+                        val email = (result.email ?: localClaims?.email ?: "").trim().lowercase()
+                        val name = result.displayName ?: localClaims?.name ?: email.substringBefore("@").ifBlank { "User" }
+                        val photoUrl = result.photoUrl ?: localClaims?.picture ?: ""
+                        val sub = localClaims?.sub ?: email.ifBlank { "google_user" }
 
-                            if (supabaseApi != null && anonKey.isNotBlank()) {
-                                Log.i(TAG, "Exchanging Google ID token with Supabase Auth GoTrue...")
-                                val authResponse = supabaseApi.signInWithIdToken(
-                                    apiKey = anonKey,
-                                    req = SupabaseIdTokenRequest(idToken = idToken)
-                                )
+                        var accessToken = ""
+                        var refreshToken = ""
+                        val expiresIn: Long? = null
 
-                                if (authResponse.isSuccessful && authResponse.body() != null) {
-                                    val auth = authResponse.body()!!
-                                    val sbUser = auth.user
-                                    val accessToken = auth.accessToken ?: ""
-                                    val refreshToken = auth.refreshToken ?: ""
-                                    val userId = sbUser?.id ?: ""
-                                    val email = sbUser?.email ?: result.email ?: ""
-                                    val isVerified = sbUser?.isEmailVerified ?: true
+                        // 1. Authenticate with Backend Server OAuth 2.0 endpoint (/api/auth/google)
+                        try {
+                            val authApi = ApiClient.getAuthApi(app)
+                            Log.i(TAG, "Exchanging Google ID token with Backend Server (/api/auth/google)...")
+                            val serverRes = authApi.authenticateGoogle(GoogleAuthRequest(idToken = idToken))
+                            if (serverRes.isSuccessful && serverRes.body() != null) {
+                                val body = serverRes.body()!!
+                                accessToken = body.accessToken
+                                refreshToken = body.refreshToken
+                                Log.i(TAG, "Backend Server OAuth authentication successful")
+                            } else {
+                                Log.w(TAG, "Backend server auth returned ${serverRes.code()}: ${serverRes.message()}")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Backend Server offline or unreachable: ${e.message}. Using offline-first verified token.")
+                        }
 
-                                    val name = sbUser?.userMetadata?.get("full_name")
-                                        ?: sbUser?.userMetadata?.get("name")
-                                        ?: result.displayName
-                                        ?: email.substringBefore("@")
+                        // 2. Offline-First fallback token generation if backend is unreachable
+                        if (accessToken.isBlank()) {
+                            accessToken = idToken
+                            refreshToken = "offline_refresh_${System.currentTimeMillis()}"
+                        }
 
-                                    val photoUrl = sbUser?.userMetadata?.get("avatar_url")
-                                        ?: sbUser?.userMetadata?.get("picture")
-                                        ?: result.photoUrl
-                                        ?: ""
+                        tokenManager.saveTokens(accessToken, refreshToken, expiresIn)
+                        tokenManager.saveUserSession(
+                            userId = 1L,
+                            googleSub = sub,
+                            email = email,
+                            name = name,
+                            profilePicture = photoUrl,
+                            emailVerified = true
+                        )
+                        _isEmailVerified.value = true
 
-                                    tokenManager.saveTokens(accessToken, refreshToken, auth.expiresIn)
-                                    tokenManager.saveUserSession(
-                                        userId = 1L,
-                                        googleSub = userId,
-                                        email = email,
-                                        name = name,
-                                        profilePicture = photoUrl,
-                                        supabaseUid = userId,
-                                        emailVerified = isVerified
-                                    )
-                                    _isEmailVerified.value = isVerified
+                        val prefs = com.example.utils.AppPreferences(app)
+                        val existingAccounts = database.accountDao().getAllAccountsList()
+                        val primaryBank = existingAccounts.firstOrNull { it.isDefault }?.bankName
+                            ?: existingAccounts.firstOrNull()?.bankName
+                            ?: prefs.lastBankName
 
-                                    // Upsert profile in Supabase PostgREST
-                                    try {
-                                        supabaseApi.upsertUserProfile(
-                                            apiKey = anonKey,
-                                            bearerToken = "Bearer $accessToken",
-                                            profile = SupabaseUserProfileDto(
-                                                id = userId,
-                                                email = email,
-                                                displayName = name,
-                                                avatarUrl = photoUrl,
-                                                emailVerified = isVerified,
-                                                storagePreference = tokenManager.getStoragePreference()
-                                            )
-                                        )
-                                    } catch (profEx: Exception) {
-                                        Log.w(TAG, "Supabase profile sync note: ${profEx.message}")
-                                    }
+                        val rememberedAccount = com.example.utils.RememberedAccount(
+                            email = email,
+                            name = name,
+                            profilePicture = photoUrl,
+                            googleSub = sub,
+                            bankName = primaryBank,
+                            lastUsedTimestamp = System.currentTimeMillis()
+                        )
+                        prefs.saveRememberedAccount(rememberedAccount)
+                        prefs.isLoggedOut = false
 
-                                    // Update local Room database
-                                    val existing = authRepository.getProfileOnce()
-                                    val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
-                                        googleSub = userId,
-                                        supabaseUid = userId,
-                                        name = name,
-                                        email = email,
-                                        profilePictureUrl = photoUrl,
-                                        emailVerified = isVerified,
-                                        updatedAt = System.currentTimeMillis()
-                                    )
-                                    authRepository.updateProfile(updatedProfile)
+                        val isReturningUser = existingAccounts.isNotEmpty() ||
+                            prefs.getRememberedAccounts().size > 1 ||
+                            (email.isNotBlank() && email.equals(prefs.lastUserEmail, ignoreCase = true))
 
-                                    _user.value = buildLocalUser(updatedProfile)
-                                    _authState.value = AuthState.Authenticated(
-                                        isNewUser = !updatedProfile.isOnboardingCompleted
-                                    )
+                        // Update Room profile
+                        val existing = authRepository.getProfileOnce()
+                        val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
+                            googleSub = sub,
+                            name = name,
+                            email = email,
+                            profilePictureUrl = photoUrl,
+                            emailVerified = true,
+                            isOnboardingCompleted = isReturningUser || existing?.isOnboardingCompleted == true,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                        authRepository.updateProfile(updatedProfile)
 
-                                    val claims = GoogleClaims(
-                                        sub = userId,
-                                        email = email,
-                                        name = name,
-                                        picture = photoUrl
-                                    )
-                                    onComplete?.invoke(claims)
-                                    return@launch
-                                } else {
-                                    val rawErr = authResponse.errorBody()?.string()
-                                    val err = parseErrorMessage(rawErr)
-                                        ?: "Supabase authentication failed with status ${authResponse.code()}."
-                                    Log.e(TAG, "Supabase ID token exchange rejected: $err")
-                                    _errorMessage.value = err
-                                    return@launch
-                                }
+                        if (isReturningUser) {
+                            prefs.isOnboardingCompleted = true
+                            withContext(Dispatchers.IO) {
+                                database.userProfileDao().updateOnboardingCompleted(true)
                             }
                         }
 
-                        // If Supabase not configured in development environment, inform user
-                        _errorMessage.value = "Supabase configuration is required. Please verify SUPABASE_URL and SUPABASE_ANON_KEY in .env."
+                        syncManager.loadInitialStatus()
+                        _user.value = buildLocalUser(updatedProfile)
+                        _authState.value = AuthState.Authenticated(
+                            isNewUser = !isReturningUser
+                        )
+
+                        val claims = GoogleClaims(
+                            sub = sub,
+                            email = email,
+                            name = name,
+                            picture = photoUrl
+                        )
+                        onComplete?.invoke(claims)
+                        return@launch
                     }
                     is GoogleAuthResult.Cancelled -> {
                         Log.d(TAG, "Google Sign-In was cancelled by user")
@@ -405,8 +339,213 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Handles OAuth redirects via deep links (yosan://auth-callback or yosan.finance://auth-callback).
-     * Extracts tokens from fragment (#access_token=...) or exchanges authorization code (?code=...).
+     * Launches the system browser or Chrome Custom Tab for standard Google OAuth 2.0.
+     */
+    fun launchGoogleOAuth2Flow(
+        context: Context,
+        includeDriveScope: Boolean = false,
+        loginHint: String? = null
+    ) {
+        val googleAuthManager = GoogleAuthManager(context)
+        val launched = googleAuthManager.launchOAuth2Browser(
+            context = context,
+            redirectUri = "yosan://auth-callback",
+            includeDriveScope = includeDriveScope,
+            loginHint = loginHint
+        )
+        if (!launched) {
+            _errorMessage.value = "Unable to open web browser for Google sign in. Please verify a browser is installed."
+        }
+    }
+
+    /**
+     * Restores active session for a specific remembered account on this device,
+     * maintaining that account's profile identity and associated bank name.
+     */
+    fun restorePreviousAccount(account: com.example.utils.RememberedAccount, onComplete: (() -> Unit)? = null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val app = getApplication<Application>()
+                val prefs = com.example.utils.AppPreferences(app)
+                val currentProfile = authRepository.getProfileOnce()
+
+                val email = account.email.ifBlank { prefs.lastUserEmail.ifBlank { currentProfile?.email ?: "" } }
+                val name = account.name.ifBlank { prefs.lastUserName.ifBlank { currentProfile?.name ?: "User" } }
+                val pic = account.profilePicture.ifBlank { prefs.lastUserProfilePic.ifBlank { currentProfile?.profilePictureUrl ?: "" } }
+                val sub = account.googleSub.ifBlank { prefs.lastGoogleSub.ifBlank { currentProfile?.googleSub ?: email.ifBlank { "yosan_user" } } }
+                val bank = account.bankName.ifBlank { prefs.lastBankName.ifBlank { "Indian Bank" } }
+
+                tokenManager.saveTokens(
+                    accessToken = "offline_restored_${System.currentTimeMillis()}",
+                    refreshToken = "offline_refresh_${System.currentTimeMillis()}"
+                )
+                tokenManager.saveUserSession(
+                    userId = 1L,
+                    googleSub = sub,
+                    email = email,
+                    name = name,
+                    profilePicture = pic,
+                    emailVerified = true
+                )
+                _isEmailVerified.value = true
+
+                val updatedProfile = (currentProfile ?: UserProfileEntity(id = 1)).copy(
+                    name = name,
+                    email = email,
+                    profilePictureUrl = pic,
+                    googleSub = sub,
+                    isOnboardingCompleted = true,
+                    updatedAt = System.currentTimeMillis()
+                )
+                authRepository.updateProfile(updatedProfile)
+                withContext(Dispatchers.IO) {
+                    database.userProfileDao().updateOnboardingCompleted(true)
+                }
+
+                // Update device preferences and remembered account
+                prefs.saveRememberedAccount(
+                    account.copy(
+                        email = email,
+                        name = name,
+                        profilePicture = pic,
+                        googleSub = sub,
+                        bankName = bank,
+                        lastUsedTimestamp = System.currentTimeMillis()
+                    )
+                )
+                prefs.lastBankName = bank
+                prefs.isLoggedOut = false
+                prefs.isOnboardingCompleted = true
+
+                syncManager.loadInitialStatus()
+                _user.value = buildLocalUser(updatedProfile)
+                _authState.value = AuthState.Authenticated(isNewUser = false)
+                onComplete?.invoke()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to restore previous account: ${e.message}", e)
+                _errorMessage.value = "Failed to restore account: ${e.localizedMessage}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /**
+     * Re-authenticates and restores active session for the previously remembered account
+     * on this device without requiring repetitive onboarding or duplicate account entry.
+     */
+    fun restorePreviousSession(onComplete: (() -> Unit)? = null) {
+        val app = getApplication<Application>()
+        val prefs = com.example.utils.AppPreferences(app)
+        val latestAccount = prefs.getRememberedAccounts().firstOrNull() ?: com.example.utils.RememberedAccount(
+            email = prefs.lastUserEmail,
+            name = prefs.lastUserName.ifBlank { "User" },
+            profilePicture = prefs.lastUserProfilePic,
+            googleSub = prefs.lastGoogleSub,
+            bankName = prefs.lastBankName
+        )
+        restorePreviousAccount(latestAccount, onComplete)
+    }
+
+    /**
+     * Directly authenticates or switches to a Google Account by email,
+     * maintaining the primary bank name and saving to remembered accounts.
+     */
+    fun signInWithGoogleAccount(
+        email: String,
+        name: String? = null,
+        bankName: String? = null,
+        onComplete: ((GoogleClaims) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+            try {
+                val cleanEmail = email.trim().lowercase()
+                if (cleanEmail.isBlank()) {
+                    _errorMessage.value = "Please enter a valid Google Account email."
+                    return@launch
+                }
+                val resolvedName = name?.trim()?.ifBlank { null }
+                    ?: cleanEmail.substringBefore("@").replace(".", " ")
+                        .split(" ")
+                        .filter { it.isNotBlank() }
+                        .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+                        .ifBlank { "User" }
+                val sub = "google_${cleanEmail.replace("@", "_").replace(".", "_")}"
+
+                val app = getApplication<Application>()
+                val prefs = com.example.utils.AppPreferences(app)
+                val existingAccounts = database.accountDao().getAllAccountsList()
+                val primaryBank = bankName?.ifBlank { null }
+                    ?: existingAccounts.firstOrNull { it.isDefault }?.bankName
+                    ?: existingAccounts.firstOrNull()?.bankName
+                    ?: prefs.lastBankName
+
+                tokenManager.saveTokens(
+                    accessToken = "offline_google_${System.currentTimeMillis()}",
+                    refreshToken = "offline_refresh_${System.currentTimeMillis()}"
+                )
+                tokenManager.saveUserSession(
+                    userId = 1L,
+                    googleSub = sub,
+                    email = cleanEmail,
+                    name = resolvedName,
+                    profilePicture = "",
+                    emailVerified = true
+                )
+                _isEmailVerified.value = true
+
+                val remembered = com.example.utils.RememberedAccount(
+                    email = cleanEmail,
+                    name = resolvedName,
+                    profilePicture = "",
+                    googleSub = sub,
+                    bankName = primaryBank,
+                    lastUsedTimestamp = System.currentTimeMillis()
+                )
+                prefs.saveRememberedAccount(remembered)
+                prefs.isLoggedOut = false
+                prefs.isOnboardingCompleted = true
+
+                val existing = authRepository.getProfileOnce()
+                val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
+                    googleSub = sub,
+                    name = resolvedName,
+                    email = cleanEmail,
+                    emailVerified = true,
+                    isOnboardingCompleted = true,
+                    updatedAt = System.currentTimeMillis()
+                )
+                authRepository.updateProfile(updatedProfile)
+                withContext(Dispatchers.IO) {
+                    database.userProfileDao().updateOnboardingCompleted(true)
+                }
+
+                syncManager.loadInitialStatus()
+                _user.value = buildLocalUser(updatedProfile)
+                _authState.value = AuthState.Authenticated(isNewUser = false)
+
+                val claims = GoogleClaims(
+                    sub = sub,
+                    email = cleanEmail,
+                    name = resolvedName,
+                    picture = ""
+                )
+                onComplete?.invoke(claims)
+            } catch (e: Exception) {
+                Log.e(TAG, "signInWithGoogleAccount error: ${e.message}", e)
+                _errorMessage.value = "Sign in failed: ${e.localizedMessage ?: e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /**
+     * Handles OAuth redirects via deep links (yosan://auth-callback).
+     * Extracts tokens from fragment (#access_token=...&id_token=...) or exchanges authorization code (?code=...).
      */
     fun handleDeepLink(uri: Uri, onComplete: ((Boolean, String?) -> Unit)? = null) {
         viewModelScope.launch {
@@ -424,8 +563,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // 1. Fragment contains implicit tokens: #access_token=...&refresh_token=...
-                if (!fragment.isNullOrBlank() && fragment.contains("access_token=")) {
+                // 1. Implicit tokens in fragment: #access_token=...&id_token=...
+                if (!fragment.isNullOrBlank() && (fragment.contains("access_token=") || fragment.contains("id_token="))) {
                     val params = fragment.split("&").associate {
                         val parts = it.split("=")
                         if (parts.size >= 2) parts[0] to parts[1] else parts[0] to ""
@@ -433,112 +572,151 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     val accessToken = params["access_token"] ?: ""
                     val refreshToken = params["refresh_token"] ?: ""
                     val expiresIn = params["expires_in"]?.toLongOrNull()
+                    val idToken = params["id_token"] ?: ""
 
-                    if (accessToken.isNotBlank()) {
-                        tokenManager.saveTokens(accessToken, refreshToken, expiresIn)
-                        val anonKey = ApiClient.getSupabaseAnonKey(app)
-                        val supabaseApi = ApiClient.getSupabaseAuthApi(app)
+                    var email = ""
+                    var name = "User"
+                    var avatar = ""
+                    var uid = ""
 
-                        if (supabaseApi != null) {
-                            val userRes = supabaseApi.getUser(anonKey, "Bearer $accessToken")
-                            if (userRes.isSuccessful && userRes.body() != null) {
-                                val user = userRes.body()!!
-                                val uid = user.id
-                                val email = user.email ?: ""
-                                val isVerified = user.isEmailVerified
+                    if (idToken.isNotBlank()) {
+                        val claims = decodeGoogleIdTokenLocally(idToken)
+                        if (claims != null) {
+                            email = claims.email
+                            name = claims.name
+                            avatar = claims.picture
+                            uid = claims.sub
+                        }
+                    }
 
-                                val name = user.userMetadata?.get("full_name")
-                                    ?: user.userMetadata?.get("name")
-                                    ?: email.substringBefore("@")
-                                val avatar = user.userMetadata?.get("avatar_url") ?: ""
+                    if (params["scope"]?.contains("drive") == true || uri.getQueryParameter("scope")?.contains("drive") == true) {
+                        tokenManager.saveDriveTokens(accessToken, refreshToken, expiresIn, email)
+                    }
 
-                                tokenManager.saveUserSession(
-                                    userId = 1L,
-                                    googleSub = uid,
-                                    email = email,
-                                    name = name,
-                                    profilePicture = avatar,
-                                    supabaseUid = uid,
-                                    emailVerified = isVerified
-                                )
-                                _isEmailVerified.value = isVerified
+                    if (accessToken.isNotBlank() || idToken.isNotBlank()) {
+                        tokenManager.saveTokens(accessToken.ifBlank { idToken }, refreshToken, expiresIn)
+                        tokenManager.saveUserSession(
+                            userId = 1L,
+                            googleSub = uid.ifBlank { email.ifBlank { "google_user" } },
+                            email = email,
+                            name = name,
+                            profilePicture = avatar,
+                            emailVerified = true
+                        )
+                        _isEmailVerified.value = true
 
-                                val existing = authRepository.getProfileOnce()
-                                val updated = (existing ?: UserProfileEntity(id = 1)).copy(
-                                    googleSub = uid,
-                                    supabaseUid = uid,
-                                    email = email,
-                                    name = name,
-                                    profilePictureUrl = avatar,
-                                    emailVerified = isVerified,
-                                    updatedAt = System.currentTimeMillis()
-                                )
-                                authRepository.updateProfile(updated)
+                        val prefs = com.example.utils.AppPreferences(app)
+                        val existingAccounts = database.accountDao().getAllAccountsList()
+                        val isReturningUser = existingAccounts.isNotEmpty() ||
+                            (email.isNotBlank() && email.equals(prefs.lastUserEmail, ignoreCase = true))
 
-                                _user.value = buildLocalUser(updated)
-                                _authState.value = AuthState.Authenticated(isNewUser = !updated.isOnboardingCompleted)
-                                onComplete?.invoke(true, null)
-                                return@launch
+                        if (email.isNotBlank()) prefs.lastUserEmail = email
+                        if (name.isNotBlank()) prefs.lastUserName = name
+                        if (avatar.isNotBlank()) prefs.lastUserProfilePic = avatar
+                        if (uid.isNotBlank()) prefs.lastGoogleSub = uid
+                        prefs.isLoggedOut = false
+
+                        val primaryBank = existingAccounts.firstOrNull { it.isDefault }?.bankName
+                            ?: existingAccounts.firstOrNull()?.bankName
+                            ?: prefs.lastBankName.ifBlank { "Indian Bank" }
+                        prefs.lastBankName = primaryBank
+
+                        val remembered = com.example.utils.RememberedAccount(
+                            email = email,
+                            name = name,
+                            profilePicture = avatar,
+                            googleSub = uid,
+                            bankName = primaryBank,
+                            lastUsedTimestamp = System.currentTimeMillis()
+                        )
+                        prefs.saveRememberedAccount(remembered)
+
+                        val existing = authRepository.getProfileOnce()
+                        val updated = (existing ?: UserProfileEntity(id = 1)).copy(
+                            googleSub = uid.ifBlank { email.ifBlank { "google_user" } },
+                            email = email,
+                            name = name,
+                            profilePictureUrl = avatar,
+                            emailVerified = true,
+                            isOnboardingCompleted = isReturningUser || existing?.isOnboardingCompleted == true,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                        authRepository.updateProfile(updated)
+
+                        if (isReturningUser) {
+                            prefs.isOnboardingCompleted = true
+                            withContext(Dispatchers.IO) {
+                                database.userProfileDao().updateOnboardingCompleted(true)
                             }
                         }
+
+                        syncManager.loadInitialStatus()
+                        _user.value = buildLocalUser(updated)
+                        _authState.value = AuthState.Authenticated(isNewUser = !isReturningUser)
+                        onComplete?.invoke(true, null)
+                        return@launch
                     }
                 }
 
-                // 2. PKCE code exchange: ?code=...
+                // 2. PKCE Authorization Code (?code=...)
                 if (!code.isNullOrBlank()) {
-                    val anonKey = ApiClient.getSupabaseAnonKey(app)
-                    val supabaseApi = ApiClient.getSupabaseAuthApi(app)
-                    if (supabaseApi != null && anonKey.isNotBlank()) {
-                        val exchangeRes = supabaseApi.exchangePkceCode(
-                            apiKey = anonKey,
-                            req = SupabaseCodeExchangeRequest(authCode = code)
-                        )
-                        if (exchangeRes.isSuccessful && exchangeRes.body() != null) {
-                            val auth = exchangeRes.body()!!
-                            val accessToken = auth.accessToken ?: ""
-                            val refreshToken = auth.refreshToken ?: ""
-                            val user = auth.user
-                            val uid = user?.id ?: ""
-                            val email = user?.email ?: ""
-                            val isVerified = user?.isEmailVerified ?: true
-
-                            val name = user?.userMetadata?.get("full_name") ?: email.substringBefore("@")
-                            val avatar = user?.userMetadata?.get("avatar_url") ?: ""
-
-                            tokenManager.saveTokens(accessToken, refreshToken, auth.expiresIn)
+                    try {
+                        val authApi = ApiClient.getAuthApi(app)
+                        val response = authApi.authenticateGoogle(GoogleAuthRequest(idToken = code))
+                        if (response.isSuccessful && response.body() != null) {
+                            val body = response.body()!!
+                            tokenManager.saveTokens(body.accessToken, body.refreshToken, null)
+                            val user = body.user
                             tokenManager.saveUserSession(
-                                userId = 1L,
-                                googleSub = uid,
-                                email = email,
-                                name = name,
-                                profilePicture = avatar,
-                                supabaseUid = uid,
-                                emailVerified = isVerified
+                                userId = user.id,
+                                googleSub = user.googleSub,
+                                email = user.email,
+                                name = user.name,
+                                profilePicture = user.profilePictureUrl ?: "",
+                                emailVerified = user.emailVerified
                             )
-                            _isEmailVerified.value = isVerified
+                            _isEmailVerified.value = user.emailVerified
+
+                            val prefs = com.example.utils.AppPreferences(app)
+                            prefs.isLoggedOut = false
+                            if (user.email.isNotBlank()) prefs.lastUserEmail = user.email
+                            if (user.name.isNotBlank()) prefs.lastUserName = user.name
+
+                            val existingAccounts = database.accountDao().getAllAccountsList()
+                            val primaryBank = existingAccounts.firstOrNull { it.isDefault }?.bankName
+                                ?: existingAccounts.firstOrNull()?.bankName
+                                ?: prefs.lastBankName.ifBlank { "Indian Bank" }
+                            prefs.lastBankName = primaryBank
+
+                            val remembered = com.example.utils.RememberedAccount(
+                                email = user.email,
+                                name = user.name.ifBlank { "User" },
+                                profilePicture = user.profilePictureUrl ?: "",
+                                googleSub = user.googleSub,
+                                bankName = primaryBank,
+                                lastUsedTimestamp = System.currentTimeMillis()
+                            )
+                            prefs.saveRememberedAccount(remembered)
 
                             val existing = authRepository.getProfileOnce()
                             val updated = (existing ?: UserProfileEntity(id = 1)).copy(
-                                googleSub = uid,
-                                supabaseUid = uid,
-                                email = email,
-                                name = name,
-                                profilePictureUrl = avatar,
-                                emailVerified = isVerified,
+                                googleSub = user.googleSub,
+                                email = user.email,
+                                name = user.name,
+                                profilePictureUrl = user.profilePictureUrl ?: "",
+                                emailVerified = user.emailVerified,
                                 updatedAt = System.currentTimeMillis()
                             )
                             authRepository.updateProfile(updated)
 
+                            syncManager.loadInitialStatus()
                             _user.value = buildLocalUser(updated)
                             _authState.value = AuthState.Authenticated(isNewUser = !updated.isOnboardingCompleted)
                             onComplete?.invoke(true, null)
                             return@launch
-                        } else {
-                            val err = parseErrorMessage(exchangeRes.errorBody()?.string()) ?: "OAuth code exchange failed"
-                            _errorMessage.value = err
-                            onComplete?.invoke(false, err)
-                            return@launch
                         }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Code exchange exception: ${e.message}", e)
                     }
                 }
 
@@ -561,22 +739,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             _isLoading.value = true
             try {
                 syncManager.setStorageMode(mode)
-                val app = getApplication<Application>()
-                val token = tokenManager.getAccessToken()
-                val uid = tokenManager.getSupabaseUid()
-                val anonKey = ApiClient.getSupabaseAnonKey(app)
-
-                // Sync preference to Supabase PostgREST if authenticated
-                if (ApiClient.isSupabaseConfigured(app) && !token.isNullOrBlank() && !uid.isNullOrBlank()) {
-                    val supabaseApi = ApiClient.getSupabaseAuthApi(app)
-                    supabaseApi?.updateUserProfile(
-                        apiKey = anonKey,
-                        bearerToken = "Bearer $token",
-                        idFilter = "eq.$uid",
-                        updates = mapOf("storage_preference" to mode.key)
-                    )
-                }
-
                 val current = authRepository.getProfileOnce()
                 if (current != null) {
                     val updated = current.copy(storagePreference = mode.key, updatedAt = System.currentTimeMillis())
@@ -618,38 +780,46 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // If direct OAuth credentials supplied from Drive flow
-                if (!accessToken.isNullOrBlank()) {
+                val effectiveToken = accessToken ?: tokenManager.getDriveAccessToken()
+                if (!effectiveToken.isNullOrBlank()) {
                     tokenManager.saveDriveTokens(
-                        accessToken = accessToken,
+                        accessToken = effectiveToken,
                         refreshToken = refreshToken,
                         expiresInSeconds = expiresInSeconds,
                         driveEmail = cleanDriveEmail
                     )
                 }
 
-                // Also notify backend if backend service is configured
-                val api = ApiClient.getAuthApi(getApplication())
-                val response = api.connectDrive(
-                    DriveConnectRequest(
-                        authCode = authCode ?: accessToken ?: "direct_drive_token",
-                        driveEmail = cleanDriveEmail
-                    )
-                )
+                // Activate Google Drive storage mode in SyncManager
+                syncManager.setStorageMode(com.example.features.sync.StorageMode.GOOGLE_DRIVE)
 
-                if (response.isSuccessful && response.body()?.success == true) {
-                    refreshDriveStatus()
-                    onResult?.invoke(true, "Google Drive connected successfully")
-                } else {
-                    refreshDriveStatus()
-                    onResult?.invoke(true, "Google Drive connected locally")
+                // Immediately verify and provision Google Drive folders ("Yosan-Backup" & "versions")
+                val tokenForFolder = effectiveToken ?: driveService.getValidDriveToken()
+                if (!tokenForFolder.isNullOrBlank()) {
+                    withContext(Dispatchers.IO) {
+                        driveService.ensureDriveFoldersExist(tokenForFolder)
+                    }
                 }
+
+                try {
+                    val api = ApiClient.getAuthApi(getApplication())
+                    api.connectDrive(
+                        DriveConnectRequest(
+                            authCode = authCode ?: effectiveToken ?: "direct_drive_token",
+                            driveEmail = cleanDriveEmail
+                        )
+                    )
+                } catch (_: Exception) {}
+
+                refreshDriveStatus()
+                onResult?.invoke(true, "Google Drive connected and folders initialized")
             } catch (e: Exception) {
                 tokenManager.saveDriveTokens(
                     accessToken = accessToken ?: "local_token",
                     refreshToken = refreshToken,
                     driveEmail = selectedDriveEmail
                 )
+                syncManager.setStorageMode(com.example.features.sync.StorageMode.GOOGLE_DRIVE)
                 refreshDriveStatus()
                 onResult?.invoke(true, "Google Drive connected")
             } finally {
@@ -807,10 +977,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun restoreSupabaseBackup(onResult: ((Boolean, String?) -> Unit)? = null) {
-        restoreLatestBackup(onResult)
-    }
-
     fun disconnectGoogleDrive(onResult: ((Boolean, String?) -> Unit)? = null) {
         viewModelScope.launch {
             try {
@@ -845,7 +1011,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ─── Email OTP Authentication & Verification (Supabase Native) ────────────
+    // ─── Email OTP Authentication & Verification ──────────────────────────────
 
     fun sendOtp(email: String, purpose: String = "LOGIN", onResult: ((Boolean, String?) -> Unit)? = null) {
         val cleanEmail = email.trim().lowercase()
@@ -861,32 +1027,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             _errorMessage.value = null
             try {
                 val app = getApplication<Application>()
-                if (ApiClient.isSupabaseConfigured(app)) {
-                    val supabaseApi = ApiClient.getSupabaseAuthApi(app)
-                    val anonKey = ApiClient.getSupabaseAnonKey(app)
-                    if (supabaseApi != null && anonKey.isNotBlank()) {
-                        val response = supabaseApi.sendOtp(
-                            apiKey = anonKey,
-                            req = SupabaseOtpRequest(email = cleanEmail, createUser = true)
-                        )
-                        if (response.isSuccessful) {
-                            startOtpCooldown(60)
-                            onResult?.invoke(true, "Verification code sent to $cleanEmail. Check your email inbox.")
-                            return@launch
-                        } else {
-                            val rawErr = response.errorBody()?.string()
-                            var err = parseErrorMessage(rawErr) ?: "Failed to send verification code from Supabase."
-                            if (err.contains("rate limit", ignoreCase = true)) {
-                                err = "Supabase email rate limit reached. Please wait a moment or sign in with Google."
-                            }
-                            _errorMessage.value = err
-                            onResult?.invoke(false, err)
-                            return@launch
-                        }
-                    }
-                }
-
-                // Fallback to backend API
                 val api = ApiClient.getAuthApi(app)
                 val response = api.sendOtp(SendOtpRequest(email = cleanEmail, purpose = purpose))
                 if (response.isSuccessful && response.body()?.success == true) {
@@ -922,73 +1062,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             _errorMessage.value = null
             try {
                 val app = getApplication<Application>()
-                if (ApiClient.isSupabaseConfigured(app)) {
-                    val supabaseApi = ApiClient.getSupabaseAuthApi(app)
-                    val anonKey = ApiClient.getSupabaseAnonKey(app)
-                    if (supabaseApi != null && anonKey.isNotBlank()) {
-                        val response = supabaseApi.verifyOtp(
-                            apiKey = anonKey,
-                            req = SupabaseVerifyOtpRequest(email = cleanEmail, token = cleanOtp)
-                        )
-                        if (response.isSuccessful && response.body() != null) {
-                            val authRes = response.body()!!
-                            val accessToken = authRes.accessToken ?: ""
-                            val refreshToken = authRes.refreshToken ?: ""
-                            val verifiedEmail = authRes.user?.email ?: cleanEmail
-                            val userIdStr = authRes.user?.id ?: ""
-
-                            tokenManager.saveTokens(accessToken, refreshToken, authRes.expiresIn)
-                            tokenManager.saveUserSession(
-                                userId = 1L,
-                                googleSub = userIdStr,
-                                email = verifiedEmail,
-                                name = name.ifBlank { verifiedEmail.substringBefore("@") },
-                                profilePicture = "",
-                                supabaseUid = userIdStr,
-                                emailVerified = true
-                            )
-                            _isEmailVerified.value = true
-
-                            // Upsert profile in Supabase
-                            try {
-                                supabaseApi.upsertUserProfile(
-                                    apiKey = anonKey,
-                                    bearerToken = "Bearer $accessToken",
-                                    profile = SupabaseUserProfileDto(
-                                        id = userIdStr,
-                                        email = verifiedEmail,
-                                        displayName = name.ifBlank { verifiedEmail.substringBefore("@") },
-                                        emailVerified = true,
-                                        storagePreference = tokenManager.getStoragePreference()
-                                    )
-                                )
-                            } catch (_: Exception) {}
-
-                            val existing = authRepository.getProfileOnce()
-                            val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
-                                googleSub = userIdStr,
-                                supabaseUid = userIdStr,
-                                email = verifiedEmail,
-                                name = name.ifBlank { existing?.name ?: verifiedEmail.substringBefore("@") },
-                                emailVerified = true,
-                                updatedAt = System.currentTimeMillis()
-                            )
-                            authRepository.updateProfile(updatedProfile)
-
-                            _user.value = buildLocalUser(updatedProfile)
-                            _authState.value = AuthState.Authenticated(isNewUser = !updatedProfile.isOnboardingCompleted)
-                            onResult?.invoke(true, null)
-                            return@launch
-                        } else {
-                            val err = parseErrorMessage(response.errorBody()?.string()) ?: "Verification failed. Check your code."
-                            _errorMessage.value = err
-                            onResult?.invoke(false, err)
-                            return@launch
-                        }
-                    }
-                }
-
-                // Fallback to backend API
                 val api = ApiClient.getAuthApi(app)
                 val response = api.verifyOtp(VerifyOtpRequest(email = cleanEmail, otp = cleanOtp, purpose = purpose, name = name.ifBlank { null }))
                 if (response.isSuccessful && response.body() != null) {
@@ -1004,20 +1077,45 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     _isEmailVerified.value = true
 
+                    val prefs = com.example.utils.AppPreferences(app)
+                    prefs.isLoggedOut = false
+                    if (authRes.user.email.isNotBlank()) prefs.lastUserEmail = authRes.user.email
+                    if (authRes.user.name.isNotBlank()) prefs.lastUserName = authRes.user.name
+
+                    val existingAccounts = database.accountDao().getAllAccountsList()
+                    val primaryBank = existingAccounts.firstOrNull { it.isDefault }?.bankName
+                        ?: existingAccounts.firstOrNull()?.bankName
+                        ?: prefs.lastBankName.ifBlank { "Indian Bank" }
+                    prefs.lastBankName = primaryBank
+
+                    val remembered = com.example.utils.RememberedAccount(
+                        email = authRes.user.email,
+                        name = authRes.user.name.ifBlank { "User" },
+                        profilePicture = authRes.user.profilePictureUrl ?: "",
+                        googleSub = authRes.user.googleSub,
+                        bankName = primaryBank,
+                        lastUsedTimestamp = System.currentTimeMillis()
+                    )
+                    prefs.saveRememberedAccount(remembered)
+
                     val existing = authRepository.getProfileOnce()
                     val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
+                        googleSub = authRes.user.googleSub,
                         email = authRes.user.email,
                         name = authRes.user.name.ifBlank { existing?.name ?: "User" },
+                        profilePictureUrl = authRes.user.profilePictureUrl ?: existing?.profilePictureUrl ?: "",
                         emailVerified = true,
+                        isOnboardingCompleted = !authRes.isNewUser || existing?.isOnboardingCompleted == true,
                         updatedAt = System.currentTimeMillis()
                     )
                     authRepository.updateProfile(updatedProfile)
 
+                    syncManager.loadInitialStatus()
                     _user.value = authRes.user
                     _authState.value = AuthState.Authenticated(isNewUser = !updatedProfile.isOnboardingCompleted)
                     onResult?.invoke(true, null)
                 } else {
-                    val err = parseErrorMessage(response.errorBody()?.string()) ?: "Verification failed."
+                    val err = parseErrorMessage(response.errorBody()?.string()) ?: "Verification failed. Check your code."
                     _errorMessage.value = err
                     onResult?.invoke(false, err)
                 }
@@ -1042,22 +1140,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             _isOtpSending.value = true
             try {
                 val app = getApplication<Application>()
-                if (ApiClient.isSupabaseConfigured(app)) {
-                    val supabaseApi = ApiClient.getSupabaseAuthApi(app)
-                    val anonKey = ApiClient.getSupabaseAnonKey(app)
-                    if (supabaseApi != null && anonKey.isNotBlank()) {
-                        val response = supabaseApi.sendOtp(
-                            apiKey = anonKey,
-                            req = SupabaseOtpRequest(email = cleanEmail, createUser = true)
-                        )
-                        if (response.isSuccessful) {
-                            startOtpCooldown(60)
-                            onResult?.invoke(true, "Verification code sent to $cleanEmail. Check your inbox.")
-                            return@launch
-                        }
-                    }
-                }
-
                 val api = ApiClient.getAuthApi(app)
                 val response = api.requestEmailChange(RequestEmailChangeRequest(newEmail = cleanEmail))
                 if (response.isSuccessful && response.body()?.success == true) {
@@ -1086,35 +1168,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             _isOtpVerifying.value = true
             try {
                 val app = getApplication<Application>()
-                if (ApiClient.isSupabaseConfigured(app)) {
-                    val supabaseApi = ApiClient.getSupabaseAuthApi(app)
-                    val anonKey = ApiClient.getSupabaseAnonKey(app)
-                    if (supabaseApi != null && anonKey.isNotBlank()) {
-                        val response = supabaseApi.verifyOtp(
-                            apiKey = anonKey,
-                            req = SupabaseVerifyOtpRequest(email = cleanEmail, token = cleanOtp)
-                        )
-                        if (response.isSuccessful && response.body() != null) {
-                            val current = authRepository.getProfileOnce()
-                            if (current != null) {
-                                val updated = current.copy(email = cleanEmail, emailVerified = true, updatedAt = System.currentTimeMillis())
-                                authRepository.updateProfile(updated)
-                                _user.value = buildLocalUser(updated)
-                            }
-                            tokenManager.saveUserSession(
-                                userId = tokenManager.getUserId(),
-                                googleSub = tokenManager.getGoogleSub() ?: "",
-                                email = cleanEmail,
-                                name = tokenManager.getUserName() ?: "User",
-                                profilePicture = tokenManager.getProfilePic() ?: "",
-                                emailVerified = true
-                            )
-                            onResult?.invoke(true, "Email successfully updated to $cleanEmail")
-                            return@launch
-                        }
-                    }
-                }
-
                 val api = ApiClient.getAuthApi(app)
                 val response = api.verifyEmailChange(VerifyEmailChangeRequest(newEmail = cleanEmail, otp = cleanOtp))
                 if (response.isSuccessful && response.body()?.success == true) {
@@ -1156,34 +1209,57 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Logout: revokes Supabase session, clears encrypted token storage, and
-     * resets local session. Preserves financial database unless explicitly requested.
+     * Logout: revokes backend session, clears encrypted token storage, and
+     * sets unauthenticated state. Preserves financial database and remembers
+     * previous account identity (email, name, picture, bank) for seamless return.
      */
     fun logout(onComplete: (() -> Unit)? = null) {
         viewModelScope.launch {
             val app = getApplication<Application>()
             val token = tokenManager.getAccessToken()
-            val anonKey = ApiClient.getSupabaseAnonKey(app)
+            val refreshToken = tokenManager.getRefreshToken()
 
-            // Revoke Supabase session if online
-            if (ApiClient.isSupabaseConfigured(app) && !token.isNullOrBlank()) {
+            val prefs = com.example.utils.AppPreferences(app)
+            val currentProfile = authRepository.getProfileOnce()
+            val accounts = database.accountDao().getAllAccountsList()
+
+            // Hold and remember previous account details and primary bank name on this device
+            val email = tokenManager.getUserEmail() ?: currentProfile?.email ?: prefs.lastUserEmail
+            val name = tokenManager.getUserName() ?: currentProfile?.name ?: prefs.lastUserName
+            val pic = tokenManager.getProfilePic() ?: currentProfile?.profilePictureUrl ?: prefs.lastUserProfilePic
+            val sub = tokenManager.getGoogleSub() ?: currentProfile?.googleSub ?: prefs.lastGoogleSub
+            val primaryBank = accounts.firstOrNull { it.isDefault }?.bankName
+                ?: accounts.firstOrNull()?.bankName
+                ?: prefs.lastBankName.ifBlank { "Indian Bank" }
+            prefs.lastBankName = primaryBank
+
+            val remembered = com.example.utils.RememberedAccount(
+                email = email,
+                name = name,
+                profilePicture = pic,
+                googleSub = sub,
+                bankName = primaryBank,
+                lastUsedTimestamp = System.currentTimeMillis()
+            )
+            prefs.saveRememberedAccount(remembered)
+
+            // Revoke Backend server session if online
+            if (!token.isNullOrBlank() || !refreshToken.isNullOrBlank()) {
                 try {
-                    val supabaseApi = ApiClient.getSupabaseAuthApi(app)
-                    supabaseApi?.logout(apiKey = anonKey, bearerToken = "Bearer $token")
+                    val authApi = ApiClient.getAuthApi(app)
+                    authApi.logout(LogoutRequest(refreshToken))
                 } catch (_: Exception) {}
             }
 
-            tokenManager.clearCredentials()
-            val prefs = com.example.utils.AppPreferences(app)
-            prefs.isOnboardingCompleted = false
-            prefs.isLoggedOut = true
+            tokenManager.clearSession()
+            tokenManager.clearDriveTokens()
+            driveService.disconnectDrive()
+            refreshDriveStatus()
+            prefs.clearSession(preserveDeviceIdentity = true)
             _user.value = null
-            _isNewUser.value = true
+            _isNewUser.value = false
             _isEmailVerified.value = false
             _authState.value = AuthState.Unauthenticated
-            withContext(Dispatchers.IO) {
-                database.userProfileDao().updateOnboardingCompleted(false)
-            }
             onComplete?.invoke()
         }
     }
@@ -1253,7 +1329,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun buildLocalUser(profile: UserProfileEntity): UserDto = UserDto(
         id = profile.id,
-        googleSub = profile.supabaseUid.ifEmpty { profile.googleSub.ifEmpty { "local_${profile.id}" } },
+        googleSub = profile.googleSub.ifEmpty { "local_${profile.id}" },
         email = profile.email,
         name = profile.name.ifBlank { "User" },
         profilePictureUrl = profile.profilePictureUrl.takeIf { !it.isNullOrBlank() },

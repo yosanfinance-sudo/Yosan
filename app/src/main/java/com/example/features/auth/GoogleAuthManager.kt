@@ -14,6 +14,9 @@ import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.example.BuildConfig
+import android.content.Intent
+import android.net.Uri
+import java.util.UUID
 
 sealed class GoogleAuthResult {
     data class Success(
@@ -24,6 +27,8 @@ sealed class GoogleAuthResult {
     ) : GoogleAuthResult()
     object Cancelled : GoogleAuthResult()
     data class Error(val message: String, val code: String = "GOOGLE_AUTH_FAILED") : GoogleAuthResult()
+    data class FallbackAccountPicker(val message: String) : GoogleAuthResult()
+    data class RequiresBrowserOAuth(val authUri: Uri, val message: String) : GoogleAuthResult()
 }
 
 class GoogleAuthManager(private val context: Context) {
@@ -57,33 +62,18 @@ class GoogleAuthManager(private val context: Context) {
         Log.i(TAG, "Initiating Google Sign-In with Web Client ID: $webClientId")
 
         return try {
-            val response = try {
-                val signInWithGoogleOption = GetSignInWithGoogleOption.Builder(webClientId)
-                    .build()
+            val googleIdOption = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(false)
+                .setServerClientId(webClientId)
+                .setAutoSelectEnabled(false)
+                .build()
 
-                val request = GetCredentialRequest.Builder()
-                    .addCredentialOption(signInWithGoogleOption)
-                    .build()
+            val request = GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
+                .build()
 
-                Log.d(TAG, "Requesting credential via GetSignInWithGoogleOption")
-                credentialManager.getCredential(targetContext, request)
-            } catch (fallbackEx: Exception) {
-                if (fallbackEx is GetCredentialCancellationException) {
-                    throw fallbackEx
-                }
-                Log.w(TAG, "GetSignInWithGoogleOption fallback to GetGoogleIdOption: ${fallbackEx.message}")
-                val googleIdOption = GetGoogleIdOption.Builder()
-                    .setFilterByAuthorizedAccounts(false)
-                    .setServerClientId(webClientId)
-                    .setAutoSelectEnabled(false)
-                    .build()
-
-                val fallbackRequest = GetCredentialRequest.Builder()
-                    .addCredentialOption(googleIdOption)
-                    .build()
-
-                credentialManager.getCredential(targetContext, fallbackRequest)
-            }
+            Log.i(TAG, "Requesting credential via GetGoogleIdOption with server client ID: $webClientId")
+            val response = credentialManager.getCredential(targetContext, request)
 
             val credential = response.credential
             Log.i(TAG, "Credential received: class=${credential::class.java.simpleName}")
@@ -138,28 +128,106 @@ class GoogleAuthManager(private val context: Context) {
                 )
             }
         } catch (e: GetCredentialCancellationException) {
-            Log.d(TAG, "User cancelled Google Sign-In picker")
-            GoogleAuthResult.Cancelled
+            val msg = e.message ?: ""
+            Log.d(TAG, "GetCredentialCancellationException: $msg")
+            if (msg.contains("Cannot find a matching credential", ignoreCase = true) || msg.contains("[16]")) {
+                GoogleAuthResult.FallbackAccountPicker("No matching credential in Credential Manager. Opening device account chooser.")
+            } else {
+                GoogleAuthResult.Cancelled
+            }
         } catch (e: NoCredentialException) {
             Log.w(TAG, "No Google accounts available on device: ${e.message}")
-            GoogleAuthResult.Error(
-                "No Google accounts found on this device. Please add a Google account in phone Settings.",
-                "NO_CREDENTIALS"
-            )
+            GoogleAuthResult.FallbackAccountPicker("No Google accounts found in Credential Manager. Opening device account chooser.")
         } catch (e: GetCredentialException) {
             Log.e(TAG, "GetCredentialException [type=${e.type}]: ${e.message}", e)
             val rawMsg = e.message ?: "Google Sign-In failed"
-            if (rawMsg.contains("28444") || rawMsg.contains("developer console", ignoreCase = true)) {
-                GoogleAuthResult.Error(
-                    "Google Cloud Console configuration error (28444): Ensure your SHA-1 fingerprint and package name (yosan.finance) are registered as an Android Client ID.",
-                    "DEVELOPER_ERROR_28444"
-                )
-            } else {
-                GoogleAuthResult.Error(rawMsg, "GOOGLE_AUTH_FAILED")
-            }
+            GoogleAuthResult.FallbackAccountPicker(rawMsg)
         } catch (e: Exception) {
             Log.e(TAG, "Unexpected auth error: ${e.message}", e)
-            GoogleAuthResult.Error(e.message ?: "An unexpected error occurred during Google Auth", "GOOGLE_AUTH_FAILED")
+            GoogleAuthResult.FallbackAccountPicker(e.message ?: "An unexpected error occurred during Google Auth")
+        }
+    }
+
+    /**
+     * Builds an Android system Account Chooser intent to select any Google account on this device.
+     * Works natively across all Android versions without requiring Google Cloud Console SHA-1 registration.
+     */
+    fun createSystemAccountPickerIntent(): Intent? {
+        return try {
+            android.accounts.AccountManager.newChooseAccountIntent(
+                null,
+                null,
+                arrayOf("com.google"),
+                null,
+                null,
+                null,
+                null
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create system account picker intent: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Builds a standard OAuth 2.0 authorization URL for Google Identity & Google Drive.
+     * Complies with RFC 6749 & OpenID Connect Core specifications.
+     */
+    fun getOAuth2AuthorizationUri(
+        redirectUri: String = "yosan://auth-callback",
+        includeDriveScope: Boolean = false,
+        responseType: String = "id_token token",
+        state: String = UUID.randomUUID().toString(),
+        nonce: String = UUID.randomUUID().toString(),
+        loginHint: String? = null
+    ): Uri {
+        val clientId = getWebClientId()
+        val scopes = mutableListOf("openid", "email", "profile")
+        if (includeDriveScope) {
+            scopes.add("https://www.googleapis.com/auth/drive.file")
+        }
+        val scopeString = scopes.joinToString(" ")
+
+        val builder = Uri.parse("https://accounts.google.com/o/oauth2/v2/auth").buildUpon()
+            .appendQueryParameter("client_id", clientId)
+            .appendQueryParameter("redirect_uri", redirectUri)
+            .appendQueryParameter("response_type", responseType)
+            .appendQueryParameter("scope", scopeString)
+            .appendQueryParameter("nonce", nonce)
+            .appendQueryParameter("state", state)
+            .appendQueryParameter("prompt", "select_account")
+
+        if (!loginHint.isNullOrBlank()) {
+            builder.appendQueryParameter("login_hint", loginHint)
+        }
+        return builder.build()
+    }
+
+    /**
+     * Launches the system browser or Chrome Custom Tab for standard Google OAuth 2.0.
+     */
+    fun launchOAuth2Browser(
+        context: Context,
+        redirectUri: String = "yosan://auth-callback",
+        includeDriveScope: Boolean = false,
+        responseType: String = "id_token token",
+        loginHint: String? = null
+    ): Boolean {
+        return try {
+            val authUri = getOAuth2AuthorizationUri(
+                redirectUri = redirectUri,
+                includeDriveScope = includeDriveScope,
+                loginHint = loginHint
+            )
+            val intent = Intent(Intent.ACTION_VIEW, authUri).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            Log.i(TAG, "Launched OAuth 2.0 browser authorization intent: $authUri")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch OAuth 2.0 browser flow: ${e.message}", e)
+            false
         }
     }
 
@@ -181,3 +249,4 @@ class GoogleAuthManager(private val context: Context) {
         const val DEFAULT_CLIENT_ID = "649210682299-k4cl29pr14o0pkblsodq208iajj2ivad.apps.googleusercontent.com"
     }
 }
+

@@ -70,13 +70,10 @@ class MainActivity : FragmentActivity() {
 
             val authState by authViewModel.authState.collectAsState()
             val authUser by authViewModel.user.collectAsState()
-            val tokenManager = remember { com.example.utils.SecureTokenManager(this@MainActivity) }
-            val isUserLoggedIn = (authState is AuthState.Authenticated) || (authUser != null) || tokenManager.isLoggedIn()
 
             val isExistingUser = !appPreferences.isLoggedOut && (
-                appPreferences.isOnboardingCompleted ||
-                (userProfile?.isOnboardingCompleted == true) ||
-                isUserLoggedIn
+                (authState is AuthState.Authenticated) ||
+                (appPreferences.isOfflineMode && appPreferences.isOnboardingCompleted)
             )
 
             // Keep AppPreferences synchronized with Room UserProfile updates
@@ -213,8 +210,18 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
+                    if (authState is AuthState.Loading) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = androidx.compose.ui.Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                     // Priority 1: GPay-Style App Lock Screen
-                    if (isAppLocked && isBiometricEnabled && isExistingUser) {
+                    else if (isAppLocked && isBiometricEnabled && isExistingUser) {
                         GPayLockScreen(
                             userName = userProfile?.name ?: "User",
                             errorMessage = lockErrorMessage,
@@ -228,7 +235,7 @@ class MainActivity : FragmentActivity() {
                         OnboardingScreen(
                             authViewModel = authViewModel,
                             financeViewModel = financeViewModel,
-                            initialStep = if (appPreferences.isLoggedOut) 1 else 0,
+                            initialStep = if (appPreferences.isLoggedOut || appPreferences.hasPreviousAccountOnDevice) 1 else 0,
                             onComplete = {
                                 appPreferences.isOnboardingCompleted = true
                                 appPreferences.isLoggedOut = false
