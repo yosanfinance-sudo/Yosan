@@ -298,7 +298,7 @@ object BackupService {
         return root
     }
 
-    suspend fun createBackupJson(context: Context, database: AppDatabase): File {
+    suspend fun createBackupJson(context: Context, database: AppDatabase, passphrase: String? = null): File {
         val root = generateBackupJsonObject(database)
         val backupDir = File(context.cacheDir, "backups")
         if (!backupDir.exists()) {
@@ -306,16 +306,26 @@ object BackupService {
         }
         val timeTag = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val backupFile = File(backupDir, "yosan_backup_$timeTag.json")
-        backupFile.writeText(root.toString(2), Charsets.UTF_8)
+        val content = if (!passphrase.isNullOrBlank()) {
+            BackupEncryptionUtil.encrypt(root.toString(2), passphrase)
+        } else {
+            root.toString(2)
+        }
+        backupFile.writeText(content, Charsets.UTF_8)
         return backupFile
     }
 
-    suspend fun saveBackupToStorageUri(context: Context, uri: Uri, database: AppDatabase): Boolean {
+    suspend fun saveBackupToStorageUri(context: Context, uri: Uri, database: AppDatabase, passphrase: String? = null): Boolean {
         return try {
             val root = generateBackupJsonObject(database)
+            val content = if (!passphrase.isNullOrBlank()) {
+                BackupEncryptionUtil.encrypt(root.toString(2), passphrase)
+            } else {
+                root.toString(2)
+            }
             context.contentResolver.openOutputStream(uri)?.use { out ->
                 out.writer(Charsets.UTF_8).use { writer ->
-                    writer.write(root.toString(2))
+                    writer.write(content)
                 }
             }
             true
@@ -325,11 +335,15 @@ object BackupService {
         }
     }
 
-    suspend fun saveBackupToDownloads(context: Context, database: AppDatabase): String? {
+    suspend fun saveBackupToDownloads(context: Context, database: AppDatabase, passphrase: String? = null): String? {
         val root = generateBackupJsonObject(database)
         val timeTag = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val fileName = "yosan_backup_$timeTag.json"
-        val content = root.toString(2)
+        val content = if (!passphrase.isNullOrBlank()) {
+            BackupEncryptionUtil.encrypt(root.toString(2), passphrase)
+        } else {
+            root.toString(2)
+        }
 
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -363,10 +377,20 @@ object BackupService {
     suspend fun restoreBackupJson(
         jsonString: String,
         database: AppDatabase,
-        clearExisting: Boolean = true
+        clearExisting: Boolean = true,
+        passphrase: String? = null
     ): RestoreResult {
         return try {
-            val cleanJson = jsonString.trim().removePrefix("\uFEFF")
+            val decryptedJson = try {
+                if (BackupEncryptionUtil.isEncrypted(jsonString)) {
+                    BackupEncryptionUtil.decrypt(jsonString, passphrase)
+                } else {
+                    jsonString
+                }
+            } catch (e: Exception) {
+                return RestoreResult(false, "Decryption failed: ${e.message}")
+            }
+            val cleanJson = decryptedJson.trim().removePrefix("\uFEFF")
             if (cleanJson.isBlank()) {
                 return RestoreResult(false, "Backup file is empty")
             }

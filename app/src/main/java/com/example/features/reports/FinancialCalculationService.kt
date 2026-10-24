@@ -510,11 +510,51 @@ object FinancialCalculationService {
     fun generateInsights(
         summary: DashboardSummary,
         categoryBreakdown: List<CategoryExpenseItem>,
-        monthlyTrends: List<MonthlyTrendItem>
+        monthlyTrends: List<MonthlyTrendItem>,
+        monthlyBudget: Double = 0.0,
+        categoryBudgets: Map<String, Double> = emptyMap()
     ): List<FinancialInsight> {
         val list = mutableListOf<FinancialInsight>()
 
-        // 1. Savings Rate
+        // 1. Budget Alerts
+        if (monthlyBudget > 0.0) {
+            val budgetPercent = ((summary.totalExpense / monthlyBudget) * 100).toInt()
+            if (summary.totalExpense > monthlyBudget) {
+                list.add(
+                    FinancialInsight(
+                        title = "Monthly Budget Exceeded ($budgetPercent%)",
+                        message = "You have spent ₹${formatRupee(summary.totalExpense)}, exceeding your ₹${formatRupee(monthlyBudget)} monthly limit.",
+                        type = InsightType.WARNING
+                    )
+                )
+            } else if (budgetPercent >= 80) {
+                list.add(
+                    FinancialInsight(
+                        title = "Approaching Budget Limit ($budgetPercent%)",
+                        message = "You have used ₹${formatRupee(summary.totalExpense)} of your ₹${formatRupee(monthlyBudget)} monthly budget.",
+                        type = InsightType.WARNING
+                    )
+                )
+            }
+        }
+
+        // 2. Category Budget Alerts
+        if (categoryBudgets.isNotEmpty()) {
+            for (cat in categoryBreakdown) {
+                val budget = categoryBudgets[cat.categoryName.lowercase()] ?: continue
+                if (budget > 0.0 && cat.amount > budget) {
+                    list.add(
+                        FinancialInsight(
+                            title = "Over Budget: ${cat.categoryName}",
+                            message = "Spent ₹${formatRupee(cat.amount)} exceeding your ₹${formatRupee(budget)} category limit.",
+                            type = InsightType.WARNING
+                        )
+                    )
+                }
+            }
+        }
+
+        // 3. Savings Rate
         if (summary.totalIncome > 0) {
             val savingsRate = ((summary.netSavings / summary.totalIncome) * 100).toInt()
             if (savingsRate > 25) {
@@ -536,7 +576,7 @@ object FinancialCalculationService {
             }
         }
 
-        // 2. Top Category
+        // 4. Top Category
         categoryBreakdown.firstOrNull()?.let { topCat ->
             list.add(
                 FinancialInsight(
@@ -547,7 +587,7 @@ object FinancialCalculationService {
             )
         }
 
-        // 3. Outstanding Loans
+        // 5. Outstanding Loans
         if (summary.totalOutstanding > 0) {
             list.add(
                 FinancialInsight(
@@ -558,7 +598,7 @@ object FinancialCalculationService {
             )
         }
 
-        // 4. Company Expense status
+        // 6. Company Expense status
         if (summary.companyExpense > 0) {
             list.add(
                 FinancialInsight(

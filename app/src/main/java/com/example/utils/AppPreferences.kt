@@ -62,6 +62,21 @@ class AppPreferences(private val context: Context) {
         get() = prefs.getBoolean(KEY_WALKTHROUGH_COMPLETED, false)
         set(value) = prefs.edit().putBoolean(KEY_WALKTHROUGH_COMPLETED, value).apply()
 
+    var isAutoCheckUpdatesEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_CHECK_UPDATES, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_CHECK_UPDATES, value).apply()
+
+    var isBackupEncryptionEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BACKUP_ENCRYPTION_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_BACKUP_ENCRYPTION_ENABLED, value).apply()
+
+    var backupPassphrase: String?
+        get() = prefs.getString(KEY_BACKUP_PASSPHRASE, null)
+        set(value) {
+            if (value != null) prefs.edit().putString(KEY_BACKUP_PASSPHRASE, value).apply()
+            else prefs.edit().remove(KEY_BACKUP_PASSPHRASE).apply()
+        }
+
     var themeMode: String
         get() = prefs.getString(KEY_THEME_MODE, "SYSTEM") ?: "SYSTEM"
         set(value) = prefs.edit().putString(KEY_THEME_MODE, value).apply()
@@ -300,6 +315,9 @@ class AppPreferences(private val context: Context) {
         private const val KEY_EXTERNAL_INTENT_ACTIVE = "external_intent_active"
         private const val KEY_INTRO_NOTE_DISMISSED = "is_intro_note_dismissed"
         private const val KEY_WALKTHROUGH_COMPLETED = "is_walkthrough_completed"
+        private const val KEY_AUTO_CHECK_UPDATES = "auto_check_updates_enabled"
+        private const val KEY_BACKUP_ENCRYPTION_ENABLED = "backup_encryption_enabled"
+        private const val KEY_BACKUP_PASSPHRASE = "backup_passphrase"
         private const val KEY_IS_LOGGED_OUT = "is_logged_out"
         private const val KEY_IS_OFFLINE_MODE = "is_offline_mode"
         private const val KEY_LAST_USER_EMAIL = "last_user_email"

@@ -373,6 +373,26 @@ class UpdateManager(
                 return
             }
 
+            val isFromPlayStore = try {
+                val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    context.packageManager.getInstallSourceInfo(context.packageName).installingPackageName
+                } else {
+                    @Suppress("DEPRECATION")
+                    context.packageManager.getInstallerPackageName(context.packageName)
+                }
+                installer == "com.android.vending"
+            } catch (_: Exception) {
+                false
+            }
+
+            if (isFromPlayStore) {
+                val playIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=${context.packageName}")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(playIntent)
+                return
+            }
+
             // Android 8.0+ unknown sources permission check
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 if (!context.packageManager.canRequestPackageInstalls()) {

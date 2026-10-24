@@ -61,12 +61,15 @@ fun DashboardScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val appPreferences = remember { com.example.utils.AppPreferences(context) }
     val updateManager = remember { UpdateManager(context) }
     val updateState by updateManager.uiState.collectAsState()
     var showUpdateDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        updateManager.checkForUpdates()
+        if (appPreferences.isAutoCheckUpdatesEnabled) {
+            updateManager.checkForUpdates()
+        }
     }
 
     LaunchedEffect(updateState) {

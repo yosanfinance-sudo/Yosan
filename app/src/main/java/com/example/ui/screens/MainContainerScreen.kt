@@ -86,7 +86,7 @@ fun MainContainerScreen(
     var preselectedLoanForRepay by remember { mutableStateOf<LoanEntity?>(null) }
     var selectedTransactionForDetail by remember { mutableStateOf<TransactionEntity?>(null) }
 
-    var showIntroNoteDialog by remember { mutableStateOf(!appPreferences.isIntroNoteDismissed) }
+    var showIntroNoteDialog by remember { mutableStateOf(!appPreferences.isIntroNoteDismissed && !appPreferences.isOnboardingCompleted) }
     var showUserWalkthroughDialog by remember { mutableStateOf(false) }
 
     val smartRulePrompt by viewModel.smartRulePrompt.collectAsState()
@@ -147,7 +147,10 @@ fun MainContainerScreen(
 
     BackHandler(enabled = isBackNavEnabled) {
         when {
-            showIntroNoteDialog -> showIntroNoteDialog = false
+            showIntroNoteDialog -> {
+                appPreferences.isIntroNoteDismissed = true
+                showIntroNoteDialog = false
+            }
             showUserWalkthroughDialog -> showUserWalkthroughDialog = false
             selectedTransactionForDetail != null -> selectedTransactionForDetail = null
             showAddSheet -> {

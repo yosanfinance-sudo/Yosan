@@ -36,10 +36,15 @@ class CompanyExpenseCoordinator(
             try {
                 val transactions = database.transactionDao().getAllTransactionsList()
                 val expenses = database.companyExpenseDao().getAllCompanyExpensesList()
+                if (expenses.isEmpty()) {
+                    return@launch
+                }
 
                 val credits = transactions.filter {
                     (it.creditAmount > 0.0 || (it.amount > 0.0 && it.transactionType == TransactionType.INCOME)) &&
-                    it.description.contains("company", ignoreCase = true)
+                    (it.description.contains("company", ignoreCase = true) ||
+                     it.description.contains("reimbursement", ignoreCase = true) ||
+                     it.description.contains("claim", ignoreCase = true))
                 }
                 val outstandingExpenses = expenses.filter { !it.isReimbursed }
 
@@ -61,7 +66,9 @@ class CompanyExpenseCoordinator(
 
                 val debits = transactions.filter {
                     (it.debitAmount > 0.0 || (it.amount > 0.0 && it.transactionType == TransactionType.EXPENSE)) &&
-                    it.description.contains("company", ignoreCase = true)
+                    (it.description.contains("official expense", ignoreCase = true) ||
+                     it.description.contains("reimbursement", ignoreCase = true) ||
+                     it.description.contains("corp claim", ignoreCase = true))
                 }
                 val unlogged = debits.filter { debit ->
                     val debitAmt = if (debit.debitAmount > 0.0) debit.debitAmount else debit.amount

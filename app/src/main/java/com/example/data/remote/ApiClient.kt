@@ -24,9 +24,7 @@ object ApiClient {
             val custom = prefs.getString(KEY_CUSTOM_URL, null)
             if (!custom.isNullOrBlank()) {
                 val clean = custom.trim()
-                if (clean.contains("192.168.") || clean.contains("10.0.2.2") || clean.contains("localhost")) {
-                    prefs.edit().remove(KEY_CUSTOM_URL).apply()
-                } else {
+                if (clean.startsWith("http://") || clean.startsWith("https://")) {
                     return if (clean.endsWith("/")) clean else "$clean/"
                 }
             }

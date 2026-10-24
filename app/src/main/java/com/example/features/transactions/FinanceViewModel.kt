@@ -421,8 +421,25 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         categoryBreakdown,
         monthlyTrends
     ) { summary, breakdown, trends ->
-        FinancialCalculationService.generateInsights(summary, breakdown, trends)
+        val budgetPrefs = com.example.utils.BudgetPreferences(getApplication())
+        val monthlyBudget = budgetPrefs.monthlyBudget
+        val catBudgets = budgetPrefs.getAllCategoryBudgets()
+        FinancialCalculationService.generateInsights(summary, breakdown, trends, monthlyBudget, catBudgets)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun setMonthlyBudget(amount: Double) {
+        val budgetPrefs = com.example.utils.BudgetPreferences(getApplication())
+        budgetPrefs.monthlyBudget = amount
+    }
+
+    fun setCategoryBudget(categoryName: String, amount: Double) {
+        val budgetPrefs = com.example.utils.BudgetPreferences(getApplication())
+        budgetPrefs.setCategoryBudget(categoryName, amount)
+    }
+
+    fun getMonthlyBudget(): Double {
+        return com.example.utils.BudgetPreferences(getApplication()).monthlyBudget
+    }
 
     // UI Search & Filters
     private val _searchQuery = MutableStateFlow("")
