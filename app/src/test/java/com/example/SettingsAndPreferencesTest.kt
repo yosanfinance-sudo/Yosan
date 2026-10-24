@@ -215,4 +215,42 @@ class SettingsAndPreferencesTest {
         assertTrue(uriString.contains("nonce="))
         assertTrue(uriString.contains("state="))
     }
+
+    @Test
+    fun testOnboardingStep1NextButtonValidation() {
+        val isStep1NextEnabled = { isOffline: Boolean, name: String, isAuthenticated: Boolean ->
+            if (isOffline) name.trim().isNotEmpty() else isAuthenticated
+        }
+
+        // Online mode: MUST be authenticated with Google/backend
+        assertFalse("Online mode without auth must disable Next", isStep1NextEnabled(false, "User", false))
+        assertTrue("Online mode with auth must enable Next", isStep1NextEnabled(false, "User", true))
+
+        // Offline mode: MUST have a non-blank display name
+        assertFalse("Offline mode without name must disable Next", isStep1NextEnabled(true, "", false))
+        assertFalse("Offline mode with blank name must disable Next", isStep1NextEnabled(true, "   ", false))
+        assertTrue("Offline mode with valid name must enable Next", isStep1NextEnabled(true, "Ragul", false))
+    }
+
+    @Test
+    fun testDefaultAccountAssignmentLogic() {
+        val determineDefault = { accounts: List<AccountEntity> ->
+            accounts.isEmpty() || accounts.none { it.isDefault }
+        }
+
+        // No accounts exist yet -> First account MUST be default
+        assertTrue(determineDefault(emptyList()))
+
+        // Existing accounts with NO default -> New account MUST be default
+        val noDefaultAccs = listOf(
+            AccountEntity(id = 1, accountName = "Wallet", bankName = "Paytm", accountNumberMasked = "1234", isDefault = false)
+        )
+        assertTrue(determineDefault(noDefaultAccs))
+
+        // Existing accounts ALREADY have a default -> New account should NOT override default
+        val hasDefaultAccs = listOf(
+            AccountEntity(id = 1, accountName = "Main", bankName = "SBI", accountNumberMasked = "1234", isDefault = true)
+        )
+        assertFalse(determineDefault(hasDefaultAccs))
+    }
 }

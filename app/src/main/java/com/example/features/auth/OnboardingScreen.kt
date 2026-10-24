@@ -1282,7 +1282,7 @@ fun OnboardingScreen(
                     val finalBank = if (selectedBankName == "Other / Custom Bank") customBankName.trim() else selectedBankName.trim()
                     val isNextEnabled = when (step) {
                         0 -> false
-                        1 -> if (isOfflineModeSelected) userName.trim().isNotEmpty() else (emailInput.isNotBlank() || authViewModel.user.value != null)
+                        1 -> if (isOfflineModeSelected) userName.trim().isNotEmpty() else (authViewModel.user.value != null)
                         2 -> finalBank.isNotBlank()
                         3 -> true
                         else -> true
@@ -1314,7 +1314,7 @@ fun OnboardingScreen(
                                                             },
                                                             openingBalance = 0.0,
                                                             currentBalance = 0.0,
-                                                            isDefault = accounts.isEmpty()
+                                                            isDefault = accounts.isEmpty() || accounts.none { it.isDefault }
                                                         )
                                                     )
                                                 }

@@ -143,7 +143,7 @@ class SyncManager(
         database.syncDao().setMetadata(SyncMetadataEntity("sync_status", "SYNCING"))
 
         val currentVersionStr = database.syncDao().getMetadataValue("current_backup_version")
-        val currentVersion = currentVersionStr?.toIntOrNull() ?: 1
+        val currentVersion = currentVersionStr?.toIntOrNull() ?: 0
         val nextVersion = currentVersion + 1
 
         try {

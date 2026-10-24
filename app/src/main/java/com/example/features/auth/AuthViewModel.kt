@@ -417,6 +417,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 prefs.lastBankName = bank
                 prefs.isLoggedOut = false
                 prefs.isOnboardingCompleted = true
+                if (email.isBlank()) {
+                    prefs.isOfflineMode = true
+                }
 
                 syncManager.loadInitialStatus()
                 _user.value = buildLocalUser(updatedProfile)
@@ -814,14 +817,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 refreshDriveStatus()
                 onResult?.invoke(true, "Google Drive connected and folders initialized")
             } catch (e: Exception) {
-                tokenManager.saveDriveTokens(
-                    accessToken = accessToken ?: "local_token",
-                    refreshToken = refreshToken,
-                    driveEmail = selectedDriveEmail
-                )
-                syncManager.setStorageMode(com.example.features.sync.StorageMode.GOOGLE_DRIVE)
-                refreshDriveStatus()
-                onResult?.invoke(true, "Google Drive connected")
+                Log.e(TAG, "Failed to connect Google Drive: ${e.message}", e)
+                onResult?.invoke(false, e.localizedMessage ?: "Failed to connect Google Drive")
             } finally {
                 _isLoading.value = false
             }
@@ -889,8 +886,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             fileId = database.syncDao().getMetadataValue("current_backup_file_id") ?: "local_current",
                             isCurrent = true,
                             createdTime = database.syncDao().getMetadataValue("last_backup_timestamp")?.let { ts ->
-                                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).format(java.util.Date(ts.toLongOrNull() ?: System.currentTimeMillis()))
-                            } ?: java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).format(java.util.Date())
+                                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
+                                    timeZone = java.util.TimeZone.getTimeZone("UTC")
+                                }.format(java.util.Date(ts.toLongOrNull() ?: System.currentTimeMillis()))
+                            } ?: java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
+                                timeZone = java.util.TimeZone.getTimeZone("UTC")
+                            }.format(java.util.Date())
                         )
                     )
                     onResult(true, localList, null)

@@ -120,4 +120,31 @@ class GoogleDriveSyncTest {
         assertFalse(invalidResult.success)
         assertTrue(invalidResult.message.contains("format", ignoreCase = true))
     }
+
+    @Test
+    fun testInitialBackupVersionResolution() {
+        val resolveNextVersion = { currentVersionStr: String? ->
+            val currentVersion = currentVersionStr?.toIntOrNull() ?: 0
+            currentVersion + 1
+        }
+
+        // When never backed up before (null/empty), next version must start at 1
+        assertEquals(1, resolveNextVersion(null))
+        assertEquals(1, resolveNextVersion(""))
+
+        // Subsequent backups increment properly
+        assertEquals(2, resolveNextVersion("1"))
+        assertEquals(3, resolveNextVersion("2"))
+        assertEquals(10, resolveNextVersion("9"))
+    }
+
+    @Test
+    fun testUtcTimestampFormatting() {
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+        val formatted = sdf.format(java.util.Date(1700000000000L))
+        assertEquals("2023-11-14T22:13:20Z", formatted)
+        assertTrue(formatted.endsWith("Z"))
+    }
 }

@@ -67,6 +67,8 @@ server/node_modules/
 *.sqlite
 *.sqlite3
 server/*.db
+# Node server local storage
+server/drive_storage/
 server/finance_manager.db
 npm-debug.log*
 yarn-debug.log*

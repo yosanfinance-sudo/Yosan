@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { google } = require('googleapis');
 const db = require('../db');
 const config = require('../config');
@@ -728,8 +730,23 @@ async function getLatestBackup(userId) {
       const files = await listBackups(userId);
       if (files && files.length > 0) {
         const latestFile = files[0];
+        const refreshToken = decryptToken(conn.encrypted_refresh_token);
+        if (refreshToken.startsWith('mock_')) {
+          const { localDir } = getLocalBackupDir(userId);
+          const detailsPath = path.join(localDir, 'detailsaboutbackup.json');
+          if (fs.existsSync(detailsPath)) {
+            const data = JSON.parse(fs.readFileSync(detailsPath, 'utf8'));
+            return {
+              hasBackup: true,
+              backupDate: latestFile.createdTime || new Date().toISOString(),
+              accountsCount: (data.accounts || []).length,
+              transactionsCount: (data.transactions || []).length,
+              backupJson: JSON.stringify(data)
+            };
+          }
+        }
         const { drive } = getDriveClientForUser(userId);
-        const res = await drive.files.get({ fileId: latestFile.id, alt: 'media' });
+        const res = await drive.files.get({ fileId: latestFile.fileId || latestFile.id, alt: 'media' });
         const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
         return {
           hasBackup: true,

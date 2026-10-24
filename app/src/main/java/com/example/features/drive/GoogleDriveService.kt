@@ -69,6 +69,9 @@ class GoogleDriveService(
                 if (existing != null) {
                     return@withContext existing.id
                 }
+            } else if (!response.isSuccessful) {
+                Log.e(TAG, "Failed to list folders: ${response.code()} ${response.errorBody()?.string()}")
+                return@withContext null
             }
 
             // Create Yosan-Backup folder using clean metadata request
@@ -102,6 +105,9 @@ class GoogleDriveService(
                 if (existing != null) {
                     return@withContext existing.id
                 }
+            } else if (!response.isSuccessful) {
+                Log.e(TAG, "Failed to list versions subfolder: ${response.code()} ${response.errorBody()?.string()}")
+                return@withContext null
             }
 
             // Create versions subfolder using clean metadata request
@@ -158,6 +164,10 @@ class GoogleDriveService(
             // Check if file already exists in folder
             val query = "name = '$fileName' and '$folderId' in parents and trashed = false"
             val listRes = driveApi.listFiles(bearerToken = "Bearer $bearerToken", query = query)
+            if (!listRes.isSuccessful) {
+                Log.e(TAG, "Failed to query file '$fileName': ${listRes.code()} ${listRes.errorBody()?.string()}")
+                return@withContext null
+            }
             val existingFile = listRes.body()?.files?.firstOrNull()
 
             val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
@@ -172,6 +182,9 @@ class GoogleDriveService(
                 )
                 if (updateRes.isSuccessful && updateRes.body() != null) {
                     return@withContext updateRes.body()!!.id
+                } else {
+                    Log.e(TAG, "Failed to update media: ${updateRes.code()} ${updateRes.errorBody()?.string()}")
+                    return@withContext null
                 }
             } else {
                 // Construct multipart creation
@@ -195,6 +208,9 @@ class GoogleDriveService(
                 )
                 if (uploadRes.isSuccessful && uploadRes.body() != null) {
                     return@withContext uploadRes.body()!!.id
+                } else {
+                    Log.e(TAG, "Failed to create file: ${uploadRes.code()} ${uploadRes.errorBody()?.string()}")
+                    return@withContext null
                 }
             }
             null
@@ -250,7 +266,7 @@ class GoogleDriveService(
             val jsonStr = backupJson.toString(2)
 
             // 1. Save versioned snapshot: versions/backup-v%04d.json
-            val snapshotName = "backup-v%04d.json".format(nextVersion)
+            val snapshotName = "backup-v%04d.json".format(java.util.Locale.US, nextVersion)
             uploadJsonFile(driveToken, versionsFolderId, snapshotName, jsonStr)
 
             // 2. Update current backup file: detailsaboutbackup.json
@@ -262,7 +278,9 @@ class GoogleDriveService(
                 fileName = "detailsaboutbackup.json",
                 fileId = currentFileId,
                 isCurrent = true,
-                createdTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).format(java.util.Date())
+                createdTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
+                    timeZone = java.util.TimeZone.getTimeZone("UTC")
+                }.format(java.util.Date())
             )
 
             DriveOperationResult.Success(dto, "Successfully backed up to Google Drive (v$nextVersion)")
@@ -292,6 +310,9 @@ class GoogleDriveService(
 
             val query = "name = 'detailsaboutbackup.json' and '$rootFolderId' in parents and trashed = false"
             val listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+            if (!listRes.isSuccessful) {
+                return@withContext DriveOperationResult.Error("Failed to access Google Drive: ${listRes.code()} ${listRes.message()}")
+            }
             val currentFile = listRes.body()?.files?.firstOrNull()
                 ?: return@withContext DriveOperationResult.Error("No backup found in your Google Drive 'Yosan-Backup' folder.")
 
