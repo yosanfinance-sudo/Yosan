@@ -41,6 +41,12 @@ class StatementImportCoordinator(
     private val _isImporting = MutableStateFlow(false)
     val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
 
+    private val _isPasswordPromptRequired = MutableStateFlow(false)
+    val isPasswordPromptRequired: StateFlow<Boolean> = _isPasswordPromptRequired.asStateFlow()
+
+    private var pendingBytes: ByteArray? = null
+    private var pendingFileName: String? = null
+
     fun previewStatement(content: String, fileName: String = "bank_statement.csv") {
         scope.launch {
             val currentRules = repository.getActiveRulesList()
@@ -83,7 +89,19 @@ class StatementImportCoordinator(
                         else -> "$fileName.csv"
                     }
                 }
-                val rawText = StatementImportService.extractTextFromStatementBytes(context, bytes, resolvedFileName)
+                pendingBytes = bytes
+                pendingFileName = resolvedFileName
+
+                val rawText = try {
+                    StatementImportService.extractTextFromStatementBytes(context, bytes, resolvedFileName)
+                } catch (e: SecurityException) {
+                    if (e.message == "PDF_PASSWORD_REQUIRED") {
+                        _isPasswordPromptRequired.value = true
+                        _isImporting.value = false
+                        return@launch
+                    }
+                    throw e
+                }
                 var preview: ImportPreviewResult? = null
 
                 // Attempt AI-assisted statement parsing
@@ -161,6 +179,103 @@ class StatementImportCoordinator(
                 _isImporting.value = false
             }
         }
+    }
+
+    fun submitStatementPassword(context: Context, password: String) {
+        val bytes = pendingBytes ?: return
+        val resolvedFileName = pendingFileName ?: "statement.pdf"
+        scope.launch(Dispatchers.IO) {
+            try {
+                _isImporting.value = true
+                val rawText = try {
+                    StatementImportService.extractTextFromStatementBytes(context, bytes, resolvedFileName, password)
+                } catch (e: SecurityException) {
+                    showMessage("Incorrect PDF password. Please try again.")
+                    return@launch
+                }
+                _isPasswordPromptRequired.value = false
+                pendingBytes = null
+                pendingFileName = null
+
+                val currentRules = repository.getActiveRulesList()
+                val existingTxs = allTransactionsFlow.value
+                var preview: ImportPreviewResult? = null
+
+                if (rawText.isNotBlank()) {
+                    try {
+                        val api = com.example.data.remote.ApiClient.getAuthApi(context)
+                        val aiResponse = api.parseStatementAi(
+                            com.example.data.remote.StatementAiParseRequest(
+                                textContent = rawText.take(50000),
+                                fileName = resolvedFileName
+                            )
+                        )
+                        if (aiResponse.isSuccessful && aiResponse.body()?.success == true && !aiResponse.body()?.transactions.isNullOrEmpty()) {
+                            val aiTxs = aiResponse.body()!!.transactions
+                            val parsedRows = aiTxs.map { aiTx ->
+                                val isDuplicate = existingTxs.any { ex ->
+                                    ex.transactionDate == aiTx.transactionDate &&
+                                    kotlin.math.abs(ex.amount - aiTx.amount) < 0.01 &&
+                                    ((ex.referenceNumber.isNotBlank() && ex.referenceNumber == aiTx.referenceNumber) ||
+                                     ex.description.contains(aiTx.description, ignoreCase = true) ||
+                                     aiTx.description.contains(ex.description, ignoreCase = true))
+                                }
+                                val txType = if (aiTx.transactionType.equals("INCOME", ignoreCase = true)) TransactionType.INCOME else TransactionType.EXPENSE
+                                val catResult = CategorizationEngine.categorize(aiTx.description, currentRules, txType == TransactionType.INCOME)
+                                val finalCategory = if (!catResult.categoryName.equals("Uncategorized", ignoreCase = true)) {
+                                    catResult.categoryName
+                                } else {
+                                    aiTx.suggestedCategory.ifBlank { "General" }
+                                }
+
+                                ParsedImportRow(
+                                    rawLine = "${aiTx.transactionDate} ${aiTx.description} ${aiTx.amount}",
+                                    date = aiTx.transactionDate,
+                                    description = aiTx.description,
+                                    debitAmount = aiTx.debitAmount,
+                                    creditAmount = aiTx.creditAmount,
+                                    amount = aiTx.amount,
+                                    balance = aiTx.balanceAfterTransaction,
+                                    referenceNumber = aiTx.referenceNumber,
+                                    suggestedCategory = finalCategory,
+                                    suggestedCategoryId = catResult.categoryId,
+                                    suggestedType = txType,
+                                    confidence = 0.95f,
+                                    isDuplicate = isDuplicate
+                                )
+                            }
+                            preview = ImportPreviewResult(
+                                totalRows = parsedRows.size,
+                                validRows = parsedRows,
+                                duplicateCount = parsedRows.count { it.isDuplicate },
+                                detectedColumns = listOf("Date", "Description", "Debit", "Credit", "Balance", "AI Category"),
+                                fileName = "$resolvedFileName (AI Enhanced)"
+                            )
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (preview == null || preview.validRows.isEmpty()) {
+                    preview = StatementImportService.parseStatementText(rawText, currentRules, existingTxs, resolvedFileName)
+                }
+
+                if (preview.validRows.isEmpty()) {
+                    showMessage("No valid transaction rows found in '$resolvedFileName'. Please ensure it's a supported bank statement.")
+                }
+                _importPreview.value = preview
+            } catch (e: Exception) {
+                showMessage("Could not parse statement: ${e.localizedMessage ?: "Invalid password or corrupted format"}")
+            } finally {
+                _isImporting.value = false
+            }
+        }
+    }
+
+    fun dismissPasswordPrompt() {
+        _isPasswordPromptRequired.value = false
+        pendingBytes = null
+        pendingFileName = null
+        _isImporting.value = false
     }
 
     fun confirmImport(skipDuplicates: Boolean = false, targetAccountId: Long = 1, onComplete: (() -> Unit)? = null) {

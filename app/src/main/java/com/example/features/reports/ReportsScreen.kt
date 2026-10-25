@@ -51,6 +51,7 @@ import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.utils.CurrencyFormatter
 import com.example.utils.DateUtils
+import com.example.utils.HapticHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -297,6 +298,7 @@ fun ReportsScreen(
 
                 IconButton(
                     onClick = {
+                        HapticHelper.vibrateClick(context)
                         isRefreshing = true
                         lastRefreshedTime = System.currentTimeMillis()
                         viewModel.showMessage("Reports synced with latest financial records.")
@@ -385,6 +387,7 @@ fun ReportsScreen(
         ) {
             Button(
                 onClick = {
+                    HapticHelper.vibrateClick(context)
                     val defName = generatedFile?.name ?: "Yosan_Report.pdf"
                     savePdfLauncher.launch(defName)
                 },
@@ -399,7 +402,10 @@ fun ReportsScreen(
             }
 
             OutlinedButton(
-                onClick = { sharePdfReport() },
+                onClick = {
+                    HapticHelper.vibrateClick(context)
+                    sharePdfReport()
+                },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
@@ -410,7 +416,10 @@ fun ReportsScreen(
             }
 
             OutlinedButton(
-                onClick = { openPdfReport() },
+                onClick = {
+                    HapticHelper.vibrateClick(context)
+                    openPdfReport()
+                },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
@@ -654,7 +663,7 @@ fun ReportsScreen(
                                     val total = filteredTransactions.filter { it.transactionType == TransactionType.EXPENSE }
                                         .sumOf { if (it.debitAmount > 0) it.debitAmount else it.amount }
                                     Text(
-                                        text = "Total Expenses: ₹${CurrencyFormatter.formatInr(total)}",
+                                        text = "Total Expenses: ${CurrencyFormatter.formatInr(total)}",
                                         fontWeight = FontWeight.Bold,
                                         color = ExpenseRed
                                     )
@@ -662,14 +671,14 @@ fun ReportsScreen(
                                 ReportType.COMPANY_EXPENSE -> {
                                     val total = filteredCompanyExpenses.sumOf { it.amount }
                                     val rem = filteredCompanyExpenses.filter { it.isReimbursed }.sumOf { it.amount }
-                                    Text(text = "Total Claimed: ₹${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
-                                    Text(text = "Reimbursed: ₹${CurrencyFormatter.formatInr(rem)}", color = IncomeGreen, fontWeight = FontWeight.SemiBold)
+                                    Text(text = "Total Claimed: ${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
+                                    Text(text = "Reimbursed: ${CurrencyFormatter.formatInr(rem)}", color = IncomeGreen, fontWeight = FontWeight.SemiBold)
                                 }
                                 ReportType.INCOME -> {
                                     val total = filteredTransactions.filter { it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND }
                                         .sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
                                     Text(
-                                        text = "Total Income: ₹${CurrencyFormatter.formatInr(total)}",
+                                        text = "Total Income: ${CurrencyFormatter.formatInr(total)}",
                                         fontWeight = FontWeight.Bold,
                                         color = IncomeGreen
                                     )
@@ -677,44 +686,44 @@ fun ReportsScreen(
                                 ReportType.LENDING -> {
                                     val total = filteredLoans.sumOf { it.amount }
                                     val due = filteredLoans.sumOf { it.remainingAmount }
-                                    Text(text = "Total Lent: ₹${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
-                                    Text(text = "Outstanding Due: ₹${CurrencyFormatter.formatInr(due)}", color = ExpenseRed, fontWeight = FontWeight.SemiBold)
+                                    Text(text = "Total Lent: ${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
+                                    Text(text = "Outstanding Due: ${CurrencyFormatter.formatInr(due)}", color = ExpenseRed, fontWeight = FontWeight.SemiBold)
                                 }
                                 ReportType.BORROWING -> {
                                     val borrows = ExportService.computeBorrowSummaries(filteredTransactions)
                                     val total = borrows.sumOf { it.totalBorrowed }
                                     val due = borrows.sumOf { it.remainingDebt }
-                                    Text(text = "Total Borrowed: ₹${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
-                                    Text(text = "Outstanding Debt: ₹${CurrencyFormatter.formatInr(due)}", color = ExpenseRed, fontWeight = FontWeight.SemiBold)
+                                    Text(text = "Total Borrowed: ${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
+                                    Text(text = "Outstanding Debt: ${CurrencyFormatter.formatInr(due)}", color = ExpenseRed, fontWeight = FontWeight.SemiBold)
                                 }
                                 else -> {
                                     Text(
-                                        text = "Net Balance: ₹${CurrencyFormatter.formatInr(filteredSummary.currentBalance)}",
+                                        text = "Net Balance: ${CurrencyFormatter.formatInr(filteredSummary.currentBalance)}",
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Text(
-                                        text = "Total Income: ₹${CurrencyFormatter.formatInr(filteredSummary.totalIncome)}",
+                                        text = "Total Income: ${CurrencyFormatter.formatInr(filteredSummary.totalIncome)}",
                                         fontWeight = FontWeight.SemiBold,
                                         color = IncomeGreen
                                     )
                                     Text(
-                                        text = "Total Expenses: ₹${CurrencyFormatter.formatInr(filteredSummary.totalExpense)}",
+                                        text = "Total Expenses: ${CurrencyFormatter.formatInr(filteredSummary.totalExpense)}",
                                         fontWeight = FontWeight.SemiBold,
                                         color = ExpenseRed
                                     )
                                     Text(
-                                        text = "Total Money Lent: ₹${CurrencyFormatter.formatInr(filteredSummary.moneyLent)}",
+                                        text = "Total Money Lent: ${CurrencyFormatter.formatInr(filteredSummary.moneyLent)}",
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = "Total Money Borrowed: ₹${CurrencyFormatter.formatInr(filteredSummary.borrowingMetrics.totalBorrowed)}",
+                                        text = "Total Money Borrowed: ${CurrencyFormatter.formatInr(filteredSummary.borrowingMetrics.totalBorrowed)}",
                                         fontWeight = FontWeight.Bold,
                                         color = OutstandingAmber
                                     )
                                     if (filteredSummary.borrowingMetrics.outstandingBorrowing > 0) {
                                         Text(
-                                            text = "Outstanding Debt: ₹${CurrencyFormatter.formatInr(filteredSummary.borrowingMetrics.outstandingBorrowing)}",
+                                            text = "Outstanding Debt: ${CurrencyFormatter.formatInr(filteredSummary.borrowingMetrics.outstandingBorrowing)}",
                                             fontWeight = FontWeight.SemiBold,
                                             color = ExpenseRed
                                         )
@@ -781,7 +790,7 @@ fun ReportsScreen(
                                             Text(text = "${exp.date} • ${exp.category}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                         Column(horizontalAlignment = Alignment.End) {
-                                            Text(text = "₹${CurrencyFormatter.formatInr(exp.amount)}", fontWeight = FontWeight.Bold)
+                                            Text(text = CurrencyFormatter.formatInr(exp.amount), fontWeight = FontWeight.Bold)
                                             Text(
                                                 text = if (exp.isReimbursed) "Reimbursed" else "Pending",
                                                 color = if (exp.isReimbursed) IncomeGreen else ExpenseRed,
@@ -812,8 +821,8 @@ fun ReportsScreen(
                                             Text(text = "Lent: ${loan.lentDate} • Status: ${loan.status}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                         Column(horizontalAlignment = Alignment.End) {
-                                            Text(text = "Due: ₹${CurrencyFormatter.formatInr(loan.remainingAmount)}", color = ExpenseRed, fontWeight = FontWeight.Bold)
-                                            Text(text = "Lent: ₹${CurrencyFormatter.formatInr(loan.amount)}", style = MaterialTheme.typography.bodySmall)
+                                            Text(text = "Due: ${CurrencyFormatter.formatInr(loan.remainingAmount)}", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                                            Text(text = "Lent: ${CurrencyFormatter.formatInr(loan.amount)}", style = MaterialTheme.typography.bodySmall)
                                         }
                                     }
                                 }
@@ -846,7 +855,7 @@ fun ReportsScreen(
                                         }
                                         val isIncome = tx.transactionType == TransactionType.INCOME || tx.creditAmount > 0
                                         Text(
-                                            text = "${if (isIncome) "+" else "-"}₹${CurrencyFormatter.formatInr(tx.amount)}",
+                                            text = "${if (isIncome) "+" else "-"}${CurrencyFormatter.formatInr(tx.amount)}",
                                             fontWeight = FontWeight.Bold,
                                             color = if (isIncome) IncomeGreen else ExpenseRed
                                         )

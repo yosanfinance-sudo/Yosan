@@ -7,7 +7,9 @@ import com.example.utils.SecureTokenManager
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
@@ -86,7 +88,33 @@ object ApiClient {
                 if (!userEmail.isNullOrBlank()) {
                     requestBuilder.header("X-User-Email", userEmail)
                 }
-                chain.proceed(requestBuilder.build())
+                val response = chain.proceed(requestBuilder.build())
+
+                // Automatic Session Refresh on HTTP 401 Unauthorized
+                if (response.code == 401 && !original.url.encodedPath.contains("/auth/refresh") && !original.url.encodedPath.contains("/auth/google")) {
+                    val refreshToken = tokenManager.getRefreshToken()
+                    if (!refreshToken.isNullOrBlank() && !refreshToken.startsWith("offline_")) {
+                        val newToken = synchronized(this) {
+                            val currentToken = tokenManager.getAccessToken()
+                            if (currentToken != accessToken && !currentToken.isNullOrBlank()) {
+                                currentToken
+                            } else {
+                                refreshAccessTokenSync(context, refreshToken)
+                            }
+                        }
+
+                        if (!newToken.isNullOrBlank()) {
+                            response.close()
+                            val retryRequestBuilder = original.newBuilder()
+                                .header("Authorization", "Bearer $newToken")
+                            if (!userEmail.isNullOrBlank()) {
+                                retryRequestBuilder.header("X-User-Email", userEmail)
+                            }
+                            return@Interceptor chain.proceed(retryRequestBuilder.build())
+                        }
+                    }
+                }
+                response
             }
 
             val okHttpClient = OkHttpClient.Builder()
@@ -137,6 +165,43 @@ object ApiClient {
             })
         } catch (_: Exception) {
             // Best effort ignore
+        }
+    }
+
+    private fun refreshAccessTokenSync(context: Context, refreshToken: String): String? {
+        return try {
+            val tokenManager = SecureTokenManager(context)
+            val refreshUrl = getBaseUrl(context) + "api/auth/refresh"
+            val jsonBody = org.json.JSONObject().put("refreshToken", refreshToken).toString()
+            val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+            val requestBody = jsonBody.toRequestBody(mediaType)
+            val request = okhttp3.Request.Builder()
+                .url(refreshUrl)
+                .post(requestBody)
+                .build()
+
+            val rawClient = OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .build()
+
+            val res = rawClient.newCall(request).execute()
+            if (res.isSuccessful) {
+                val resBody = res.body?.string() ?: ""
+                val jsonObj = org.json.JSONObject(resBody)
+                val newAccess = jsonObj.optString("accessToken", "")
+                val newRefresh = jsonObj.optString("refreshToken", refreshToken)
+                if (newAccess.isNotBlank()) {
+                    tokenManager.saveTokens(newAccess, newRefresh)
+                    return newAccess
+                }
+            } else if (res.code == 401 || res.code == 403) {
+                tokenManager.clearSession()
+                com.example.utils.AppPreferences(context).isLoggedOut = true
+            }
+            null
+        } catch (_: Exception) {
+            null
         }
     }
 

@@ -259,6 +259,32 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         com.example.utils.AppPreferences(getApplication()).isExternalIntentActive = active
     }
 
+    private val _isHapticFeedbackEnabled = MutableStateFlow(
+        com.example.utils.AppPreferences(application).isHapticFeedbackEnabled
+    )
+    val isHapticFeedbackEnabled: StateFlow<Boolean> = _isHapticFeedbackEnabled.asStateFlow()
+
+    fun setHapticFeedbackEnabled(enabled: Boolean) {
+        _isHapticFeedbackEnabled.value = enabled
+        viewModelScope.launch {
+            com.example.utils.AppPreferences(getApplication()).isHapticFeedbackEnabled = enabled
+            showMessage(if (enabled) "Haptic feedback enabled" else "Haptic feedback disabled")
+        }
+    }
+
+    private val _isFloatingEffectEnabled = MutableStateFlow(
+        com.example.utils.AppPreferences(application).isFloatingEffectEnabled
+    )
+    val isFloatingEffectEnabled: StateFlow<Boolean> = _isFloatingEffectEnabled.asStateFlow()
+
+    fun setFloatingEffectEnabled(enabled: Boolean) {
+        _isFloatingEffectEnabled.value = enabled
+        viewModelScope.launch {
+            com.example.utils.AppPreferences(getApplication()).isFloatingEffectEnabled = enabled
+            showMessage(if (enabled) "Floating depth effect enabled" else "Floating depth effect disabled")
+        }
+    }
+
     fun updateDashboardCardsConfig(config: String) {
         viewModelScope.launch {
             try {
@@ -376,6 +402,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     val importPreview: StateFlow<ImportPreviewResult?> = statementImportCoordinator.importPreview
     val isImporting: StateFlow<Boolean> = statementImportCoordinator.isImporting
+    val isPasswordPromptRequired: StateFlow<Boolean> = statementImportCoordinator.isPasswordPromptRequired
     val statementImports: StateFlow<List<StatementImportEntity>> = database.statementImportDao().getAllImports()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -681,6 +708,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun setManualBankOverride(bank: com.example.features.import.SupportedBank?) =
         statementImportCoordinator.setManualBankOverride(bank)
     fun clearImportPreview() = statementImportCoordinator.clearImportPreview()
+    fun submitStatementPassword(context: Context, password: String) =
+        statementImportCoordinator.submitStatementPassword(context, password)
+    fun dismissStatementPasswordPrompt() =
+        statementImportCoordinator.dismissPasswordPrompt()
 
     // Export Reports
     fun getTransactionsCsvExport(): String = ExportService.exportTransactionsCsv(allTransactions.value)

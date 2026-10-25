@@ -70,6 +70,14 @@ class AppPreferences(private val context: Context) {
         get() = prefs.getBoolean(KEY_BACKUP_ENCRYPTION_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_BACKUP_ENCRYPTION_ENABLED, value).apply()
 
+    var isHapticFeedbackEnabled: Boolean
+        get() = prefs.getBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, value).apply()
+
+    var isFloatingEffectEnabled: Boolean
+        get() = prefs.getBoolean(KEY_FLOATING_EFFECT_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_FLOATING_EFFECT_ENABLED, value).apply()
+
     var backupPassphrase: String?
         get() = prefs.getString(KEY_BACKUP_PASSPHRASE, null)
         set(value) {
@@ -318,6 +326,8 @@ class AppPreferences(private val context: Context) {
         private const val KEY_AUTO_CHECK_UPDATES = "auto_check_updates_enabled"
         private const val KEY_BACKUP_ENCRYPTION_ENABLED = "backup_encryption_enabled"
         private const val KEY_BACKUP_PASSPHRASE = "backup_passphrase"
+        private const val KEY_HAPTIC_FEEDBACK_ENABLED = "haptic_feedback_enabled"
+        private const val KEY_FLOATING_EFFECT_ENABLED = "floating_effect_enabled"
         private const val KEY_IS_LOGGED_OUT = "is_logged_out"
         private const val KEY_IS_OFFLINE_MODE = "is_offline_mode"
         private const val KEY_LAST_USER_EMAIL = "last_user_email"

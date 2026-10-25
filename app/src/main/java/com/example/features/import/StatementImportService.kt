@@ -102,7 +102,12 @@ object StatementImportService {
         return parseStatementText(textContent, rules, existingTransactions, resolvedName, bankOverride)
     }
 
-    fun extractTextFromStatementBytes(context: Context? = null, bytes: ByteArray, fileName: String): String {
+    fun extractTextFromStatementBytes(
+        context: Context? = null,
+        bytes: ByteArray,
+        fileName: String,
+        password: String? = null
+    ): String {
         val lowerName = fileName.lowercase()
         val isPdf = lowerName.endsWith(".pdf") || (bytes.size >= 4 && bytes[0] == 0x25.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x44.toByte() && bytes[3] == 0x46.toByte())
         val isXlsx = lowerName.endsWith(".xlsx") || (bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() && bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte())
@@ -110,7 +115,7 @@ object StatementImportService {
 
         return when {
             isXlsx || isXls -> extractTextFromXlsxBytes(bytes)
-            isPdf -> extractTextFromPdfBytes(context, bytes)
+            isPdf -> extractTextFromPdfBytes(context, bytes, password)
             else -> String(bytes, Charsets.UTF_8)
         }
     }
@@ -287,7 +292,7 @@ object StatementImportService {
         return null
     }
 
-    private fun extractTextFromPdfBytes(context: Context?, bytes: ByteArray): String {
+    private fun extractTextFromPdfBytes(context: Context?, bytes: ByteArray, password: String? = null): String {
         // 1. Try high-fidelity PDFBox extraction if available
         try {
             if (context != null) {
@@ -297,22 +302,32 @@ object StatementImportService {
                     }
                 } catch (_: Throwable) {}
             }
-            PDDocument.load(ByteArrayInputStream(bytes)).use { document ->
-                if (document.isEncrypted) {
+            val document = if (!password.isNullOrBlank()) {
+                PDDocument.load(ByteArrayInputStream(bytes), password)
+            } else {
+                PDDocument.load(ByteArrayInputStream(bytes))
+            }
+            document.use { doc ->
+                if (doc.isEncrypted) {
                     try {
-                        document.setAllSecurityToBeRemoved(true)
+                        doc.setAllSecurityToBeRemoved(true)
                     } catch (_: Throwable) {}
                 }
                 val stripper = PDFTextStripper()
                 stripper.sortByPosition = true
                 stripper.startPage = 1
-                stripper.endPage = document.numberOfPages
-                val text = stripper.getText(document)
+                stripper.endPage = doc.numberOfPages
+                val text = stripper.getText(doc)
                 if (text.isNotBlank()) {
                     return text
                 }
             }
-        } catch (_: Throwable) {}
+        } catch (e: Throwable) {
+            val msg = e.message?.lowercase() ?: ""
+            if (msg.contains("password") || msg.contains("encrypted") || e.javaClass.simpleName.contains("Password", ignoreCase = true)) {
+                throw SecurityException("PDF_PASSWORD_REQUIRED")
+            }
+        }
 
         // 2. High-precision standalone CMap & Flate stream PDF extractor (Zero Android/JVM dependencies)
         val decompressedStreams = mutableListOf<Pair<Int, String>>()

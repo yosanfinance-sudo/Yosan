@@ -103,6 +103,8 @@ fun SettingsScreen(
     val rules by viewModel.rules.collectAsState()
     val companyExpenses by viewModel.companyExpenses.collectAsState()
     val undoHistory by viewModel.undoHistory.collectAsState()
+    val isHapticFeedbackEnabled by viewModel.isHapticFeedbackEnabled.collectAsState()
+    val isFloatingEffectEnabled by viewModel.isFloatingEffectEnabled.collectAsState()
 
     val authUser by authViewModel?.user?.collectAsState() ?: remember { mutableStateOf(null) }
     val isEmailVerified by authViewModel?.isEmailVerified?.collectAsState() ?: remember { mutableStateOf(false) }
@@ -561,6 +563,104 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                shape = CircleShape,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Vibration,
+                                        contentDescription = "Haptic Feedback",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Haptic Feedback & Vibration",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Tactile vibration feedback on touches, gestures, and transactions",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = isHapticFeedbackEnabled,
+                            onCheckedChange = { enabled ->
+                                viewModel.setHapticFeedbackEnabled(enabled)
+                                if (enabled) {
+                                    com.example.utils.HapticHelper.vibrateSuccess(context)
+                                }
+                            }
+                        )
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                shape = CircleShape,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Layers,
+                                        contentDescription = "Floating Action Button",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Floating Action Button & Depth",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Elevate action button with 3D material shadow depth",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = isFloatingEffectEnabled,
+                            onCheckedChange = { enabled ->
+                                viewModel.setFloatingEffectEnabled(enabled)
+                                com.example.utils.HapticHelper.vibrateClick(context)
+                            }
+                        )
                     }
                 }
             }

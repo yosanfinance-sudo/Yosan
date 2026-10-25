@@ -72,6 +72,9 @@ fun ImportStatementScreen(
     var currentPdfPage by remember { mutableIntStateOf(0) }
     var isRenderingPdf by remember { mutableStateOf(false) }
     val statementImports by viewModel.statementImports.collectAsState()
+    val isPasswordPromptRequired by viewModel.isPasswordPromptRequired.collectAsState()
+    var pdfPasswordInput by remember { mutableStateOf("") }
+    var isPasswordVisible by remember { mutableStateOf(false) }
     var selectedScreenTab by remember { mutableIntStateOf(0) }
     var showAuditDetailsDialog by remember { mutableStateOf(false) }
     var importToDelete by remember { mutableStateOf<StatementImportEntity?>(null) }
@@ -900,6 +903,75 @@ fun ImportStatementScreen(
             },
             dismissButton = {
                 OutlinedButton(onClick = { importToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (isPasswordPromptRequired) {
+        AlertDialog(
+            onDismissRequest = {
+                viewModel.dismissStatementPasswordPrompt()
+                pdfPasswordInput = ""
+            },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text("Password Protected PDF", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "This bank statement PDF is encrypted. Enter your document password (commonly Date of Birth in DDMMYYYY or registered phone/PAN number).",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = pdfPasswordInput,
+                        onValueChange = { pdfPasswordInput = it },
+                        label = { Text("Statement Password") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = if (isPasswordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (isPasswordVisible) "Hide password" else "Show password"
+                                )
+                            }
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (pdfPasswordInput.isNotBlank()) {
+                            com.example.utils.HapticHelper.vibrateClick(context)
+                            viewModel.submitStatementPassword(context, pdfPasswordInput)
+                            pdfPasswordInput = ""
+                        }
+                    },
+                    enabled = pdfPasswordInput.isNotBlank()
+                ) {
+                    Text("Unlock & Import")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    com.example.utils.HapticHelper.vibrateClick(context)
+                    viewModel.dismissStatementPasswordPrompt()
+                    pdfPasswordInput = ""
+                }) {
                     Text("Cancel")
                 }
             }

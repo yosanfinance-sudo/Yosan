@@ -32,6 +32,8 @@ import com.example.ui.theme.*
 import com.example.features.transactions.FinanceViewModel
 import com.example.utils.CurrencyFormatter
 import com.example.utils.DateUtils
+import com.example.utils.HapticHelper
+import androidx.compose.ui.platform.LocalContext
 
 enum class AddTab {
     EXPENSE, INCOME, LEND_MONEY, BORROW_MONEY, INVESTMENT, TRANSFER, COMPANY_EXPENSE
@@ -46,6 +48,7 @@ fun AddTransactionSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(initialTab) }
     var investmentName by remember { mutableStateOf("") }
 
@@ -779,11 +782,15 @@ fun AddTransactionSheet(
 
             Button(
                 onClick = {
-                    val amt = amountText.toDoubleOrNull() ?: return@Button
+                    val amt = amountText.toDoubleOrNull() ?: run {
+                        HapticHelper.vibrateError(context)
+                        return@Button
+                    }
                     when (selectedTab) {
                         AddTab.EXPENSE -> {
                             val cat = selectedCategory ?: categories.firstOrNull { it.type == com.example.data.local.entity.CategoryType.EXPENSE }
                             if (cat == null) {
+                                HapticHelper.vibrateError(context)
                                 viewModel.showMessage("Please create an Expense category in Settings first!")
                                 return@Button
                             }
@@ -802,11 +809,13 @@ fun AddTransactionSheet(
                         AddTab.INCOME -> {
                             val cat = selectedCategory ?: categories.firstOrNull { it.type == com.example.data.local.entity.CategoryType.INCOME }
                             if (cat == null) {
+                                HapticHelper.vibrateError(context)
                                 viewModel.showMessage("Please create an Income category in Settings first!")
                                 return@Button
                             }
                             val cleanAdvId = advanceId.trim().takeIf { it.isNotBlank() }
                             if (cleanAdvId != null && !viewModel.isAdvanceIdUnique(cleanAdvId)) {
+                                HapticHelper.vibrateError(context)
                                 viewModel.showMessage("Advance ID '$cleanAdvId' already exists! Must be unique.")
                                 return@Button
                             }
@@ -824,11 +833,13 @@ fun AddTransactionSheet(
                         }
                         AddTab.LEND_MONEY -> {
                             if (personName.isBlank()) {
+                                HapticHelper.vibrateError(context)
                                 viewModel.showMessage("Please enter the borrower's name")
                                 return@Button
                             }
                             val cleanLendId = lendId.trim().takeIf { it.isNotBlank() }
                             if (cleanLendId != null && !viewModel.isLendIdUnique(cleanLendId)) {
+                                HapticHelper.vibrateError(context)
                                 viewModel.showMessage("Lend ID '$cleanLendId' already exists! Must be unique.")
                                 return@Button
                             }
@@ -845,11 +856,13 @@ fun AddTransactionSheet(
                         }
                         AddTab.BORROW_MONEY -> {
                             if (personName.isBlank()) {
+                                HapticHelper.vibrateError(context)
                                 viewModel.showMessage("Please enter the lender's name")
                                 return@Button
                             }
                             val cleanBorrowId = borrowId.trim().takeIf { it.isNotBlank() }
                             if (cleanBorrowId != null && !viewModel.isBorrowIdUnique(cleanBorrowId)) {
+                                HapticHelper.vibrateError(context)
                                 viewModel.showMessage("Borrow ID '$cleanBorrowId' already exists! Must be unique.")
                                 return@Button
                             }
@@ -866,6 +879,7 @@ fun AddTransactionSheet(
                         }
                         AddTab.INVESTMENT -> {
                             if (investmentName.isBlank()) {
+                                HapticHelper.vibrateError(context)
                                 viewModel.showMessage("Please enter the Investment Name/Type")
                                 return@Button
                             }
@@ -883,6 +897,7 @@ fun AddTransactionSheet(
                         }
                         AddTab.COMPANY_EXPENSE -> {
                             if (companyName.isBlank()) {
+                                HapticHelper.vibrateError(context)
                                 viewModel.showMessage("Please enter the company/employer name")
                                 return@Button
                             }
@@ -899,6 +914,7 @@ fun AddTransactionSheet(
                         }
                         AddTab.TRANSFER -> {
                             if (selectedAccountId == targetAccountId) {
+                                HapticHelper.vibrateError(context)
                                 viewModel.showMessage("From and To accounts cannot be the same!")
                                 return@Button
                             }
@@ -911,6 +927,7 @@ fun AddTransactionSheet(
                             )
                         }
                     }
+                    HapticHelper.vibrateSuccess(context)
                     onDismiss()
                 },
                 enabled = isValid,

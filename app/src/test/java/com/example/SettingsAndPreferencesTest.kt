@@ -253,4 +253,37 @@ class SettingsAndPreferencesTest {
         )
         assertFalse(determineDefault(hasDefaultAccs))
     }
+
+    @Test
+    fun testHapticAndFloatingPreferences() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val appPrefs = AppPreferences(context)
+
+        // Verify defaults
+        assertTrue("Haptic feedback should be enabled by default", appPrefs.isHapticFeedbackEnabled)
+        assertTrue("Floating effect should be enabled by default", appPrefs.isFloatingEffectEnabled)
+
+        // Toggle Haptic
+        appPrefs.isHapticFeedbackEnabled = false
+        assertFalse(appPrefs.isHapticFeedbackEnabled)
+        appPrefs.isHapticFeedbackEnabled = true
+        assertTrue(appPrefs.isHapticFeedbackEnabled)
+
+        // Toggle Floating Effect
+        appPrefs.isFloatingEffectEnabled = false
+        assertFalse(appPrefs.isFloatingEffectEnabled)
+        appPrefs.isFloatingEffectEnabled = true
+        assertTrue(appPrefs.isFloatingEffectEnabled)
+    }
+
+    @Test
+    fun testCurrencyFormattingNoDoubleRupee() {
+        val formatted = com.example.utils.CurrencyFormatter.formatInr(1500.0)
+        assertFalse("Formatted string must never contain duplicate '₹₹'", formatted.contains("₹₹"))
+        assertTrue("Formatted string must start with single '₹ '", formatted.startsWith("₹ "))
+
+        val positivePrefix = "+${com.example.utils.CurrencyFormatter.formatInr(2500.0)}"
+        assertFalse("Prefix must not create duplicate symbols", positivePrefix.contains("₹₹"))
+        assertTrue(positivePrefix.startsWith("+₹ "))
+    }
 }

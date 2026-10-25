@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -12,21 +13,23 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Password
-import androidx.compose.material.icons.outlined.ExitToApp
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.*
+import com.example.utils.HapticHelper
 
 @Composable
 fun GPayLockScreen(
@@ -37,59 +40,75 @@ fun GPayLockScreen(
     onExitApp: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+
+    // Subtle breathing animation for the fingerprint sensor target
+    val infiniteTransition = rememberInfiniteTransition(label = "FingerprintPulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1.0f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "PulseScale"
+    )
+
     Surface(
         modifier = modifier
             .fillMaxSize()
             .testTag("gpay_lock_screen"),
         color = MaterialTheme.colorScheme.background
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Center Content: Minimal GPay-style Lock Visuals with Fingerprint Icon
+            // 1. Top Section: Branding, Lock Icon, Title & Greeting
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                    .padding(top = 36.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Outer glowing circle
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(110.dp)
+                        .size(92.dp)
                         .clip(CircleShape)
                         .background(
                             Brush.radialGradient(
                                 colors = listOf(
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.05f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.04f),
                                     Color.Transparent
                                 )
                             )
                         )
                 ) {
                     Surface(
-                        modifier = Modifier.size(76.dp),
+                        modifier = Modifier.size(68.dp),
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.primaryContainer,
-                        shadowElevation = 6.dp
+                        shadowElevation = 4.dp
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Filled.Lock,
                                 contentDescription = null,
-                                modifier = Modifier.size(36.dp),
+                                modifier = Modifier.size(32.dp),
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(28.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
                     text = "Yosan is Locked",
@@ -112,35 +131,93 @@ fun GPayLockScreen(
                     lineHeight = 20.sp
                 )
 
-                Spacer(modifier = Modifier.height(40.dp))
-
-                // Interactive Clean Fingerprint Icon Button
-                Surface(
-                    onClick = onFingerprintClick,
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
-                    shadowElevation = 4.dp,
-                    modifier = Modifier.size(84.dp)
+                // Error Message Notice
+                AnimatedVisibility(
+                    visible = !errorMessage.isNullOrBlank(),
+                    enter = fadeIn(),
+                    exit = fadeOut()
                 ) {
+                    errorMessage?.let { msg ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth(0.9f)
+                                .padding(top = 18.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
+                        ) {
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 2. Lower-Center Section: Ergonomic Under-Display Fingerprint Position & Actions
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Touch the fingerprint sensor",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    fontWeight = FontWeight.Medium
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // Ergonomic Lower-Screen Fingerprint Touch Target
+                Box(contentAlignment = Alignment.Center) {
+                    // Ambient pulse ring
                     Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .size(96.dp)
+                            .scale(pulseScale)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                    )
+
+                    Surface(
+                        onClick = {
+                            HapticHelper.vibrateClick(context)
+                            onFingerprintClick()
+                        },
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                        shadowElevation = 6.dp,
+                        modifier = Modifier.size(80.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Fingerprint,
-                            contentDescription = "Unlock with Fingerprint",
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Fingerprint,
+                                contentDescription = "Unlock with Fingerprint",
+                                modifier = Modifier.size(46.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                 }
 
-                // Fallback option: Unlock with Phone PIN / Password
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Alternative: Use PIN / Password
                 if (onPinPatternClick != null) {
-                    Spacer(modifier = Modifier.height(16.dp))
                     TextButton(
-                        onClick = onPinPatternClick,
+                        onClick = {
+                            HapticHelper.vibrateClick(context)
+                            onPinPatternClick()
+                        },
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(
@@ -159,29 +236,26 @@ fun GPayLockScreen(
                     }
                 }
 
-                // Error Message / Lockout notice if any
-                AnimatedVisibility(
-                    visible = !errorMessage.isNullOrBlank(),
-                    enter = fadeIn(),
-                    exit = fadeOut()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Security Badge Footer
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    errorMessage?.let { msg ->
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth(0.85f)
-                                .padding(top = 24.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
-                        ) {
-                            Text(
-                                text = msg,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(12.dp)
-                            )
-                        }
-                    }
+                    Icon(
+                        imageVector = Icons.Outlined.Shield,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Encrypted with Android KeyStore & AES-256",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        fontSize = 10.sp
+                    )
                 }
             }
         }
