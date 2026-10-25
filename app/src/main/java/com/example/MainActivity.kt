@@ -48,8 +48,24 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val authViewModel: AuthViewModel = viewModel()
-            val financeViewModel: FinanceViewModel = viewModel()
             activeAuthViewModel = authViewModel
+
+            val authState by authViewModel.authState.collectAsState()
+            val authUser by authViewModel.user.collectAsState()
+            val isAuthenticated = authState is AuthState.Authenticated
+
+            // Multi-user Database Partition Key: Each user/guest has their own isolated ViewModel & Room DB
+            val activeUserKey = when (authState) {
+                is AuthState.Authenticated -> {
+                    val email = authUser?.email?.trim()?.lowercase() ?: ""
+                    if (email.isNotBlank()) "user_${com.example.data.local.AppDatabase.sanitizeUserKey(email)}" else "user_authenticated"
+                }
+                else -> {
+                    if (appPreferences.isOfflineMode) "offline_guest" else "unauthenticated"
+                }
+            }
+
+            val financeViewModel: FinanceViewModel = viewModel(key = "finance_vm_$activeUserKey")
 
             // Check if activity was launched with an OAuth deep link intent
             LaunchedEffect(intent?.data) {
@@ -67,14 +83,6 @@ class MainActivity : FragmentActivity() {
             var isAppLocked by remember { mutableStateOf(appPreferences.isBiometricEnabled) }
             var lockErrorMessage by remember { mutableStateOf<String?>(null) }
             var lastPauseTimestamp by remember { mutableLongStateOf(0L) }
-
-            val authState by authViewModel.authState.collectAsState()
-            val authUser by authViewModel.user.collectAsState()
-
-            val isExistingUser = !appPreferences.isLoggedOut && (
-                (authState is AuthState.Authenticated) ||
-                (appPreferences.isOfflineMode && appPreferences.isOnboardingCompleted)
-            )
 
             // Keep AppPreferences synchronized with Room UserProfile updates
             LaunchedEffect(userProfile) {
@@ -159,22 +167,22 @@ class MainActivity : FragmentActivity() {
             }
 
             // Automatically challenge user with biometric prompt when app is in locked state
-            LaunchedEffect(isAppLocked, isBiometricEnabled, isExistingUser) {
-                if (isAppLocked && isBiometricEnabled && isExistingUser) {
+            LaunchedEffect(isAppLocked, isBiometricEnabled, isAuthenticated) {
+                if (isAppLocked && isBiometricEnabled && isAuthenticated) {
                     triggerBiometricUnlock()
                 }
             }
 
             // Background Auto-lock Watcher with grace period & external intent immunity
             val lifecycleOwner = LocalLifecycleOwner.current
-            DisposableEffect(lifecycleOwner, isBiometricEnabled, isExistingUser) {
+            DisposableEffect(lifecycleOwner, isBiometricEnabled, isAuthenticated) {
                 val observer = LifecycleEventObserver { _, event ->
                     when (event) {
                         Lifecycle.Event.ON_STOP -> {
                             lastPauseTimestamp = System.currentTimeMillis()
                         }
                         Lifecycle.Event.ON_START -> {
-                            if (isBiometricEnabled && isExistingUser) {
+                            if (isBiometricEnabled && isAuthenticated) {
                                 if (appPreferences.isExternalIntentActive) {
                                     // User returned from an intentional file picker / share sheet
                                     appPreferences.isExternalIntentActive = false
@@ -221,7 +229,7 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                     // Priority 1: GPay-Style App Lock Screen
-                    else if (isAppLocked && isBiometricEnabled && isExistingUser) {
+                    else if (isAppLocked && isBiometricEnabled && isAuthenticated) {
                         GPayLockScreen(
                             userName = userProfile?.name ?: "User",
                             errorMessage = lockErrorMessage,
@@ -230,24 +238,24 @@ class MainActivity : FragmentActivity() {
                             onExitApp = { finishAffinity() }
                         )
                     }
-                    // Priority 2: Onboarding for fresh installs or Login for logged out users
-                    else if (!isExistingUser) {
+                                        // Priority 2: Authenticated Main Container
+                    else if (isAuthenticated) {
+                        MainContainerScreen(
+                            viewModel = financeViewModel,
+                            authViewModel = authViewModel
+                        )
+                    }
+                    // Priority 3: Onboarding / Login Screen for unauthenticated or logged out users
+                    else {
                         OnboardingScreen(
                             authViewModel = authViewModel,
                             financeViewModel = financeViewModel,
-                            initialStep = if (appPreferences.isLoggedOut || appPreferences.hasPreviousAccountOnDevice) 1 else 0,
+                            initialStep = 1,
                             onComplete = {
                                 appPreferences.isOnboardingCompleted = true
                                 appPreferences.isLoggedOut = false
                                 authViewModel.completeOnboarding()
                             }
-                        )
-                    }
-                    // Priority 3: Authenticated Main Container
-                    else {
-                        MainContainerScreen(
-                            viewModel = financeViewModel,
-                            authViewModel = authViewModel
                         )
                     }
                 }

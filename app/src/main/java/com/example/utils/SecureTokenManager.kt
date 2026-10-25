@@ -130,6 +130,26 @@ class SecureTokenManager(context: Context) {
             .apply()
     }
 
+    fun saveBackupPassphrase(passphrase: String?) {
+        if (passphrase.isNullOrBlank()) {
+            sharedPreferences.edit().remove(KEY_BACKUP_PASSPHRASE).apply()
+        } else {
+            sharedPreferences.edit().putString(KEY_BACKUP_PASSPHRASE, passphrase).apply()
+        }
+    }
+
+    fun getBackupPassphrase(): String? = sharedPreferences.getString(KEY_BACKUP_PASSPHRASE, null)
+
+    fun saveOAuthStateNonce(nonce: String) {
+        sharedPreferences.edit().putString(KEY_OAUTH_STATE_NONCE, nonce).apply()
+    }
+
+    fun getOAuthStateNonce(): String? = sharedPreferences.getString(KEY_OAUTH_STATE_NONCE, null)
+
+    fun clearOAuthStateNonce() {
+        sharedPreferences.edit().remove(KEY_OAUTH_STATE_NONCE).apply()
+    }
+
     fun clearCredentials() {
         sharedPreferences.edit().clear().apply()
     }
@@ -151,5 +171,7 @@ class SecureTokenManager(context: Context) {
         private const val KEY_DRIVE_REFRESH_TOKEN = "drive_refresh_token"
         private const val KEY_DRIVE_TOKEN_EXPIRES_AT = "drive_token_expires_at"
         private const val KEY_DRIVE_EMAIL = "drive_email"
+        private const val KEY_BACKUP_PASSPHRASE = "secure_backup_passphrase"
+        private const val KEY_OAUTH_STATE_NONCE = "oauth_state_nonce"
     }
 }

@@ -30,6 +30,9 @@ class BackupAndBudgetTest {
         // 2. Decrypt with correct passphrase
         val decryptedJson = BackupEncryptionUtil.decrypt(encryptedJson, passphrase)
         assertEquals(samplePlainJson, decryptedJson)
+
+        // 3. Verify upgraded 120,000 iteration metadata in envelope
+        assertTrue(encryptedJson.contains("\"iterations\":120000") || encryptedJson.contains("\"iterations\": 120000"))
     }
 
     @Test

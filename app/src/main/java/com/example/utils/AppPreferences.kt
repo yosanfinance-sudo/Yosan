@@ -79,10 +79,30 @@ class AppPreferences(private val context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_FLOATING_EFFECT_ENABLED, value).apply()
 
     var backupPassphrase: String?
-        get() = prefs.getString(KEY_BACKUP_PASSPHRASE, null)
+        get() {
+            // First check hardware-backed encrypted storage
+            try {
+                val secure = SecureTokenManager(context).getBackupPassphrase()
+                if (!secure.isNullOrBlank()) return secure
+            } catch (_: Exception) {}
+
+            // Migrate legacy plaintext entry if present, then purge from unencrypted XML
+            val legacy = prefs.getString(KEY_BACKUP_PASSPHRASE, null)
+            if (!legacy.isNullOrBlank()) {
+                try {
+                    SecureTokenManager(context).saveBackupPassphrase(legacy)
+                    prefs.edit().remove(KEY_BACKUP_PASSPHRASE).apply()
+                } catch (_: Exception) {}
+                return legacy
+            }
+            return null
+        }
         set(value) {
-            if (value != null) prefs.edit().putString(KEY_BACKUP_PASSPHRASE, value).apply()
-            else prefs.edit().remove(KEY_BACKUP_PASSPHRASE).apply()
+            try {
+                SecureTokenManager(context).saveBackupPassphrase(value)
+            } catch (_: Exception) {}
+            // Ensure no plaintext passphrase persists in SharedPreferences XML
+            prefs.edit().remove(KEY_BACKUP_PASSPHRASE).apply()
         }
 
     var themeMode: String

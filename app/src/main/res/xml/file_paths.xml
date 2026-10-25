@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <cache-path name="cache" path="." />
-    <files-path name="files" path="." />
-    <external-path name="external" path="." />
-    <external-files-path name="external_files" path="." />
-    <external-cache-path name="external_cache" path="." />
+    <!-- Scoped share paths for generated reports, exports, and temporary backup transfers -->
+    <cache-path name="export_cache" path="." />
+    <files-path name="export_files" path="exports/" />
 </paths>

@@ -402,7 +402,7 @@ fun AddTransactionSheet(
                                 FilterChip(
                                     selected = isSelected,
                                     onClick = { advanceId = if (isSelected) "" else adv.advanceId },
-                                    label = { Text("${adv.advanceId} (₹${CurrencyFormatter.formatInr(adv.remainingBalance)} left)") },
+                                    label = { Text("${adv.advanceId} (${CurrencyFormatter.formatInr(adv.remainingBalance)} left)") },
                                     colors = FilterChipDefaults.filterChipColors(
                                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                                         selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -680,7 +680,7 @@ fun AddTransactionSheet(
                             FilterChip(
                                 selected = isSelected,
                                 onClick = { advanceId = if (isSelected) "" else adv.advanceId },
-                                label = { Text("${adv.advanceId} (₹${CurrencyFormatter.formatInr(adv.remainingBalance)} left)") },
+                                label = { Text("${adv.advanceId} (${CurrencyFormatter.formatInr(adv.remainingBalance)} left)") },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                                     selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer

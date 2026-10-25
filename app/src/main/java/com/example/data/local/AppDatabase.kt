@@ -46,8 +46,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun statementImportDao(): StatementImportDao
 
     companion object {
+        private val instances = java.util.concurrent.ConcurrentHashMap<String, AppDatabase>()
         @Volatile
-        private var INSTANCE: AppDatabase? = null
+        private var currentActiveUserKey: String = "guest"
+        private val lock = Any()
 
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -181,30 +183,105 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
+        fun sanitizeUserKey(userKey: String?): String {
+            if (userKey.isNullOrBlank()) return "guest"
+            val clean = userKey.trim().lowercase()
+            if (clean == "guest" || clean == "offline" || clean.startsWith("offline_") || clean == "unauthenticated") {
+                return "guest"
+            }
+            val sanitized = clean.replace("@", "_at_").replace(".", "_").replace(Regex("[^a-zA-Z0-9_]"), "")
+            return if (sanitized.isNotBlank()) sanitized else "guest"
+        }
+
+        fun getDatabaseFileName(context: Context, userKey: String): String {
+            val sanitized = sanitizeUserKey(userKey)
+            return if (sanitized == "guest") {
+                val legacyFile = context.applicationContext.getDatabasePath("finance_manager_db")
+                if (legacyFile.exists()) {
                     "finance_manager_db"
-                )
-                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
-                    .fallbackToDestructiveMigration(true)
-                    .addCallback(AppDatabaseCallback(context.applicationContext, scope))
-                    .build()
-                INSTANCE = instance
-                instance
+                } else {
+                    "finance_db_guest.db"
+                }
+            } else {
+                "finance_db_user_$sanitized.db"
+            }
+        }
+
+        private fun buildDatabase(context: Context, scope: CoroutineScope, dbName: String): AppDatabase {
+            return Room.databaseBuilder(
+                context.applicationContext,
+                AppDatabase::class.java,
+                dbName
+            )
+                .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                .fallbackToDestructiveMigration(true)
+                .addCallback(AppDatabaseCallback(context.applicationContext, scope, dbName))
+                .build()
+        }
+
+        fun getDatabaseForUser(context: Context, scope: CoroutineScope, userKey: String): AppDatabase {
+            val dbName = getDatabaseFileName(context, userKey)
+            val existing = instances[dbName]
+            if (existing != null && existing.isOpen) {
+                return existing
+            }
+            return synchronized(lock) {
+                val current = instances[dbName]
+                if (current != null && current.isOpen) {
+                    current
+                } else {
+                    val db = buildDatabase(context, scope, dbName)
+                    instances[dbName] = db
+                    db
+                }
+            }
+        }
+
+        fun getActiveDatabase(context: Context, scope: CoroutineScope): AppDatabase {
+            return getDatabaseForUser(context, scope, currentActiveUserKey)
+        }
+
+        fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
+            return getActiveDatabase(context, scope)
+        }
+
+        fun setActiveUserKey(userKey: String) {
+            currentActiveUserKey = sanitizeUserKey(userKey)
+        }
+
+        fun getActiveUserKey(): String = currentActiveUserKey
+
+        fun closeDatabaseForUser(context: Context, userKey: String) {
+            val dbName = getDatabaseFileName(context, userKey)
+            synchronized(lock) {
+                instances.remove(dbName)?.let { db ->
+                    try {
+                        if (db.isOpen) db.close()
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+
+        fun closeAllDatabases() {
+            synchronized(lock) {
+                instances.forEach { (_, db) ->
+                    try {
+                        if (db.isOpen) db.close()
+                    } catch (_: Exception) {}
+                }
+                instances.clear()
             }
         }
 
         private class AppDatabaseCallback(
             private val context: Context,
-            private val scope: CoroutineScope
+            private val scope: CoroutineScope,
+            private val dbName: String
         ) : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 super.onCreate(db)
                 scope.launch(Dispatchers.IO) {
-                    val database = getDatabase(context, scope)
+                    val database = instances[dbName] ?: buildDatabase(context, scope, dbName)
                     DatabaseInitializer.seedInitialData(database)
                 }
             }

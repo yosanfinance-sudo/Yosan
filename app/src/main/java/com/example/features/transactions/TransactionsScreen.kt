@@ -32,6 +32,8 @@ import com.example.ui.theme.*
 import com.example.features.transactions.FinanceViewModel
 import com.example.utils.CurrencyFormatter
 import com.example.utils.DateUtils
+import com.example.utils.HapticHelper
+import androidx.compose.ui.platform.LocalContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,6 +44,7 @@ fun TransactionsScreen(
     onOpenAddSheet: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val transactions by viewModel.filteredTransactions.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedType by viewModel.selectedTypeFilter.collectAsState()
@@ -577,7 +580,10 @@ fun TransactionsScreen(
                 item {
                     InputChip(
                         selected = true,
-                        onClick = { viewModel.setCategoryFilter(null) },
+                        onClick = {
+                            HapticHelper.vibrateTick(context)
+                            viewModel.setCategoryFilter(null)
+                        },
                         label = { Text("Category: $selectedCategory", fontWeight = FontWeight.Bold) },
                         trailingIcon = {
                             Icon(
@@ -592,7 +598,10 @@ fun TransactionsScreen(
             item {
                 FilterChip(
                     selected = selectedType == null && selectedCategory == null,
-                    onClick = { viewModel.clearFilters() },
+                    onClick = {
+                        HapticHelper.vibrateTick(context)
+                        viewModel.clearFilters()
+                    },
                     label = { Text("All") }
                 )
             }
@@ -601,6 +610,7 @@ fun TransactionsScreen(
                 FilterChip(
                     selected = isUncategorized,
                     onClick = {
+                        HapticHelper.vibrateTick(context)
                         if (isUncategorized) viewModel.setCategoryFilter(null) else viewModel.setCategoryFilter("Uncategorized")
                     },
                     label = { Text("Uncategorized") },
@@ -612,7 +622,10 @@ fun TransactionsScreen(
             item {
                 FilterChip(
                     selected = selectedType == TransactionType.EXPENSE && selectedCategory == null,
-                    onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.EXPENSE) null else TransactionType.EXPENSE) },
+                    onClick = {
+                        HapticHelper.vibrateTick(context)
+                        viewModel.setTypeFilter(if (selectedType == TransactionType.EXPENSE) null else TransactionType.EXPENSE)
+                    },
                     label = { Text("Expense") },
                     leadingIcon = {
                         if (selectedType == TransactionType.EXPENSE) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -622,7 +635,10 @@ fun TransactionsScreen(
             item {
                 FilterChip(
                     selected = selectedType == TransactionType.INCOME && selectedCategory == null,
-                    onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.INCOME) null else TransactionType.INCOME) },
+                    onClick = {
+                        HapticHelper.vibrateTick(context)
+                        viewModel.setTypeFilter(if (selectedType == TransactionType.INCOME) null else TransactionType.INCOME)
+                    },
                     label = { Text("Income") },
                     leadingIcon = {
                         if (selectedType == TransactionType.INCOME) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -632,7 +648,10 @@ fun TransactionsScreen(
             item {
                 FilterChip(
                     selected = selectedType == TransactionType.LENDING && selectedCategory == null,
-                    onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.LENDING) null else TransactionType.LENDING) },
+                    onClick = {
+                        HapticHelper.vibrateTick(context)
+                        viewModel.setTypeFilter(if (selectedType == TransactionType.LENDING) null else TransactionType.LENDING)
+                    },
                     label = { Text("Lend") },
                     leadingIcon = {
                         if (selectedType == TransactionType.LENDING) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -642,7 +661,10 @@ fun TransactionsScreen(
             item {
                 FilterChip(
                     selected = selectedType == TransactionType.BORROWING && selectedCategory == null,
-                    onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.BORROWING) null else TransactionType.BORROWING) },
+                    onClick = {
+                        HapticHelper.vibrateTick(context)
+                        viewModel.setTypeFilter(if (selectedType == TransactionType.BORROWING) null else TransactionType.BORROWING)
+                    },
                     label = { Text("Borrow") },
                     leadingIcon = {
                         if (selectedType == TransactionType.BORROWING) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -652,7 +674,10 @@ fun TransactionsScreen(
             item {
                 FilterChip(
                     selected = selectedType == TransactionType.INVESTMENT && selectedCategory == null,
-                    onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.INVESTMENT) null else TransactionType.INVESTMENT) },
+                    onClick = {
+                        HapticHelper.vibrateTick(context)
+                        viewModel.setTypeFilter(if (selectedType == TransactionType.INVESTMENT) null else TransactionType.INVESTMENT)
+                    },
                     label = { Text("Investment") },
                     leadingIcon = {
                         if (selectedType == TransactionType.INVESTMENT) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -662,7 +687,10 @@ fun TransactionsScreen(
             item {
                 FilterChip(
                     selected = selectedType == TransactionType.TRANSFER && selectedCategory == null,
-                    onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.TRANSFER) null else TransactionType.TRANSFER) },
+                    onClick = {
+                        HapticHelper.vibrateTick(context)
+                        viewModel.setTypeFilter(if (selectedType == TransactionType.TRANSFER) null else TransactionType.TRANSFER)
+                    },
                     label = { Text("Transfer") },
                     leadingIcon = {
                         if (selectedType == TransactionType.TRANSFER) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -674,6 +702,7 @@ fun TransactionsScreen(
                 FilterChip(
                     selected = isOfficial,
                     onClick = {
+                        HapticHelper.vibrateTick(context)
                         if (isOfficial) viewModel.setCategoryFilter(null) else viewModel.setCategoryFilter("Official Expense")
                     },
                     label = { Text("Official") },
@@ -867,12 +896,16 @@ private fun StatementHeaderAction(
     tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .clickable {
+                HapticHelper.vibrateClick(context)
+                onClick()
+            }
             .padding(horizontal = 6.dp, vertical = 4.dp)
     ) {
         Icon(

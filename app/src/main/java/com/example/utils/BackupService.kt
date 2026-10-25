@@ -450,7 +450,14 @@ object BackupService {
                         lastLoginAt = pObj.optLong("lastLoginAt", System.currentTimeMillis()),
                         isActive = pObj.optBoolean("isActive", true)
                     )
-                    database.userProfileDao().insertOrUpdateProfile(profile)
+                    if (clearExisting) {
+                        database.userProfileDao().insertOrUpdateProfile(profile)
+                    } else {
+                        val localProfile = database.userProfileDao().getUserProfileOnce()
+                        if (localProfile == null || (localProfile.email.isBlank() && profile.email.isNotBlank())) {
+                            database.userProfileDao().insertOrUpdateProfile(profile)
+                        }
+                    }
                 } catch (e: Exception) {
                     android.util.Log.e("BackupService", "Error restoring profile", e)
                 }
@@ -481,8 +488,19 @@ object BackupService {
                         )
                     }
                     if (accList.isNotEmpty()) {
-                        database.accountDao().insertAccounts(accList)
-                        accCount = accList.size
+                        if (clearExisting) {
+                            database.accountDao().insertAccounts(accList)
+                            accCount = accList.size
+                        } else {
+                            val existingAccounts = database.accountDao().getAllAccountsList()
+                            val existingKeys = existingAccounts.map { "${it.accountName.trim().lowercase()}_${it.bankName.trim().lowercase()}" }.toSet()
+                            val newAccounts = accList.filter { "${it.accountName.trim().lowercase()}_${it.bankName.trim().lowercase()}" !in existingKeys }
+                                .map { it.copy(id = 0L) }
+                            if (newAccounts.isNotEmpty()) {
+                                database.accountDao().insertAccounts(newAccounts)
+                            }
+                            accCount = newAccounts.size
+                        }
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("BackupService", "Error restoring accounts", e)
@@ -594,8 +612,21 @@ object BackupService {
                         )
                     }
                     if (txList.isNotEmpty()) {
-                        database.transactionDao().insertTransactions(txList)
-                        txCount = txList.size
+                        if (clearExisting) {
+                            database.transactionDao().insertTransactions(txList)
+                            txCount = txList.size
+                        } else {
+                            val existingTxs = database.transactionDao().getAllTransactionsList()
+                            val existingSyncIds = existingTxs.mapNotNull { it.syncId.takeIf { s -> s.isNotBlank() } }.toSet()
+                            val existingFingerprints = existingTxs.map { "${it.transactionDate}_${it.amount}_${it.description.trim().lowercase()}" }.toSet()
+                            val newTxs = txList.filter { tx ->
+                                tx.syncId !in existingSyncIds && "${tx.transactionDate}_${tx.amount}_${tx.description.trim().lowercase()}" !in existingFingerprints
+                            }.map { it.copy(id = 0L) }
+                            if (newTxs.isNotEmpty()) {
+                                database.transactionDao().insertTransactions(newTxs)
+                            }
+                            txCount = newTxs.size
+                        }
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("BackupService", "Error restoring transactions", e)
@@ -629,8 +660,19 @@ object BackupService {
                         )
                     }
                     if (loanList.isNotEmpty()) {
-                        database.loanDao().insertLoans(loanList)
-                        loanCount = loanList.size
+                        if (clearExisting) {
+                            database.loanDao().insertLoans(loanList)
+                            loanCount = loanList.size
+                        } else {
+                            val existingLoans = database.loanDao().getAllLoansList()
+                            val existingLoanKeys = existingLoans.map { "${it.personName.trim().lowercase()}_${it.amount}_${it.lentDate}" }.toSet()
+                            val newLoans = loanList.filter { "${it.personName.trim().lowercase()}_${it.amount}_${it.lentDate}" !in existingLoanKeys }
+                                .map { it.copy(id = 0L) }
+                            if (newLoans.isNotEmpty()) {
+                                database.loanDao().insertLoans(newLoans)
+                            }
+                            loanCount = newLoans.size
+                        }
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("BackupService", "Error restoring loans", e)

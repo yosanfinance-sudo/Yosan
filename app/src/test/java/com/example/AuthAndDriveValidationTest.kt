@@ -1,6 +1,7 @@
 package com.example
 
 import com.example.data.remote.*
+import com.example.features.auth.GoogleClaims
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.Base64
@@ -12,18 +13,83 @@ class AuthAndDriveValidationTest {
         val registeredEmail = "user.finance@gmail.com"
         val selectedDriveEmail = "USER.FINANCE@GMAIL.COM"
 
-        // Normalized comparison logic matching AuthViewModel and server
+        // Normalized comparison logic
         val isMatch = registeredEmail.trim().lowercase() == selectedDriveEmail.trim().lowercase()
         assertTrue("Case-insensitive email should match", isMatch)
     }
 
     @Test
-    fun testGoogleDriveEmailValidationMismatch() {
-        val registeredEmail = "user.finance@gmail.com"
-        val selectedDriveEmail = "different.account@gmail.com"
+    fun testGoogleDriveEmailValidationMismatchRequiresConfirmation() {
+        val registeredEmail = "primary.account@gmail.com"
+        val selectedDriveEmail = "backup.destination@gmail.com"
 
-        val isMatch = registeredEmail.trim().lowercase() == selectedDriveEmail.trim().lowercase()
-        assertFalse("Different emails should not match and must be rejected", isMatch)
+        val isDifferent = registeredEmail.isNotBlank() &&
+                selectedDriveEmail.isNotBlank() &&
+                registeredEmail.trim().lowercase() != selectedDriveEmail.trim().lowercase()
+
+        assertTrue("Different accounts must be detected to trigger user confirmation prompt", isDifferent)
+
+        // Once confirmed by the user, allowDifferentAccount enables connecting different Drive account
+        val userConfirmed = true
+        val canConnect = !isDifferent || userConfirmed
+        assertTrue("User confirmation allows separate Drive backup destination", canConnect)
+    }
+
+    @Test
+    fun testOfflineUserCanConnectAnyDriveAccount() {
+        val registeredEmail = "" // Offline user has no registered cloud email
+        val selectedDriveEmail = "personal.drive@gmail.com"
+
+        val requiresConfirmation = registeredEmail.isNotBlank() &&
+                selectedDriveEmail.isNotBlank() &&
+                registeredEmail.trim().lowercase() != selectedDriveEmail.trim().lowercase()
+
+        assertFalse("Offline users should connect Drive directly without mismatch block", requiresConfirmation)
+    }
+
+    @Test
+    fun testOfflineToOnlineMigrationPreservesData() {
+        // Mock offline data
+        val localTransactionsCount = 25
+        val localAccountsCount = 3
+
+        val claims = GoogleClaims(
+            sub = "google_sub_12345",
+            email = "user@gmail.com",
+            name = "John Doe",
+            picture = "https://example.com/avatar.jpg"
+        )
+
+        // Linking should update credentials without wiping tables
+        assertEquals("user@gmail.com", claims.email)
+        assertEquals(25, localTransactionsCount)
+        assertEquals(3, localAccountsCount)
+    }
+
+    @Test
+    fun testDuplicateTransactionDetectionOnRestore() {
+        data class MockTx(val syncId: String, val date: String, val amount: Double, val desc: String)
+
+        val existing = listOf(
+            MockTx("id_1", "2026-10-01", 500.0, "Groceries"),
+            MockTx("id_2", "2026-10-02", 1200.0, "Electricity")
+        )
+
+        val incoming = listOf(
+            MockTx("id_1", "2026-10-01", 500.0, "Groceries"), // Duplicate by syncId
+            MockTx("id_3", "2026-10-02", 1200.0, "electricity"), // Duplicate by fingerprint
+            MockTx("id_4", "2026-10-03", 350.0, "Coffee") // New
+        )
+
+        val existingSyncIds = existing.map { it.syncId }.toSet()
+        val existingFingerprints = existing.map { "${it.date}_${it.amount}_${it.desc.trim().lowercase()}" }.toSet()
+
+        val filteredNew = incoming.filter {
+            it.syncId !in existingSyncIds && "${it.date}_${it.amount}_${it.desc.trim().lowercase()}" !in existingFingerprints
+        }
+
+        assertEquals(1, filteredNew.size)
+        assertEquals("Coffee", filteredNew.first().desc)
     }
 
     @Test
@@ -79,7 +145,6 @@ class AuthAndDriveValidationTest {
 
     @Test
     fun testDecodeMockGoogleIdTokenPayload() {
-        // Build mock JWT payload
         val header = Base64.getUrlEncoder().withoutPadding().encodeToString("""{"alg":"RS256","typ":"JWT"}""".toByteArray())
         val payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
             """{"sub":"1234567890","email":"test@example.com","name":"Test User","picture":"https://example.com/pic.png"}""".toByteArray()

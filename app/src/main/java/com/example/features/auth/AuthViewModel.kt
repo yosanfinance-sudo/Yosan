@@ -36,10 +36,13 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     private val TAG = "AuthViewModel"
     private val tokenManager = SecureTokenManager(application)
-    private val database = AppDatabase.getDatabase(application, viewModelScope)
-    private val authRepository = com.example.features.auth.data.AuthRepository(database)
+    private val database: AppDatabase
+        get() = AppDatabase.getActiveDatabase(getApplication(), viewModelScope)
+    private val authRepository: com.example.features.auth.data.AuthRepository
+        get() = com.example.features.auth.data.AuthRepository(database)
     private val driveService = GoogleDriveService(application, tokenManager)
-    val syncManager = SyncManager(application, database, tokenManager)
+    val syncManager: SyncManager
+        get() = SyncManager(getApplication(), database, tokenManager)
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
@@ -113,6 +116,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 // If user is not logged in via credentials, check if offline mode was completed
                 if (storedAccessToken.isNullOrBlank() || userEmail.isNullOrBlank() || googleSub.isNullOrBlank()) {
+                    AppDatabase.setActiveUserKey("guest")
                     if (prefs.isOfflineMode && prefs.isOnboardingCompleted) {
                         val savedProfile = authRepository.getProfileOnce()
                         if (savedProfile != null) {
@@ -154,6 +158,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // 4. Load authenticated user profile
+                AppDatabase.setActiveUserKey(userEmail)
                 val savedProfile = authRepository.getProfileOnce()
                 val resolvedName = tokenManager.getUserName() ?: savedProfile?.name ?: prefs.lastUserName.ifBlank { "User" }
                 val resolvedPic = tokenManager.getProfilePic() ?: savedProfile?.profilePictureUrl ?: prefs.lastUserProfilePic
@@ -265,6 +270,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         )
                         _isEmailVerified.value = true
 
+                        // Switch database to this Google user's isolated partition
+                        AppDatabase.setActiveUserKey(email)
+
                         val prefs = com.example.utils.AppPreferences(app)
                         val existingAccounts = database.accountDao().getAllAccountsList()
                         val primaryBank = existingAccounts.firstOrNull { it.isDefault }?.bankName
@@ -371,6 +379,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val currentProfile = authRepository.getProfileOnce()
 
                 val email = account.email.ifBlank { prefs.lastUserEmail.ifBlank { currentProfile?.email ?: "" } }
+                if (email.isNotBlank()) {
+                    AppDatabase.setActiveUserKey(email)
+                } else {
+                    AppDatabase.setActiveUserKey("guest")
+                }
                 val name = account.name.ifBlank { prefs.lastUserName.ifBlank { currentProfile?.name ?: "User" } }
                 val pic = account.profilePicture.ifBlank { prefs.lastUserProfilePic.ifBlank { currentProfile?.profilePictureUrl ?: "" } }
                 val sub = account.googleSub.ifBlank { prefs.lastGoogleSub.ifBlank { currentProfile?.googleSub ?: email.ifBlank { "yosan_user" } } }
@@ -470,6 +483,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     _errorMessage.value = "Please enter a valid Google Account email."
                     return@launch
                 }
+                // Switch database partition for this Google account
+                AppDatabase.setActiveUserKey(cleanEmail)
                 val resolvedName = name?.trim()?.ifBlank { null }
                     ?: cleanEmail.substringBefore("@").replace(".", " ")
                         .split(" ")
@@ -766,6 +781,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         accessToken: String? = null,
         refreshToken: String? = null,
         expiresInSeconds: Long? = null,
+        allowDifferentAccount: Boolean = false,
         onResult: ((Boolean, String?) -> Unit)? = null
     ) {
         viewModelScope.launch {
@@ -775,7 +791,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val registeredEmail = localProfile?.email?.trim()?.lowercase() ?: _user.value?.email?.trim()?.lowercase() ?: ""
                 val cleanDriveEmail = selectedDriveEmail.trim().lowercase()
 
-                if (registeredEmail.isNotEmpty() && cleanDriveEmail.isNotEmpty() && registeredEmail != cleanDriveEmail) {
+                if (!allowDifferentAccount && registeredEmail.isNotEmpty() && cleanDriveEmail.isNotEmpty() && registeredEmail != cleanDriveEmail) {
                     val errorMsg = "Email Mismatch: Selected Google Drive account ($cleanDriveEmail) does not match your registered account ($registeredEmail)."
                     _errorMessage.value = errorMsg
                     onResult?.invoke(false, errorMsg)
@@ -1252,7 +1268,17 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (_: Exception) {}
             }
 
+            // Close active user's isolated database cleanly and switch active partition to guest
+            val logoutEmail = email.takeIf { !it.isNullOrBlank() } ?: _user.value?.email ?: tokenManager.getUserEmail()
+            if (!logoutEmail.isNullOrBlank()) {
+                AppDatabase.closeDatabaseForUser(app, logoutEmail)
+            }
+            AppDatabase.setActiveUserKey("guest")
+            prefs.isLoggedOut = true
+            prefs.isOfflineMode = false
+
             tokenManager.clearSession()
+            tokenManager.clearCredentials()
             tokenManager.clearDriveTokens()
             driveService.disconnectDrive()
             refreshDriveStatus()
@@ -1262,6 +1288,78 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             _isEmailVerified.value = false
             _authState.value = AuthState.Unauthenticated
             onComplete?.invoke()
+        }
+    }
+
+    /**
+     * Safely links an offline profile to a Google account without wiping local financial data.
+     * Preserves existing accounts, transactions, loans, and categories intact.
+     */
+    fun linkOfflineProfileToGoogle(
+        claims: GoogleClaims,
+        onComplete: ((Boolean, String?) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val app = getApplication<Application>()
+                val prefs = com.example.utils.AppPreferences(app)
+
+                // 1. Export local guest data from guest database
+                val guestDb = AppDatabase.getDatabaseForUser(app, viewModelScope, "guest")
+                val guestBackupJson = com.example.utils.BackupService.generateBackupJsonObject(guestDb).toString()
+
+                val cleanEmail = claims.email.trim().lowercase()
+                // 2. Switch active database to this user
+                AppDatabase.setActiveUserKey(cleanEmail)
+                val userDb = AppDatabase.getDatabaseForUser(app, viewModelScope, cleanEmail)
+
+                // 3. Restore/migrate guest records into user's database without duplicates
+                com.example.utils.BackupService.restoreBackupJson(guestBackupJson, userDb, clearExisting = false)
+
+                // 4. Update authenticated profile
+                val existingProfile = userDb.userProfileDao().getUserProfileOnce()
+                val currentName = existingProfile?.name?.takeIf { it.isNotBlank() && it != "User" }
+                    ?: claims.name.ifBlank { cleanEmail.substringBefore("@") }
+
+                val updatedProfile = (existingProfile ?: UserProfileEntity(id = 1)).copy(
+                    email = cleanEmail,
+                    name = currentName,
+                    googleSub = claims.sub,
+                    profilePictureUrl = claims.picture.ifBlank { existingProfile?.profilePictureUrl ?: "" },
+                    emailVerified = true,
+                    isOnboardingCompleted = true,
+                    updatedAt = System.currentTimeMillis()
+                )
+
+                userDb.userProfileDao().insertOrUpdateProfile(updatedProfile)
+                withContext(Dispatchers.IO) {
+                    userDb.userProfileDao().updateOnboardingCompleted(true)
+                    // Reset guest DB so future guest sessions start clean
+                    com.example.data.local.DatabaseInitializer.purgeLegacyDemoData(guestDb)
+                }
+
+                tokenManager.saveUserSession(
+                    userId = 1L,
+                    googleSub = claims.sub,
+                    email = cleanEmail,
+                    name = currentName,
+                    profilePicture = claims.picture,
+                    emailVerified = true
+                )
+
+                prefs.isLoggedOut = false
+                prefs.isOfflineMode = false
+                prefs.isOnboardingCompleted = true
+                _user.value = buildLocalUser(updatedProfile)
+                _authState.value = AuthState.Authenticated(isNewUser = false)
+                onComplete?.invoke(true, null)
+            } catch (e: Exception) {
+                Log.e(TAG, "linkOfflineProfileToGoogle failed: ${e.message}", e)
+                onComplete?.invoke(false, e.localizedMessage ?: "Failed to link profile")
+            } finally {
+                _isLoading.value = false
+            }
         }
     }
 

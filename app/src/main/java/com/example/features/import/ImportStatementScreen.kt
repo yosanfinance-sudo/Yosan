@@ -51,6 +51,7 @@ import com.example.ui.theme.*
 import com.example.features.transactions.FinanceViewModel
 import com.example.utils.CurrencyFormatter
 import com.example.utils.DateUtils
+import com.example.utils.HapticHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -213,7 +214,7 @@ fun ImportStatementScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Column {
                                     Text(
-                                        text = "Supported Banks: Indian Bank & YES BANK",
+                                        text = "Supported Banks: Indian Bank, State Bank, YES Bank & IndusInd Bank",
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary
@@ -559,25 +560,30 @@ fun ImportStatementScreen(
                                     }
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        FilterChip(
-                                            selected = preview.detectedBank == SupportedBank.INDIAN_BANK,
-                                            onClick = { viewModel.setManualBankOverride(SupportedBank.INDIAN_BANK) },
-                                            label = { Text("Indian Bank") },
-                                            leadingIcon = if (preview.detectedBank == SupportedBank.INDIAN_BANK) {
-                                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                            } else null
-                                        )
-                                        FilterChip(
-                                            selected = preview.detectedBank == SupportedBank.YES_BANK,
-                                            onClick = { viewModel.setManualBankOverride(SupportedBank.YES_BANK) },
-                                            label = { Text("YES BANK") },
-                                            leadingIcon = if (preview.detectedBank == SupportedBank.YES_BANK) {
-                                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                            } else null
-                                        )
+                                        listOf(
+                                            SupportedBank.INDIAN_BANK to "Indian Bank",
+                                            SupportedBank.STATE_BANK to "State Bank",
+                                            SupportedBank.YES_BANK to "YES Bank",
+                                            SupportedBank.INDUSIND_BANK to "IndusInd Bank"
+                                        ).forEach { (bankEnum, bankLabel) ->
+                                            val isSelected = preview.detectedBank == bankEnum
+                                            FilterChip(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    HapticHelper.vibrateClick(context)
+                                                    viewModel.setManualBankOverride(bankEnum)
+                                                },
+                                                label = { Text(bankLabel) },
+                                                leadingIcon = if (isSelected) {
+                                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                                } else null
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -657,8 +663,8 @@ fun ImportStatementScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
                                             Text(text = "Valid: ${audit.validCount}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                                            Text(text = "Debits: ₹${CurrencyFormatter.formatInrCompact(audit.totalDebits)}", color = ExpenseRed, style = MaterialTheme.typography.bodySmall)
-                                            Text(text = "Credits: ₹${CurrencyFormatter.formatInrCompact(audit.totalCredits)}", color = IncomeGreen, style = MaterialTheme.typography.bodySmall)
+                                            Text(text = "Debits: ${CurrencyFormatter.formatInrCompact(audit.totalDebits)}", color = ExpenseRed, style = MaterialTheme.typography.bodySmall)
+                                            Text(text = "Credits: ${CurrencyFormatter.formatInrCompact(audit.totalCredits)}", color = IncomeGreen, style = MaterialTheme.typography.bodySmall)
                                         }
 
                                         if (audit.discrepancies.isNotEmpty()) {
@@ -819,7 +825,7 @@ fun ImportStatementScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Statements imported from Indian Bank or YES BANK will appear here along with mathematical audit logs.",
+                                    text = "Statements imported from Indian Bank, State Bank, YES Bank, or IndusInd Bank will appear here along with mathematical audit logs.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -1260,11 +1266,11 @@ fun StatementAuditDetailsDialog(
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Total Withdrawals (Debits):", style = MaterialTheme.typography.bodySmall)
-                    Text("-₹${CurrencyFormatter.formatInr(audit.totalDebits)}", fontWeight = FontWeight.SemiBold, color = ExpenseRed, style = MaterialTheme.typography.bodySmall)
+                    Text("-${CurrencyFormatter.formatInr(audit.totalDebits)}", fontWeight = FontWeight.SemiBold, color = ExpenseRed, style = MaterialTheme.typography.bodySmall)
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Total Deposits (Credits):", style = MaterialTheme.typography.bodySmall)
-                    Text("+₹${CurrencyFormatter.formatInr(audit.totalCredits)}", fontWeight = FontWeight.SemiBold, color = IncomeGreen, style = MaterialTheme.typography.bodySmall)
+                    Text("+${CurrencyFormatter.formatInr(audit.totalCredits)}", fontWeight = FontWeight.SemiBold, color = IncomeGreen, style = MaterialTheme.typography.bodySmall)
                 }
 
                 if (audit.openingBalance != null || audit.closingBalance != null) {
@@ -1273,20 +1279,20 @@ fun StatementAuditDetailsDialog(
                     if (audit.openingBalance != null) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Opening Balance:", style = MaterialTheme.typography.bodySmall)
-                            Text("₹${CurrencyFormatter.formatInr(audit.openingBalance)}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                            Text(CurrencyFormatter.formatInr(audit.openingBalance), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     if (audit.closingBalance != null) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Statement Closing Balance:", style = MaterialTheme.typography.bodySmall)
-                            Text("₹${CurrencyFormatter.formatInr(audit.closingBalance)}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                            Text(CurrencyFormatter.formatInr(audit.closingBalance), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     if (audit.calculatedClosingBalance != null) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Reconciled Balance:", style = MaterialTheme.typography.bodySmall)
                             Text(
-                                "₹${CurrencyFormatter.formatInr(audit.calculatedClosingBalance)}",
+                                CurrencyFormatter.formatInr(audit.calculatedClosingBalance),
                                 fontWeight = FontWeight.Bold,
                                 color = if (audit.balanceReconciliationPassed == true) IncomeGreen else ExpenseRed,
                                 style = MaterialTheme.typography.bodySmall
@@ -1431,22 +1437,22 @@ fun StatementImportHistoryCard(
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Total Debits:", style = MaterialTheme.typography.bodySmall)
-                    Text("-₹${CurrencyFormatter.formatInr(item.totalDebits)}", color = ExpenseRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                    Text("-${CurrencyFormatter.formatInr(item.totalDebits)}", color = ExpenseRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Total Credits:", style = MaterialTheme.typography.bodySmall)
-                    Text("+₹${CurrencyFormatter.formatInr(item.totalCredits)}", color = IncomeGreen, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                    Text("+${CurrencyFormatter.formatInr(item.totalCredits)}", color = IncomeGreen, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                 }
                 if (item.openingBalance != null) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Opening Balance:", style = MaterialTheme.typography.bodySmall)
-                        Text("₹${CurrencyFormatter.formatInr(item.openingBalance)}", style = MaterialTheme.typography.bodySmall)
+                        Text(CurrencyFormatter.formatInr(item.openingBalance), style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 if (item.closingBalance != null) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Closing Balance:", style = MaterialTheme.typography.bodySmall)
-                        Text("₹${CurrencyFormatter.formatInr(item.closingBalance)}", style = MaterialTheme.typography.bodySmall)
+                        Text(CurrencyFormatter.formatInr(item.closingBalance), style = MaterialTheme.typography.bodySmall)
                     }
                 }
 

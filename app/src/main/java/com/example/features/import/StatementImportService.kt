@@ -12,7 +12,9 @@ import java.util.zip.ZipInputStream
 
 enum class SupportedBank(val displayName: String) {
     INDIAN_BANK("Indian Bank"),
-    YES_BANK("YES BANK"),
+    STATE_BANK("State Bank"),
+    YES_BANK("YES Bank"),
+    INDUSIND_BANK("IndusInd Bank"),
     UNKNOWN("Generic / Supported Bank")
 }
 
@@ -484,11 +486,19 @@ object StatementImportService {
                     lowerName.contains("indian_bank") || lowerName.contains("indianbank") || lowerName.contains("indbank") -> {
                 SupportedBank.INDIAN_BANK
             }
+            lowerContent.contains("state bank") || lowerContent.contains("sbi") ||
+                    lowerContent.contains("sbin0") || lowerName.contains("sbi") || lowerName.contains("state_bank") -> {
+                SupportedBank.STATE_BANK
+            }
             lowerContent.contains("yes bank") || lowerContent.contains("yes touch") ||
                     lowerContent.contains("yesbank") || lowerContent.contains("yes first") ||
                     lowerContent.contains("smart salary") || lowerContent.contains("cin - l65190mh2003plc143249") ||
                     lowerName.contains("yes_bank") || lowerName.contains("yesbank") -> {
                 SupportedBank.YES_BANK
+            }
+            lowerContent.contains("indusind") || lowerContent.contains("indb0") ||
+                    lowerName.contains("indusind") -> {
+                SupportedBank.INDUSIND_BANK
             }
             else -> SupportedBank.UNKNOWN
         }

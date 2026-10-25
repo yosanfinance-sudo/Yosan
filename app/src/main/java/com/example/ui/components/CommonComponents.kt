@@ -48,7 +48,11 @@ import com.example.ui.theme.*
 import com.example.features.transactions.SmartRulePrompt
 import com.example.utils.CurrencyFormatter
 import com.example.utils.DateUtils
+import com.example.utils.HapticHelper
+import androidx.compose.ui.platform.LocalContext
 import java.util.Locale
+
+val LocalFloatingEffectEnabled = compositionLocalOf { true }
 
 @Composable
 fun MetricCard(
@@ -62,13 +66,22 @@ fun MetricCard(
     customValueText: String? = null,
     onClick: (() -> Unit)? = null
 ) {
+    val isFloating = LocalFloatingEffectEnabled.current
+    val context = LocalContext.current
     Card(
         modifier = modifier
             .clip(RoundedCornerShape(20.dp))
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable {
+                        HapticHelper.vibrateClick(context)
+                        onClick()
+                    }
+                } else Modifier
+            ),
         colors = CardDefaults.cardColors(containerColor = backgroundColor),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isFloating) 4.dp else 0.dp)
     ) {
         Column(
             modifier = Modifier
@@ -161,13 +174,22 @@ fun TransactionItemCard(
         else -> Icons.Default.Receipt
     }
 
+    val isFloating = LocalFloatingEffectEnabled.current
+    val context = LocalContext.current
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
             .combinedClickable(
-                onClick = onClick,
-                onLongClick = { onLongClick?.invoke() }
+                onClick = {
+                    HapticHelper.vibrateClick(context)
+                    onClick()
+                },
+                onLongClick = {
+                    HapticHelper.vibrateClick(context)
+                    onLongClick?.invoke()
+                }
             )
             .testTag("transaction_item_${transaction.id}"),
         colors = CardDefaults.cardColors(
@@ -181,7 +203,7 @@ fun TransactionItemCard(
             width = if (isSelected) 2.dp else 1.dp,
             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isFloating) 2.dp else 0.dp)
     ) {
         Row(
             modifier = Modifier
@@ -395,13 +417,16 @@ fun PersonLoanCard(
         LoanStatus.CANCELLED -> MaterialTheme.colorScheme.outline
     }
 
+    val isFloating = LocalFloatingEffectEnabled.current
+    val context = LocalContext.current
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp)),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isFloating) 3.dp else 0.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -552,13 +577,16 @@ fun MonthlyTrendChart(
 
     val maxAmount = (trends.maxOfOrNull { maxOf(it.income, it.expense) } ?: 1.0).coerceAtLeast(100.0)
 
+    val isFloating = LocalFloatingEffectEnabled.current
+    val context = LocalContext.current
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp)),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isFloating) 3.dp else 0.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -669,13 +697,16 @@ fun DonutCategoryChart(
     var isExpanded by remember { mutableStateOf(false) }
     val displayItems = if (isExpanded || items.size <= 5) items else items.take(5)
 
+    val isFloating = LocalFloatingEffectEnabled.current
+    val context = LocalContext.current
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp)),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isFloating) 3.dp else 0.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -1093,11 +1124,15 @@ fun PrivacyAmountText(
 ) {
     val shouldMask = isPrivacyEnabled && !isRevealed
     val formatted = prefix + CurrencyFormatter.formatInr(amount)
+    val context = LocalContext.current
 
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
-            .clickable(enabled = isPrivacyEnabled) { onTap() },
+            .clickable(enabled = isPrivacyEnabled) {
+                HapticHelper.vibrateClick(context)
+                onTap()
+            },
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (shouldMask) {

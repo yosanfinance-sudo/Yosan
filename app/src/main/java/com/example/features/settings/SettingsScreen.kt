@@ -1,4 +1,5 @@
 package com.example.features.settings
+import com.example.features.auth.GoogleClaims
 
 import androidx.fragment.app.FragmentActivity
 import android.content.Intent
@@ -147,6 +148,10 @@ fun SettingsScreen(
 
     var showGoogleDriveDialog by remember { mutableStateOf(false) }
     var driveMismatchError by remember { mutableStateOf<String?>(null) }
+    var showDifferentDriveAccountDialog by remember { mutableStateOf(false) }
+    var pendingDifferentDriveAccount by remember { mutableStateOf<com.google.android.gms.auth.api.signin.GoogleSignInAccount?>(null) }
+    var showLinkOfflineConfirmDialog by remember { mutableStateOf(false) }
+    var pendingMigrationClaims by remember { mutableStateOf<GoogleClaims?>(null) }
     var isDriveConnecting by remember { mutableStateOf(false) }
     var isDriveBackingUp by remember { mutableStateOf(false) }
     var isDriveRestoring by remember { mutableStateOf(false) }
@@ -173,7 +178,8 @@ fun SettingsScreen(
                         is DriveAuthTokenResult.Success -> {
                             authViewModel?.connectGoogleDriveWithValidation(
                                 selectedDriveEmail = tokenRes.email,
-                                accessToken = tokenRes.token
+                                accessToken = tokenRes.token,
+                                allowDifferentAccount = true
                             ) { success, msg ->
                                 isDriveConnecting = false
                                 if (success) {
@@ -201,6 +207,43 @@ fun SettingsScreen(
         }
     }
 
+    val connectDriveForAccount: (com.google.android.gms.auth.api.signin.GoogleSignInAccount) -> Unit = { account ->
+        isDriveConnecting = true
+        driveMismatchError = null
+        coroutineScope.launch {
+            when (val tokenRes = driveAuthManager.fetchAccessToken(account)) {
+                is DriveAuthTokenResult.Success -> {
+                    authViewModel?.connectGoogleDriveWithValidation(
+                        selectedDriveEmail = tokenRes.email,
+                        accessToken = tokenRes.token,
+                        allowDifferentAccount = true
+                    ) { success, msg ->
+                        isDriveConnecting = false
+                        if (success) {
+                            showGoogleDriveDialog = false
+                            statusNotificationMsg = "Google Drive connected for ${tokenRes.email}!"
+                        } else {
+                            driveMismatchError = msg ?: "Connection failed"
+                        }
+                    }
+                }
+                is DriveAuthTokenResult.NeedsUserConsent -> {
+                    pendingConsentEmail = tokenRes.email
+                    if (tokenRes.consentIntent != null) {
+                        driveConsentLauncher.launch(tokenRes.consentIntent)
+                    } else {
+                        isDriveConnecting = false
+                        driveMismatchError = "Google Drive consent required."
+                    }
+                }
+                is DriveAuthTokenResult.Error -> {
+                    isDriveConnecting = false
+                    driveMismatchError = tokenRes.message
+                }
+            }
+        }
+    }
+
     val driveSignInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { res ->
@@ -212,39 +255,10 @@ fun SettingsScreen(
                 val registeredEmail = userProfile?.email?.trim()?.lowercase() ?: authUser?.email?.trim()?.lowercase() ?: ""
                 if (registeredEmail.isNotBlank() && selectedEmail.isNotBlank() && selectedEmail != registeredEmail) {
                     isDriveConnecting = false
-                    driveMismatchError = "Email Mismatch: Selected Google account ($selectedEmail) does not match your registered email ($registeredEmail)."
+                    pendingDifferentDriveAccount = account
+                    showDifferentDriveAccountDialog = true
                 } else {
-                    coroutineScope.launch {
-                        when (val tokenRes = driveAuthManager.fetchAccessToken(account)) {
-                            is DriveAuthTokenResult.Success -> {
-                                authViewModel?.connectGoogleDriveWithValidation(
-                                    selectedDriveEmail = tokenRes.email,
-                                    accessToken = tokenRes.token
-                                ) { success, msg ->
-                                    isDriveConnecting = false
-                                    if (success) {
-                                        showGoogleDriveDialog = false
-                                        statusNotificationMsg = "Google Drive connected for ${tokenRes.email}!"
-                                    } else {
-                                        driveMismatchError = msg ?: "Connection failed"
-                                    }
-                                }
-                            }
-                            is DriveAuthTokenResult.NeedsUserConsent -> {
-                                pendingConsentEmail = tokenRes.email
-                                if (tokenRes.consentIntent != null) {
-                                    driveConsentLauncher.launch(tokenRes.consentIntent)
-                                } else {
-                                    isDriveConnecting = false
-                                    driveMismatchError = "Google Drive consent required."
-                                }
-                            }
-                            is DriveAuthTokenResult.Error -> {
-                                isDriveConnecting = false
-                                driveMismatchError = tokenRes.message
-                            }
-                        }
-                    }
+                    connectDriveForAccount(account)
                 }
             } else {
                 isDriveConnecting = false
@@ -293,7 +307,7 @@ fun SettingsScreen(
                         showEditNameDialog = true
                     },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
@@ -348,6 +362,42 @@ fun SettingsScreen(
                                             color = if (verified) IncomeGreen else MaterialTheme.colorScheme.error,
                                             modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                                         )
+                                    }
+                                }
+                            } else {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(vertical = 3.dp)
+                                ) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "Offline Mode",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    FilledTonalButton(
+                                        onClick = {
+                                            authViewModel?.signInWithGoogle(
+                                                context = context
+                                            ) { claims ->
+                                                pendingMigrationClaims = claims
+                                                showLinkOfflineConfirmDialog = true
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(28.dp)
+                                    ) {
+                                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Link Google Account", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -456,7 +506,7 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(16.dp)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column {
                     MoreMenuItem(
@@ -489,7 +539,7 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(16.dp)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column {
                     MoreMenuItem(
@@ -614,54 +664,6 @@ fun SettingsScreen(
                             }
                         )
                     }
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                shape = CircleShape,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Layers,
-                                        contentDescription = "Floating Action Button",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Floating Action Button & Depth",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Elevate action button with 3D material shadow depth",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Switch(
-                            checked = isFloatingEffectEnabled,
-                            onCheckedChange = { enabled ->
-                                viewModel.setFloatingEffectEnabled(enabled)
-                                com.example.utils.HapticHelper.vibrateClick(context)
-                            }
-                        )
-                    }
                 }
             }
         }
@@ -688,7 +690,7 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(16.dp)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
@@ -775,7 +777,7 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(16.dp)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
@@ -904,7 +906,7 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(16.dp)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column {
                     MoreMenuItem(
@@ -937,7 +939,7 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(16.dp)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column {
                     val isDriveConnected = driveStatus?.isConnected == true
@@ -993,14 +995,6 @@ fun SettingsScreen(
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                     MoreMenuItem(
-                        title = "Excel Two-Way Sync",
-                        subtitle = "Sync transactions bidirectionally with an Excel (.xlsx) file",
-                        icon = Icons.Default.TableChart,
-                        iconColor = IncomeGreen,
-                        onClick = onNavigateToExcelSync
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                    MoreMenuItem(
                         title = "Undo & Recovery History",
                         subtitle = "${undoHistory.size} actions available to revert",
                         icon = Icons.Default.History,
@@ -1030,7 +1024,7 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(16.dp)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column {
                     MoreMenuItem(
@@ -1083,7 +1077,7 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(16.dp)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column {
                     MoreMenuItem(
@@ -1128,7 +1122,7 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(16.dp)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column {
                     MoreMenuItem(
@@ -1416,7 +1410,11 @@ fun SettingsScreen(
     // Warning Wizard for Delete Account
     if (showResetWizard) {
         AlertDialog(
-            onDismissRequest = { showResetWizard = false },
+            onDismissRequest = {
+                showResetWizard = false
+                resetWizardStep = 1
+                resetConfirmText = ""
+            },
             title = {
                 Text(
                     text = if (resetWizardStep == 1) "Delete Account?" else "Final Confirmation",
@@ -1431,6 +1429,7 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(14.dp))
                         OutlinedButton(
                             onClick = {
+                                com.example.utils.HapticHelper.vibrateClick(context)
                                 viewModel.createBackup(context) { file ->
                                     if (file != null) {
                                         com.example.utils.BackupService.shareBackupFile(context, file)
@@ -1461,6 +1460,7 @@ fun SettingsScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        com.example.utils.HapticHelper.vibrateClick(context)
                         if (resetWizardStep == 1) {
                             resetWizardStep = 2
                         } else {
@@ -1469,6 +1469,8 @@ fun SettingsScreen(
                                     authViewModel?.deleteAccount()
                                 }
                                 showResetWizard = false
+                                resetWizardStep = 1
+                                resetConfirmText = ""
                             }
                         }
                     },
@@ -1479,7 +1481,12 @@ fun SettingsScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showResetWizard = false }) { Text("Cancel") }
+                TextButton(onClick = {
+                    com.example.utils.HapticHelper.vibrateClick(context)
+                    showResetWizard = false
+                    resetWizardStep = 1
+                    resetConfirmText = ""
+                }) { Text("Cancel") }
             }
         )
     }
@@ -1513,6 +1520,7 @@ fun SettingsScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        com.example.utils.HapticHelper.vibrateClick(context)
                         showLogoutDialog = false
                         authViewModel?.logout()
                     },
@@ -1522,7 +1530,10 @@ fun SettingsScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showLogoutDialog = false }) {
+                TextButton(onClick = {
+                    com.example.utils.HapticHelper.vibrateClick(context)
+                    showLogoutDialog = false
+                }) {
                     Text("Cancel")
                 }
             }
@@ -1824,7 +1835,9 @@ fun SettingsScreen(
 
                         val indianBanks = listOf(
                             "Indian Bank",
-                            "Yes Bank"
+                            "State Bank",
+                            "YES Bank",
+                            "IndusInd Bank"
                         )
 
                         androidx.compose.foundation.layout.FlowRow(
@@ -1837,6 +1850,7 @@ fun SettingsScreen(
                                 FilterChip(
                                     selected = isSelected,
                                     onClick = {
+                                        com.example.utils.HapticHelper.vibrateTick(context)
                                         bankName = bName
                                     },
                                     label = { Text(bName, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
@@ -2379,6 +2393,144 @@ fun SettingsScreen(
         )
     }
 
+    if (showDifferentDriveAccountDialog && pendingDifferentDriveAccount != null) {
+        val pendingAcc = pendingDifferentDriveAccount!!
+        val selectedDriveEmail = (pendingAcc.email ?: "").trim().lowercase()
+        val regEmail = userProfile?.email?.trim()?.lowercase() ?: authUser?.email?.trim()?.lowercase() ?: ""
+
+        AlertDialog(
+            onDismissRequest = {
+                showDifferentDriveAccountDialog = false
+                pendingDifferentDriveAccount = null
+            },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.CloudSync,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Use Different Account for Drive?",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "You are signed in to Yosan as:\n$regEmail",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "You selected for Google Drive backup:\n$selectedDriveEmail",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Do you want to use $selectedDriveEmail as your backup destination? Your application identity will remain under $regEmail.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDifferentDriveAccountDialog = false
+                        connectDriveForAccount(pendingAcc)
+                        pendingDifferentDriveAccount = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Confirm & Use This Account", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDifferentDriveAccountDialog = false
+                        pendingDifferentDriveAccount = null
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    val currentClaims = pendingMigrationClaims
+    if (showLinkOfflineConfirmDialog && currentClaims != null) {
+        AlertDialog(
+            onDismissRequest = {
+                showLinkOfflineConfirmDialog = false
+                pendingMigrationClaims = null
+            },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Link,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Link Offline Profile to Google?",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Google Sign-In verified for:\n${currentClaims.email}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Would you like to link your existing offline financial data (accounts, transactions, loans) to this Google account?\n\nAll existing records on this phone will be safely preserved and synchronized.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLinkOfflineConfirmDialog = false
+                        authViewModel?.linkOfflineProfileToGoogle(currentClaims) { success, msg ->
+                            if (success) {
+                                statusNotificationMsg = msg ?: "Profile linked to ${currentClaims.email}"
+                            } else {
+                                driveMismatchError = msg ?: "Failed to link profile"
+                            }
+                        }
+                        pendingMigrationClaims = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Link & Keep My Data", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showLinkOfflineConfirmDialog = false
+                        pendingMigrationClaims = null
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // Google Drive Backup History Dialog
     if (showBackupHistoryDialog) {
         AlertDialog(
@@ -2844,6 +2996,7 @@ fun SettingsScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        com.example.utils.HapticHelper.vibrateClick(context)
                         val sub = feedbackSubject.trim()
                         val desc = feedbackDescription.trim()
 
@@ -2856,48 +3009,70 @@ fun SettingsScreen(
                             return@Button
                         }
 
-                        isFeedbackSubmitting = true
-                        feedbackErrorMessage = null
-
+                        // Fire and forget server logging
                         viewModel.submitFeedback(
                             category = feedbackCategory,
                             rating = feedbackRating,
                             subject = sub,
                             description = desc,
                             includeMetadata = feedbackIncludeMetadata,
-                            onSuccess = { msg ->
-                                isFeedbackSubmitting = false
-                                showFeedbackDialog = false
-                                statusNotificationMsg = msg
-                            },
-                            onError = { err ->
-                                isFeedbackSubmitting = false
-                                feedbackErrorMessage = err
+                            onSuccess = {},
+                            onError = {}
+                        )
+
+                        // Launch email draft to yosanfinance@gmail.com with fully URL-encoded parameters for mailto:
+                        val body = buildString {
+                            appendLine("Category: $feedbackCategory")
+                            appendLine("Rating: $feedbackRating / 5")
+                            appendLine("Subject: $sub")
+                            appendLine()
+                            appendLine("Description:")
+                            appendLine(desc)
+                            if (feedbackIncludeMetadata) {
+                                appendLine()
+                                appendLine("--- Device Diagnostic Info ---")
+                                appendLine("App Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                                appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+                                appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
                             }
-                        )
+                        }
+                        val subjectText = "[Yosan Feedback - $feedbackCategory] $sub"
+                        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+                            data = Uri.parse("mailto:yosanfinance@gmail.com")
+                            putExtra(Intent.EXTRA_EMAIL, arrayOf("yosanfinance@gmail.com"))
+                            putExtra(Intent.EXTRA_SUBJECT, subjectText)
+                            putExtra(Intent.EXTRA_TEXT, body)
+                        }
+
+                        try {
+                            viewModel.setExternalIntentActive(true)
+                            val chooser = Intent.createChooser(emailIntent, "Send Feedback to yosanfinance@gmail.com").apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(chooser)
+                            showFeedbackDialog = false
+                            feedbackSubject = ""
+                            feedbackDescription = ""
+                            feedbackErrorMessage = null
+                            statusNotificationMsg = "Opening email to yosanfinance@gmail.com..."
+                        } catch (e: Exception) {
+                            feedbackErrorMessage = "Could not open email app. Please send directly to yosanfinance@gmail.com"
+                        }
                     },
-                    enabled = !isFeedbackSubmitting && feedbackSubject.trim().length >= 3 && feedbackDescription.trim().length >= 5
+                    enabled = feedbackSubject.trim().length >= 3 && feedbackDescription.trim().length >= 5
                 ) {
-                    if (isFeedbackSubmitting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                    }
-                    Text("Submit")
+                    Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Send Feedback")
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick = {
-                        if (!isFeedbackSubmitting) {
-                            showFeedbackDialog = false
-                            feedbackErrorMessage = null
-                        }
-                    },
-                    enabled = !isFeedbackSubmitting
+                        com.example.utils.HapticHelper.vibrateClick(context)
+                        showFeedbackDialog = false
+                        feedbackErrorMessage = null
+                    }
                 ) {
                     Text("Cancel")
                 }

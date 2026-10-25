@@ -164,8 +164,9 @@ fun MainContainerScreen(
         }
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
+    CompositionLocalProvider(com.example.ui.components.LocalFloatingEffectEnabled provides isFloatingEffectEnabled) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
 
@@ -226,44 +227,6 @@ fun MainContainerScreen(
                 )
             }
         },
-        floatingActionButton = {
-            if (currentSubScreen == SubScreen.NONE && currentTab != MainTab.SETTINGS) {
-                FloatingActionButton(
-                    onClick = {
-                        com.example.utils.HapticHelper.vibrateClick(context)
-                        addSheetTab = AddTab.EXPENSE
-                        preselectedLoanForRepay = null
-                        showAddSheet = true
-                    },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    shape = CircleShape,
-                    elevation = if (isFloatingEffectEnabled) {
-                        FloatingActionButtonDefaults.elevation(
-                            defaultElevation = 6.dp,
-                            pressedElevation = 10.dp,
-                            focusedElevation = 6.dp,
-                            hoveredElevation = 8.dp
-                        )
-                    } else {
-                        FloatingActionButtonDefaults.elevation(
-                            defaultElevation = 0.dp,
-                            pressedElevation = 0.dp,
-                            focusedElevation = 0.dp,
-                            hoveredElevation = 0.dp
-                        )
-                    },
-                    modifier = Modifier.testTag("fab_add_transaction")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add Transaction",
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-        },
-        floatingActionButtonPosition = FabPosition.End,
         bottomBar = {
             if (currentSubScreen == SubScreen.NONE) {
                 NavigationBar(
@@ -543,6 +506,7 @@ fun MainContainerScreen(
             }
         }
     }
+}
 }
 
 

@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -31,6 +32,7 @@ import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.utils.CurrencyFormatter
 import com.example.utils.DateUtils
+import com.example.utils.HapticHelper
 
 import com.example.data.local.entity.TransactionEntity
 import com.example.data.local.entity.TransactionType
@@ -49,6 +51,7 @@ fun OfficialExpensesScreen(
     onAddExpenseClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val companyExpenses by viewModel.companyExpenses.collectAsState()
     val allTransactions by viewModel.allTransactions.collectAsState()
     val isDataLoaded by viewModel.isDataLoaded.collectAsState()
@@ -134,9 +137,16 @@ fun OfficialExpensesScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     MetricCard(
+                        title = "Outstanding",
+                        amount = pendingAmount + appliedAmount,
+                        icon = Icons.Default.PendingActions,
+                        iconColor = OutstandingAmber,
+                        modifier = Modifier.width(150.dp)
+                    )
+                    MetricCard(
                         title = "Pending Claim",
                         amount = pendingAmount,
-                        icon = Icons.Default.PendingActions,
+                        icon = Icons.Default.AccessTime,
                         iconColor = OutstandingAmber,
                         modifier = Modifier.width(150.dp)
                     )
@@ -181,6 +191,7 @@ fun OfficialExpensesScreen(
                 Tab(
                     selected = currentSectionTab == ExpenseSectionTab.PENDING_CLAIMS,
                     onClick = {
+                        HapticHelper.vibrateTick(context)
                         currentSectionTab = ExpenseSectionTab.PENDING_CLAIMS
                         selectedExpenseIds.clear()
                     },
@@ -213,6 +224,7 @@ fun OfficialExpensesScreen(
                 Tab(
                     selected = currentSectionTab == ExpenseSectionTab.APPLIED_CLAIMS,
                     onClick = {
+                        HapticHelper.vibrateTick(context)
                         currentSectionTab = ExpenseSectionTab.APPLIED_CLAIMS
                         selectedExpenseIds.clear()
                     },
@@ -245,6 +257,7 @@ fun OfficialExpensesScreen(
                 Tab(
                     selected = currentSectionTab == ExpenseSectionTab.REIMBURSEMENTS,
                     onClick = {
+                        HapticHelper.vibrateTick(context)
                         currentSectionTab = ExpenseSectionTab.REIMBURSEMENTS
                         selectedExpenseIds.clear()
                     },
@@ -277,6 +290,7 @@ fun OfficialExpensesScreen(
                 Tab(
                     selected = currentSectionTab == ExpenseSectionTab.ADVANCE,
                     onClick = {
+                        HapticHelper.vibrateTick(context)
                         currentSectionTab = ExpenseSectionTab.ADVANCE
                         selectedExpenseIds.clear()
                     },

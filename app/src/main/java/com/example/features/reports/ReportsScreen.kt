@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.example.data.local.entity.TransactionEntity
 import com.example.data.local.entity.TransactionType
+import com.example.features.sync.ExcelSyncService
 import com.example.features.transactions.FinanceViewModel
 import com.example.ui.components.*
 import com.example.ui.theme.*
@@ -216,6 +217,31 @@ fun ReportsScreen(
         }
     }
 
+    val saveExcelLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val excelBytes = ExcelSyncService.generateExcelWorkbook(
+                        transactions = filteredTransactions,
+                        accounts = accounts,
+                        categories = categories,
+                        rules = emptyList()
+                    )
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(excelBytes)
+                    }
+                    viewModel.showMessage("Report saved as Excel (.xlsx) successfully!")
+                    HapticHelper.vibrateSuccess(context)
+                } catch (e: Exception) {
+                    viewModel.showMessage("Failed to save Excel: ${e.localizedMessage}")
+                    HapticHelper.vibrateError(context)
+                }
+            }
+        }
+    }
+
     fun sharePdfReport() {
         scope.launch {
             try {
@@ -378,12 +404,12 @@ fun ReportsScreen(
             }
         }
 
-        // 4. Action Buttons: Save PDF, Share PDF, Open File
+        // 4. Action Buttons: Save PDF, Save Excel, Share, Open
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Button(
                 onClick = {
@@ -394,11 +420,26 @@ fun ReportsScreen(
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
             ) {
-                Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Save PDF", fontSize = 12.sp)
+                Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(modifier = Modifier.width(3.dp))
+                Text("Save PDF", fontSize = 11.sp, maxLines = 1)
+            }
+
+            OutlinedButton(
+                onClick = {
+                    HapticHelper.vibrateClick(context)
+                    val defName = "Yosan_${selectedReportType.name.lowercase()}_report.xlsx"
+                    saveExcelLauncher.launch(defName)
+                },
+                modifier = Modifier.weight(1.15f),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+            ) {
+                Icon(Icons.Default.TableChart, contentDescription = null, modifier = Modifier.size(15.dp), tint = IncomeGreen)
+                Spacer(modifier = Modifier.width(3.dp))
+                Text("Save as Excel", fontSize = 11.sp, maxLines = 1)
             }
 
             OutlinedButton(
@@ -406,13 +447,13 @@ fun ReportsScreen(
                     HapticHelper.vibrateClick(context)
                     sharePdfReport()
                 },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(0.9f),
                 shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
             ) {
-                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Share", fontSize = 12.sp)
+                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(modifier = Modifier.width(3.dp))
+                Text("Share", fontSize = 11.sp, maxLines = 1)
             }
 
             OutlinedButton(
@@ -420,13 +461,13 @@ fun ReportsScreen(
                     HapticHelper.vibrateClick(context)
                     openPdfReport()
                 },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(0.85f),
                 shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
             ) {
-                Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Open", fontSize = 12.sp)
+                Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(modifier = Modifier.width(3.dp))
+                Text("Open", fontSize = 11.sp, maxLines = 1)
             }
         }
 

@@ -13,8 +13,8 @@ android {
   namespace = "com.example"
   compileSdk = 36
 
-  val vCode = (System.getenv("APP_VERSION_CODE") ?: project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 29
-  val vName = System.getenv("APP_VERSION_NAME") ?: (project.findProperty("versionName") as? String) ?: "1.1.3"
+  val vCode = (System.getenv("APP_VERSION_CODE") ?: project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 36
+  val vName = System.getenv("APP_VERSION_NAME") ?: (project.findProperty("versionName") as? String) ?: "1.1.33"
   val backendUrl = (System.getenv("BACKEND_URL")?.takeIf { it.isNotBlank() } ?: project.findProperty("backendUrl") as? String)?.takeIf { it.isNotBlank() } ?: "https://yosan-xgsd.onrender.com/"
 
   defaultConfig {
@@ -40,9 +40,10 @@ android {
 
       if (keystoreFile != null) {
         storeFile = keystoreFile
-        storePassword = if (keystoreFile.name.contains("debug")) "android" else "yosanpassword123"
+        val releasePassword = System.getenv("YOSAN_KEYSTORE_PASSWORD") ?: "yosanpassword123"
+        storePassword = if (keystoreFile.name.contains("debug")) "android" else releasePassword
         keyAlias = if (keystoreFile.name.contains("debug")) "androiddebugkey" else if (keystoreFile.name.contains("release-key")) "yosan" else "upload"
-        keyPassword = if (keystoreFile.name.contains("debug")) "android" else "yosanpassword123"
+        keyPassword = if (keystoreFile.name.contains("debug")) "android" else releasePassword
         enableV1Signing = true
         enableV2Signing = true
       }

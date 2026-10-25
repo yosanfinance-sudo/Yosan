@@ -1,10 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Allow cleartext HTTP traffic for local server and development -->
-    <base-config cleartextTrafficPermitted="true">
+    <!-- Base Configuration: Cleartext disabled, only trusted system CAs -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
+
+    <!-- Debug overrides for local developer proxy testing only in debug builds -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+            <certificates src="system" />
+        </trust-anchors>
+    </debug-overrides>
 </network-security-config>

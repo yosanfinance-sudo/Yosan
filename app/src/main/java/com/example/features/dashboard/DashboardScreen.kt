@@ -41,6 +41,7 @@ import kotlinx.coroutines.launch
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.features.transactions.FinanceViewModel
+import com.example.utils.HapticHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -285,10 +286,12 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
+                                            HapticHelper.vibrateClick(context)
                                             onNavigateToPersonalExpenses()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = if (LocalFloatingEffectEnabled.current) 3.dp else 0.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
                                         Row(
@@ -379,7 +382,7 @@ fun DashboardScreen(
                         DashboardCardType.OFFICIAL_EXPENSE -> {
                             item {
                                 val officialMetrics = summary.officialExpenseMetrics
-                                val outstanding = officialMetrics.outstandingReimbursement
+                                val outstanding = officialMetrics.outstandingReimbursement + officialMetrics.pendingClaimsTotal + officialMetrics.appliedClaimsTotal
                                 val reimbursed = officialMetrics.totalReimbursed
                                 val remainingAdvance = officialMetrics.remainingAdvance
 
@@ -389,10 +392,12 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
+                                            HapticHelper.vibrateClick(context)
                                             onNavigateToCompanyExpenses()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = if (LocalFloatingEffectEnabled.current) 3.dp else 0.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
                                         Row(
@@ -539,10 +544,12 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
+                                            HapticHelper.vibrateClick(context)
                                             onNavigateToLending()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = if (LocalFloatingEffectEnabled.current) 3.dp else 0.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
                                         Row(
@@ -645,10 +652,12 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
+                                            HapticHelper.vibrateClick(context)
                                             onNavigateToBorrowing()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = if (LocalFloatingEffectEnabled.current) 3.dp else 0.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
                                         Row(
@@ -758,10 +767,12 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
+                                            HapticHelper.vibrateClick(context)
                                             onNavigateToInvestments()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = if (LocalFloatingEffectEnabled.current) 3.dp else 0.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
                                         Row(
@@ -840,10 +851,12 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
+                                            HapticHelper.vibrateClick(context)
                                             onNavigateToTransfers()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = if (LocalFloatingEffectEnabled.current) 3.dp else 0.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
                                         Row(
