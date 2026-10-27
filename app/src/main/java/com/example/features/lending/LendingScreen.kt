@@ -204,6 +204,11 @@ fun LendingScreen(
         var repayMethod by remember { mutableStateOf("UPI") }
         var repayNotesText by remember { mutableStateOf("") }
         var selectedAccountId by remember { mutableStateOf(accounts.firstOrNull()?.id ?: 1L) }
+        LaunchedEffect(accounts) {
+            if (accounts.isNotEmpty() && accounts.none { it.id == selectedAccountId }) {
+                selectedAccountId = accounts.first().id
+            }
+        }
 
         AlertDialog(
             onDismissRequest = { repayingLoan = null },

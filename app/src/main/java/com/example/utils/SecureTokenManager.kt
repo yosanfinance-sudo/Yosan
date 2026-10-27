@@ -278,10 +278,42 @@ class SecureTokenManager(context: Context) {
         }
     }
 
-    fun getDriveAccessToken(): String? = sharedPreferences.getString(KEY_DRIVE_ACCESS_TOKEN, null)
-    fun getDriveRefreshToken(): String? = sharedPreferences.getString(KEY_DRIVE_REFRESH_TOKEN, null)
-    fun getDriveTokenExpiresAt(): Long = sharedPreferences.getLong(KEY_DRIVE_TOKEN_EXPIRES_AT, 0L)
-    fun getDriveEmail(): String? = sharedPreferences.getString(KEY_DRIVE_EMAIL, null)
+    fun getDriveAccessToken(): String? {
+        val activeEmail = getUserEmail()?.trim()?.lowercase()
+        val driveEmail = sharedPreferences.getString(KEY_DRIVE_EMAIL, null)?.trim()?.lowercase()
+        if (activeEmail.isNullOrBlank() || driveEmail.isNullOrBlank() || activeEmail != driveEmail) {
+            return null
+        }
+        return sharedPreferences.getString(KEY_DRIVE_ACCESS_TOKEN, null)
+    }
+
+    fun getDriveRefreshToken(): String? {
+        val activeEmail = getUserEmail()?.trim()?.lowercase()
+        val driveEmail = sharedPreferences.getString(KEY_DRIVE_EMAIL, null)?.trim()?.lowercase()
+        if (activeEmail.isNullOrBlank() || driveEmail.isNullOrBlank() || activeEmail != driveEmail) {
+            return null
+        }
+        return sharedPreferences.getString(KEY_DRIVE_REFRESH_TOKEN, null)
+    }
+
+    fun getDriveTokenExpiresAt(): Long {
+        val activeEmail = getUserEmail()?.trim()?.lowercase()
+        val driveEmail = sharedPreferences.getString(KEY_DRIVE_EMAIL, null)?.trim()?.lowercase()
+        if (activeEmail.isNullOrBlank() || driveEmail.isNullOrBlank() || activeEmail != driveEmail) {
+            return 0L
+        }
+        return sharedPreferences.getLong(KEY_DRIVE_TOKEN_EXPIRES_AT, 0L)
+    }
+
+    fun getDriveEmail(): String? {
+        val activeEmail = getUserEmail()?.trim()?.lowercase()
+        val driveEmail = sharedPreferences.getString(KEY_DRIVE_EMAIL, null)?.trim()?.lowercase()
+        if (activeEmail.isNullOrBlank() || driveEmail.isNullOrBlank() || activeEmail != driveEmail) {
+            return null
+        }
+        return driveEmail
+    }
+
     fun isDriveConnected(): Boolean = !getDriveAccessToken().isNullOrBlank() || !getDriveRefreshToken().isNullOrBlank()
 
     fun clearDriveTokens() {

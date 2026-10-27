@@ -64,7 +64,7 @@ class AppPreferences(private val context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_BIOMETRIC_ENABLED, value).apply()
 
     var appLockTimeoutSeconds: Int
-        get() = prefs.getInt(KEY_APP_LOCK_TIMEOUT_SECONDS, 0)
+        get() = prefs.getInt(KEY_APP_LOCK_TIMEOUT_SECONDS, 30)
         set(value) = prefs.edit().putInt(KEY_APP_LOCK_TIMEOUT_SECONDS, value).apply()
 
     var isExternalIntentActive: Boolean
@@ -199,6 +199,24 @@ class AppPreferences(private val context: Context) {
         } catch (_: Exception) {}
     }
 
+    private fun isOfflineAccount(email: String): Boolean {
+        val clean = email.trim().lowercase()
+        return clean.isBlank() || clean == "offline" || clean == "guest"
+    }
+
+    private fun isSameAccount(a: RememberedAccount, b: RememberedAccount): Boolean {
+        val aOffline = isOfflineAccount(a.email)
+        val bOffline = isOfflineAccount(b.email)
+        return when {
+            aOffline && bOffline -> true
+            !aOffline && !bOffline -> {
+                (a.email.isNotBlank() && a.email.equals(b.email.trim(), ignoreCase = true)) ||
+                (a.googleSub.isNotBlank() && a.googleSub == b.googleSub)
+            }
+            else -> false
+        }
+    }
+
     fun getRememberedAccounts(): List<RememberedAccount> {
         val jsonStr = prefs.getString(KEY_REMEMBERED_ACCOUNTS, null)
         val list = mutableListOf<RememberedAccount>()
@@ -240,7 +258,18 @@ class AppPreferences(private val context: Context) {
             persistRememberedAccounts(list)
         }
 
-        return list.sortedByDescending { it.lastUsedTimestamp }
+        // Deduplicate list strictly by identity, retaining the latest used record
+        val deduplicated = mutableListOf<RememberedAccount>()
+        for (item in list.sortedByDescending { it.lastUsedTimestamp }) {
+            if (deduplicated.none { isSameAccount(it, item) }) {
+                deduplicated.add(item)
+            }
+        }
+        if (deduplicated.size != list.size) {
+            persistRememberedAccounts(deduplicated)
+        }
+
+        return deduplicated
     }
 
     fun saveRememberedAccount(account: RememberedAccount) {
@@ -249,13 +278,10 @@ class AppPreferences(private val context: Context) {
         if (cleanEmail.isBlank() && cleanName.isBlank()) return
 
         val currentList = getRememberedAccounts().toMutableList()
-        val index = currentList.indexOfFirst {
-            (cleanEmail.isNotBlank() && it.email.equals(cleanEmail, ignoreCase = true)) ||
-            (account.googleSub.isNotBlank() && it.googleSub == account.googleSub)
-        }
+        val existingIndex = currentList.indexOfFirst { isSameAccount(it, account) }
 
-        val updated = if (index >= 0) {
-            val old = currentList[index]
+        val updated = if (existingIndex >= 0) {
+            val old = currentList[existingIndex]
             account.copy(
                 email = if (cleanEmail.isNotBlank()) cleanEmail else old.email,
                 name = if (cleanName.isNotBlank()) cleanName else old.name,
@@ -273,9 +299,8 @@ class AppPreferences(private val context: Context) {
             )
         }
 
-        if (index >= 0) {
-            currentList.removeAt(index)
-        }
+        // Remove any and all duplicate instances of this account
+        currentList.removeAll { isSameAccount(it, updated) }
         currentList.add(0, updated)
 
         persistRememberedAccounts(currentList)
@@ -294,8 +319,9 @@ class AppPreferences(private val context: Context) {
     }
 
     fun removeRememberedAccount(email: String) {
+        val dummy = RememberedAccount(email = email, name = "")
         val currentList = getRememberedAccounts().toMutableList()
-        currentList.removeAll { it.email.equals(email.trim(), ignoreCase = true) }
+        currentList.removeAll { isSameAccount(it, dummy) }
 
         persistRememberedAccounts(currentList)
 

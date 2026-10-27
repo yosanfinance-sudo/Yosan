@@ -744,27 +744,63 @@ class TransactionCoordinator(
     fun deleteAccount(id: Long) {
         scope.launch {
             try {
-                val acc = repository.getAccountById(id)
-                if (acc != null) {
-                    database.statementImportDao().deleteImportsByBankName(acc.accountName)
+                val allAccs = database.accountDao().getAllAccountsList()
+                if (allAccs.size <= 1) {
+                    showMessage("Cannot delete the only account. At least one account is required.")
+                    return@launch
                 }
-            } catch (_: Exception) {}
-            repository.deleteAccount(id)
-            recalculateAllAccountBalances()
-            showMessage("Account deleted")
+                val acc = repository.getAccountById(id)
+                val fallback = allAccs.firstOrNull { it.id != id }
+                if (acc != null && fallback != null) {
+                    val linkedTxs = database.transactionDao().getAllTransactionsList().filter { it.accountId == id }
+                    linkedTxs.forEach { tx ->
+                        database.transactionDao().updateTransaction(tx.copy(accountId = fallback.id, updatedAt = System.currentTimeMillis()))
+                    }
+                    database.statementImportDao().deleteImportsByBankName(acc.bankName)
+                    if (acc.accountName.isNotBlank() && acc.accountName != acc.bankName) {
+                        database.statementImportDao().deleteImportsByBankName(acc.accountName)
+                    }
+                }
+                repository.deleteAccount(id)
+                val remaining = database.accountDao().getAllAccountsList()
+                if (remaining.isNotEmpty() && remaining.none { it.isDefault }) {
+                    database.accountDao().updateAccount(remaining.first().copy(isDefault = true))
+                }
+                recalculateAllAccountBalances()
+                showMessage("Account deleted")
+            } catch (e: Exception) {
+                showMessage("Failed to delete account: ${e.message}")
+            }
         }
     }
 
     fun deleteAccountWithReassignment(id: Long, fallbackAccountId: Long) {
         scope.launch {
             try {
+                val allAccs = database.accountDao().getAllAccountsList()
+                if (allAccs.size <= 1) {
+                    showMessage("Cannot delete the only account. At least one account is required.")
+                    return@launch
+                }
+                val acc = repository.getAccountById(id)
                 val list = database.transactionDao().getAllTransactionsList()
                 var count = 0
                 list.filter { it.accountId == id }.forEach { tx ->
                     database.transactionDao().updateTransaction(tx.copy(accountId = fallbackAccountId, updatedAt = System.currentTimeMillis()))
                     count++
                 }
+                if (acc != null) {
+                    database.statementImportDao().deleteImportsByBankName(acc.bankName)
+                    if (acc.accountName.isNotBlank() && acc.accountName != acc.bankName) {
+                        database.statementImportDao().deleteImportsByBankName(acc.accountName)
+                    }
+                }
                 repository.deleteAccount(id)
+                val remaining = database.accountDao().getAllAccountsList()
+                if (remaining.isNotEmpty() && remaining.none { it.isDefault }) {
+                    val newDefault = remaining.firstOrNull { it.id == fallbackAccountId } ?: remaining.first()
+                    database.accountDao().updateAccount(newDefault.copy(isDefault = true))
+                }
                 recalculateAllAccountBalances()
                 showMessage("Account deleted ($count transactions reassigned)")
             } catch (e: Exception) {

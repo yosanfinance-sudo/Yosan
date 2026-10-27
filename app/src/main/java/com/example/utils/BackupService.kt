@@ -802,6 +802,7 @@ object BackupService {
 
     fun shareBackupFile(context: Context, backupFile: File) {
         try {
+            com.example.utils.AppPreferences(context).isExternalIntentActive = true
             val uri = FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",

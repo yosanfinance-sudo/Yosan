@@ -113,18 +113,27 @@ class BiometricAuthManager(private val context: Context) {
 
         val prompt = BiometricPrompt(activity, executor, promptCallback)
 
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle(title)
-            .setSubtitle(subtitle)
-            .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG or Authenticators.BIOMETRIC_WEAK)
-            .setNegativeButtonText("Cancel")
-            .build()
-
         try {
+            // Include DEVICE_CREDENTIAL to give user seamless PIN / Pattern option directly on prompt
+            val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                .setTitle(title)
+                .setSubtitle(subtitle)
+                .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG or Authenticators.BIOMETRIC_WEAK or Authenticators.DEVICE_CREDENTIAL)
+                .build()
             prompt.authenticate(promptInfo)
         } catch (e: Exception) {
-            // Fallback to general authenticate if biometric only throws
-            authenticate(activity, title, subtitle, onSuccess, onError, onFailed)
+            // Fallback for Android versions/OEMs that forbid DEVICE_CREDENTIAL alongside weak biometrics
+            try {
+                val fallbackPromptInfo = BiometricPrompt.PromptInfo.Builder()
+                    .setTitle(title)
+                    .setSubtitle(subtitle)
+                    .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG or Authenticators.BIOMETRIC_WEAK)
+                    .setNegativeButtonText("Cancel")
+                    .build()
+                prompt.authenticate(fallbackPromptInfo)
+            } catch (ex: Exception) {
+                onError(BiometricPrompt.ERROR_UNABLE_TO_PROCESS, ex.localizedMessage ?: "Unable to start biometric prompt")
+            }
         }
     }
 

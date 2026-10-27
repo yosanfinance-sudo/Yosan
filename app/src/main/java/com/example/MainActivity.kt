@@ -55,22 +55,15 @@ class MainActivity : FragmentActivity() {
             val isAuthenticated = authState is AuthState.Authenticated
 
             // Multi-user Database Partition Key: Each user/guest has their own isolated ViewModel & Room DB
-            val activeUserKey = when (authState) {
-                is AuthState.Authenticated -> {
-                    val email = authUser?.email?.trim()?.lowercase() ?: ""
-                    if (email.isNotBlank()) "user_${com.example.data.local.AppDatabase.sanitizeUserKey(email)}" else "user_authenticated"
-                }
-                else -> {
-                    if (appPreferences.isOfflineMode) "offline_guest" else "unauthenticated"
-                }
+            val currentEmail = authUser?.email?.trim()?.lowercase()
+            val activeUserKey = if (isAuthenticated && !currentEmail.isNullOrBlank()) {
+                com.example.data.local.AppDatabase.sanitizeUserKey(currentEmail)
+            } else {
+                "guest"
             }
 
             // Explicitly sync AppDatabase partition key synchronously before ViewModel resolution
-            if (isAuthenticated && !authUser?.email.isNullOrBlank()) {
-                com.example.data.local.AppDatabase.setActiveUserKey(authUser!!.email)
-            } else if (appPreferences.isOfflineMode) {
-                com.example.data.local.AppDatabase.setActiveUserKey("guest")
-            }
+            com.example.data.local.AppDatabase.setActiveUserKey(activeUserKey)
 
             val financeViewModel: FinanceViewModel = viewModel(key = "finance_vm_$activeUserKey")
 
@@ -245,12 +238,25 @@ class MainActivity : FragmentActivity() {
                             onExitApp = { finishAffinity() }
                         )
                     }
-                                        // Priority 2: Authenticated Main Container
+                                        // Priority 2: Authenticated Main Container (with Bank Selection onboarding if not completed)
                     else if (isAuthenticated) {
-                        MainContainerScreen(
-                            viewModel = financeViewModel,
-                            authViewModel = authViewModel
-                        )
+                        if (!appPreferences.isOnboardingCompleted) {
+                            OnboardingScreen(
+                                authViewModel = authViewModel,
+                                financeViewModel = financeViewModel,
+                                initialStep = 2,
+                                onComplete = {
+                                    appPreferences.isOnboardingCompleted = true
+                                    appPreferences.isLoggedOut = false
+                                    authViewModel.completeOnboarding()
+                                }
+                            )
+                        } else {
+                            MainContainerScreen(
+                                viewModel = financeViewModel,
+                                authViewModel = authViewModel
+                            )
+                        }
                     }
                     // Priority 3: Onboarding / Login Screen for unauthenticated or logged out users
                     else {

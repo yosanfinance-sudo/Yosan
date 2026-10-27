@@ -246,6 +246,7 @@ fun ReportsScreen(
         scope.launch {
             try {
                 val file = generatedFile ?: return@launch
+                viewModel.setExternalIntentActive(true)
                 val authority = "${context.packageName}.fileprovider"
                 val uri = FileProvider.getUriForFile(context, authority, file)
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
@@ -267,6 +268,7 @@ fun ReportsScreen(
         scope.launch {
             try {
                 val file = generatedFile ?: return@launch
+                viewModel.setExternalIntentActive(true)
                 val authority = "${context.packageName}.fileprovider"
                 val uri = FileProvider.getUriForFile(context, authority, file)
                 val viewIntent = Intent(Intent.ACTION_VIEW).apply {

@@ -237,6 +237,24 @@ class GoogleDriveService(
     }
 
     /**
+     * Retrieves the content of 'detailsaboutbackup.json' from root Yosan-Backup folder.
+     */
+    suspend fun getLatestBackupContent(driveToken: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val rootFolderId = getOrCreateRootFolder(driveToken) ?: return@withContext null
+            val query = "name = 'detailsaboutbackup.json' and '$rootFolderId' in parents and trashed = false"
+            val listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+            if (listRes.isSuccessful && listRes.body()?.files?.isNotEmpty() == true) {
+                val file = listRes.body()!!.files.first()
+                return@withContext downloadJsonFile(driveToken, file.id)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching latest backup content from Drive: ${e.message}", e)
+        }
+        null
+    }
+
+    /**
      * Performs a complete backup cycle directly to user's Google Drive:
      * 1. Generates JSON backup payload with SHA-256 checksum.
      * 2. Finds/creates "Yosan-Backup" root and "versions" subfolder.

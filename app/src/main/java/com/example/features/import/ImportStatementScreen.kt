@@ -80,6 +80,12 @@ fun ImportStatementScreen(
     var showAuditDetailsDialog by remember { mutableStateOf(false) }
     var importToDelete by remember { mutableStateOf<StatementImportEntity?>(null) }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            pdfDocPages.forEach { runCatching { if (!it.isRecycled) it.recycle() } }
+        }
+    }
+
     LaunchedEffect(selectedPdfUri) {
         val uri = selectedPdfUri
         if (uri != null) {
@@ -106,10 +112,12 @@ fun ImportStatementScreen(
                 } catch (_: Exception) {}
                 resultList
             }
+            pdfDocPages.forEach { runCatching { if (!it.isRecycled) it.recycle() } }
             pdfDocPages = pages
             currentPdfPage = 0
             isRenderingPdf = false
         } else {
+            pdfDocPages.forEach { runCatching { if (!it.isRecycled) it.recycle() } }
             pdfDocPages = emptyList()
             isRenderingPdf = false
         }
@@ -117,18 +125,20 @@ fun ImportStatementScreen(
 
     // Auto-detect account from file name when file is selected
     LaunchedEffect(selectedFileName, accounts) {
-        if (selectedFileName != null && accounts.isNotEmpty()) {
-            val matched = accounts.firstOrNull { acc ->
-                selectedFileName!!.contains(acc.bankName, ignoreCase = true) ||
-                selectedFileName!!.contains(acc.accountName, ignoreCase = true)
-            }
-            if (matched != null) {
-                selectedAccountId = matched.id
-            } else if (selectedAccountId == null) {
+        if (accounts.isNotEmpty()) {
+            if (selectedFileName != null) {
+                val matched = accounts.firstOrNull { acc ->
+                    selectedFileName!!.contains(acc.bankName, ignoreCase = true) ||
+                    selectedFileName!!.contains(acc.accountName, ignoreCase = true)
+                }
+                if (matched != null) {
+                    selectedAccountId = matched.id
+                } else if (selectedAccountId == null || accounts.none { it.id == selectedAccountId }) {
+                    selectedAccountId = accounts.first().id
+                }
+            } else if (selectedAccountId == null || accounts.none { it.id == selectedAccountId }) {
                 selectedAccountId = accounts.first().id
             }
-        } else if (selectedAccountId == null && accounts.isNotEmpty()) {
-            selectedAccountId = accounts.first().id
         }
     }
 
@@ -1000,8 +1010,7 @@ private val SUPPORTED_STATEMENT_MIMES = arrayOf(
     "text/csv",
     "text/comma-separated-values",
     "text/plain",
-    "application/octet-stream",
-    "*/*"
+    "application/octet-stream"
 )
 
 private fun resolveStatementFileInfo(context: Context, uri: Uri): ResolvedStatementFile {

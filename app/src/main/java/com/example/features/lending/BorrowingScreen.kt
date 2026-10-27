@@ -298,6 +298,11 @@ fun BorrowingScreen(
         var repayDateText by remember { mutableStateOf(DateUtils.getCurrentDate()) }
         var repayNotesText by remember { mutableStateOf("") }
         var selectedAccountId by remember { mutableStateOf(accounts.firstOrNull()?.id ?: 1L) }
+        LaunchedEffect(accounts) {
+            if (accounts.isNotEmpty() && accounts.none { it.id == selectedAccountId }) {
+                selectedAccountId = accounts.first().id
+            }
+        }
 
         AlertDialog(
             onDismissRequest = { repayingSummary = null },

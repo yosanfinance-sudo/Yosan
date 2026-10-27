@@ -180,7 +180,7 @@ fun SettingsScreen(
                             authViewModel?.connectGoogleDriveWithValidation(
                                 selectedDriveEmail = tokenRes.email,
                                 accessToken = tokenRes.token,
-                                allowDifferentAccount = true
+                                allowDifferentAccount = false
                             ) { success, msg ->
                                 isDriveConnecting = false
                                 if (success) {
@@ -217,7 +217,7 @@ fun SettingsScreen(
                     authViewModel?.connectGoogleDriveWithValidation(
                         selectedDriveEmail = tokenRes.email,
                         accessToken = tokenRes.token,
-                        allowDifferentAccount = true
+                        allowDifferentAccount = false
                     ) { success, msg ->
                         isDriveConnecting = false
                         if (success) {
@@ -636,7 +636,10 @@ fun SettingsScreen(
                             ).forEach { (mode, label) ->
                                 FilterChip(
                                     selected = currentThemeMode == mode,
-                                    onClick = { viewModel.setThemeMode(mode) },
+                                    onClick = {
+                                        com.example.utils.HapticHelper.vibrateTick(context)
+                                        viewModel.setThemeMode(mode)
+                                    },
                                     label = { Text(label) }
                                 )
                             }
@@ -781,7 +784,10 @@ fun SettingsScreen(
                             listOf(3, 5, 10, 15).forEach { sec ->
                                 FilterChip(
                                     selected = timeoutSeconds == sec,
-                                    onClick = { viewModel.updatePrivacyBlurPreference(privacyEnabled, sec) },
+                                    onClick = {
+                                        com.example.utils.HapticHelper.vibrateTick(context)
+                                        viewModel.updatePrivacyBlurPreference(privacyEnabled, sec)
+                                    },
                                     label = { Text("${sec}s") }
                                 )
                             }
@@ -903,7 +909,10 @@ fun SettingsScreen(
                             ).forEach { (sec, label) ->
                                 FilterChip(
                                     selected = currentTimeout == sec,
-                                    onClick = { viewModel.setAppLockTimeout(sec) },
+                                    onClick = {
+                                        com.example.utils.HapticHelper.vibrateTick(context)
+                                        viewModel.setAppLockTimeout(sec)
+                                    },
                                     label = { Text(label) }
                                 )
                             }
@@ -1371,6 +1380,7 @@ fun SettingsScreen(
                     Surface(
                         onClick = {
                             showBackupOptionsDialog = false
+                            viewModel.setExternalIntentActive(true)
                             viewModel.createBackup(context) { file ->
                                 if (file != null) {
                                     com.example.utils.BackupService.shareBackupFile(context, file)
@@ -1583,9 +1593,8 @@ fun SettingsScreen(
     }
 
     if (showSwitchAccountDialog) {
-        val rememberedAccounts: List<com.example.utils.RememberedAccount> = remember(showSwitchAccountDialog) {
-            com.example.utils.AppPreferences(context).getRememberedAccounts()
-        }
+        val rememberedAccounts by authViewModel?.rememberedAccounts?.collectAsState() ?: remember { mutableStateOf(emptyList()) }
+        var accountToRemoveInSettings by remember { mutableStateOf<com.example.utils.RememberedAccount?>(null) }
         val currentEmail = userProfile?.email ?: authUser?.email ?: ""
 
         AlertDialog(
@@ -1621,7 +1630,12 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     rememberedAccounts.forEach { acc ->
-                        val isCurrent = currentEmail.isNotBlank() && acc.email.equals(currentEmail, ignoreCase = true)
+                        val isTargetOffline = acc.email.isBlank() || acc.email.equals("offline", ignoreCase = true) || acc.email.equals("guest", ignoreCase = true)
+                        val isCurrent = if (isTargetOffline) {
+                            currentEmail.isBlank()
+                        } else {
+                            currentEmail.isNotBlank() && acc.email.equals(currentEmail, ignoreCase = true)
+                        }
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1677,7 +1691,7 @@ fun SettingsScreen(
                                         }
                                     }
                                     Text(
-                                        text = acc.email,
+                                        text = acc.email.ifBlank { "Offline Profile" },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
@@ -1695,7 +1709,7 @@ fun SettingsScreen(
                                     IconButton(
                                         onClick = {
                                             com.example.utils.HapticHelper.vibrateClick(context)
-                                            authViewModel?.removeAccount(acc.email)
+                                            accountToRemoveInSettings = acc
                                         },
                                         modifier = Modifier.size(28.dp)
                                     ) {
@@ -1735,11 +1749,54 @@ fun SettingsScreen(
                 }
             }
         )
+
+        if (accountToRemoveInSettings != null) {
+            val target = accountToRemoveInSettings!!
+            val targetName = target.name.ifBlank { target.email.ifBlank { "Offline Profile" } }
+            AlertDialog(
+                onDismissRequest = { accountToRemoveInSettings = null },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.WarningAmber,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(28.dp)
+                    )
+                },
+                title = { Text("Remove Account?", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium) },
+                text = {
+                    Text(
+                        text = "Are you sure you want to remove \"$targetName\" from this device? Your local saved session and offline login on this device will be cleared.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            com.example.utils.HapticHelper.vibrateClick(context)
+                            authViewModel?.removeAccount(target.email) {
+                                accountToRemoveInSettings = null
+                            }
+                            accountToRemoveInSettings = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Remove", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { accountToRemoveInSettings = null }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
     }
 
     if (showAccountsDialog) {
         var addMode by remember { mutableStateOf(false) }
         var bankName by remember { mutableStateOf("Indian Bank") }
+        var customAccountName by remember { mutableStateOf("") }
         var accountTypeSelected by remember { mutableStateOf("Savings") }
         var accountNumber by remember { mutableStateOf("") }
         var initialBalance by remember { mutableStateOf("") }
@@ -1897,7 +1954,14 @@ fun SettingsScreen(
                                                 } else {
                                                     editingAccount = acc
                                                     bankName = acc.bankName
-                                                    accountTypeSelected = acc.accountName
+                                                    customAccountName = acc.accountName
+                                                    accountTypeSelected = when (acc.accountType) {
+                                                        AccountType.WALLET -> "Wallet"
+                                                        AccountType.CREDIT_CARD -> "Credit Card"
+                                                        else -> if (acc.accountName.contains("Current", ignoreCase = true)) "Current"
+                                                            else if (acc.accountName.contains("Salary", ignoreCase = true)) "Salary"
+                                                            else "Savings"
+                                                    }
                                                     accountNumber = acc.accountNumberMasked
                                                     initialBalance = if (acc.openingBalance > 0.0) String.format(Locale.US, "%.2f", acc.openingBalance) else if (acc.currentBalance > 0.0) String.format(Locale.US, "%.2f", acc.currentBalance) else ""
                                                     addMode = true
@@ -2007,6 +2071,7 @@ fun SettingsScreen(
                             onClick = {
                                 editingAccount = null
                                 bankName = "Indian Bank"
+                                customAccountName = ""
                                 accountTypeSelected = "Savings"
                                 accountNumber = ""
                                 initialBalance = ""
@@ -2087,6 +2152,17 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedTextField(
+                            value = customAccountName,
+                            onValueChange = { customAccountName = it },
+                            label = { Text("Account Name") },
+                            placeholder = { Text(if (bankName.isNotBlank()) "$bankName $accountTypeSelected" else "e.g. Primary Savings") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
                             value = accountNumber,
                             onValueChange = { accountNumber = it },
                             label = { Text("Account Number / Mask (Optional)") },
@@ -2126,6 +2202,10 @@ fun SettingsScreen(
                                                     viewModel.deleteAccount(curAcc.id)
                                                     addMode = false
                                                     editingAccount = null
+                                                    customAccountName = ""
+                                                    bankName = ""
+                                                    accountNumber = ""
+                                                    initialBalance = ""
                                                 }
                                             }
                                         }
@@ -2144,6 +2224,7 @@ fun SettingsScreen(
                                 TextButton(onClick = {
                                     addMode = false
                                     editingAccount = null
+                                    customAccountName = ""
                                     bankName = ""
                                     accountNumber = ""
                                     initialBalance = ""
@@ -2157,12 +2238,15 @@ fun SettingsScreen(
                                                 "Credit Card" -> AccountType.CREDIT_CARD
                                                 else -> AccountType.BANK
                                             }
+                                            val finalAccountName = customAccountName.trim().ifBlank {
+                                                "$bankName $accountTypeSelected".trim().ifBlank { accountTypeSelected }
+                                            }
                                             val initBal = initialBalance.toDoubleOrNull() ?: 0.0
                                             val currentEditing = editingAccount
                                             if (currentEditing != null) {
                                                 viewModel.updateAccount(
                                                     currentEditing.copy(
-                                                        accountName = accountTypeSelected,
+                                                        accountName = finalAccountName,
                                                         bankName = bankName.trim(),
                                                         accountNumberMasked = accountNumber.trim(),
                                                         accountType = resolvedType,
@@ -2173,7 +2257,7 @@ fun SettingsScreen(
                                             } else {
                                                 viewModel.addAccount(
                                                     com.example.data.local.entity.AccountEntity(
-                                                        accountName = accountTypeSelected,
+                                                        accountName = finalAccountName,
                                                         bankName = bankName.trim(),
                                                         accountNumberMasked = accountNumber.trim(),
                                                         accountType = resolvedType,
@@ -2186,6 +2270,7 @@ fun SettingsScreen(
                                             viewModel.recalculateAllAccountBalances()
                                             addMode = false
                                             editingAccount = null
+                                            customAccountName = ""
                                             bankName = ""
                                             accountNumber = ""
                                             initialBalance = ""

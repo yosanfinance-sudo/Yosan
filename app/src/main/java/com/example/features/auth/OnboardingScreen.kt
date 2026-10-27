@@ -79,11 +79,15 @@ fun OnboardingScreen(
     var accountTypeSelected by remember { mutableStateOf("Savings") }
 
     var emailInput by remember { mutableStateOf(appPreferences.lastUserEmail) }
-    val rememberedAccounts = remember {
-        mutableStateListOf<com.example.utils.RememberedAccount>().apply {
-            addAll(appPreferences.getRememberedAccounts())
-        }
-    }
+    val rememberedAccounts by authViewModel.rememberedAccounts.collectAsState()
+    var accountToRemove by remember { mutableStateOf<com.example.utils.RememberedAccount?>(null) }
+
+    var showBackupFoundDialog by remember { mutableStateOf(false) }
+    var foundBackupInfo by remember { mutableStateOf<LatestBackupResponse?>(null) }
+    var isCheckingBackup by remember { mutableStateOf(false) }
+    var isRestoringFromBackup by remember { mutableStateOf(false) }
+    var restoreStatusMessage by remember { mutableStateOf<String?>(null) }
+
     val accountPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -112,25 +116,23 @@ fun OnboardingScreen(
                         authViewModel.completeOnboarding()
                         onComplete()
                     } else {
-                        step = 2
+                        isCheckingBackup = true
+                        authViewModel.checkDriveOrCloudBackup(claims.email) { hasBackup, backupResp ->
+                            isCheckingBackup = false
+                            if (hasBackup && backupResp != null) {
+                                foundBackupInfo = backupResp
+                                showBackupFoundDialog = true
+                            } else {
+                                step = 2
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    LaunchedEffect(step) {
-        rememberedAccounts.clear()
-        rememberedAccounts.addAll(appPreferences.getRememberedAccounts())
-    }
-
     var showWalkthroughDialog by remember { mutableStateOf(false) }
-
-    var showBackupFoundDialog by remember { mutableStateOf(false) }
-    var foundBackupInfo by remember { mutableStateOf<LatestBackupResponse?>(null) }
-    var isCheckingBackup by remember { mutableStateOf(false) }
-    var isRestoringFromBackup by remember { mutableStateOf(false) }
-    var restoreStatusMessage by remember { mutableStateOf<String?>(null) }
 
     val authLoading by authViewModel.isLoading.collectAsState()
     val authError by authViewModel.errorMessage.collectAsState()
@@ -523,7 +525,7 @@ fun OnboardingScreen(
                                                     .clickable {
                                                         HapticHelper.vibrateClick(context)
                                                         authViewModel.switchAccount(acc.email) {
-                                                            if (accounts.isNotEmpty()) {
+                                                            if (appPreferences.isOnboardingCompleted || accounts.isNotEmpty()) {
                                                                 appPreferences.isLoggedOut = false
                                                                 appPreferences.isOnboardingCompleted = true
                                                                 authViewModel.completeOnboarding()
@@ -566,7 +568,7 @@ fun OnboardingScreen(
                                                             fontWeight = FontWeight.Bold
                                                         )
                                                         Text(
-                                                            text = acc.email,
+                                                            text = acc.email.ifBlank { "Offline Profile" },
                                                             style = MaterialTheme.typography.bodySmall,
                                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                             maxLines = 1,
@@ -583,8 +585,7 @@ fun OnboardingScreen(
                                                     IconButton(
                                                         onClick = {
                                                             HapticHelper.vibrateClick(context)
-                                                            authViewModel.removeAccount(acc.email)
-                                                            rememberedAccounts.remove(acc)
+                                                            accountToRemove = acc
                                                         },
                                                         modifier = Modifier.size(32.dp)
                                                     ) {
@@ -634,7 +635,16 @@ fun OnboardingScreen(
                                                 authViewModel.completeOnboarding()
                                                 onComplete()
                                             } else {
-                                                step = 2
+                                                isCheckingBackup = true
+                                                authViewModel.checkDriveOrCloudBackup(claims.email) { hasBackup, backupResp ->
+                                                    isCheckingBackup = false
+                                                    if (hasBackup && backupResp != null) {
+                                                        foundBackupInfo = backupResp
+                                                        showBackupFoundDialog = true
+                                                    } else {
+                                                        step = 2
+                                                    }
+                                                }
                                             }
                                         }
                                     },
@@ -921,6 +931,7 @@ fun OnboardingScreen(
                                     FilterChip(
                                         selected = selectedThemeMode == "SYSTEM",
                                         onClick = {
+                                            HapticHelper.vibrateTick(context)
                                             selectedThemeMode = "SYSTEM"
                                             financeViewModel.setThemeMode("SYSTEM")
                                         },
@@ -937,6 +948,7 @@ fun OnboardingScreen(
                                     FilterChip(
                                         selected = selectedThemeMode == "LIGHT",
                                         onClick = {
+                                            HapticHelper.vibrateTick(context)
                                             selectedThemeMode = "LIGHT"
                                             financeViewModel.setThemeMode("LIGHT")
                                         },
@@ -953,6 +965,7 @@ fun OnboardingScreen(
                                     FilterChip(
                                         selected = selectedThemeMode == "DARK",
                                         onClick = {
+                                            HapticHelper.vibrateTick(context)
                                             selectedThemeMode = "DARK"
                                             financeViewModel.setThemeMode("DARK")
                                         },
@@ -1208,6 +1221,54 @@ fun OnboardingScreen(
 
             }
         }
+    }
+
+    if (accountToRemove != null) {
+        val targetAcc = accountToRemove!!
+        val displayName = targetAcc.name.ifBlank { targetAcc.email.ifBlank { "Offline Profile" } }
+        AlertDialog(
+            onDismissRequest = { accountToRemove = null },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.WarningAmber,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Remove Account?",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to remove \"$displayName\" from this device? Your local saved session and offline login on this device will be cleared.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        HapticHelper.vibrateClick(context)
+                        authViewModel.removeAccount(targetAcc.email) {
+                            accountToRemove = null
+                        }
+                        accountToRemove = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Remove", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { accountToRemove = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (showBackupFoundDialog && foundBackupInfo != null) {

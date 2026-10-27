@@ -31,11 +31,11 @@ android {
   signingConfigs {
     create("release") {
       val keystoreFile = sequenceOf(
-        file("${rootDir}/app/debug.keystore"),
-        file("${rootDir}/debug.keystore"),
         file("${rootDir}/app/release-key.jks"),
         file("${rootDir}/release-key.jks"),
-        file("${rootDir}/my-upload-key.jks")
+        file("${rootDir}/my-upload-key.jks"),
+        file("${rootDir}/app/debug.keystore"),
+        file("${rootDir}/debug.keystore")
       ).firstOrNull { it.exists() }
 
       if (keystoreFile != null) {

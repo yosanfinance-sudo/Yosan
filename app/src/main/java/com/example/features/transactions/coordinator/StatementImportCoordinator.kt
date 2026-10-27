@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 class StatementImportCoordinator(
     private val database: AppDatabase,
@@ -102,74 +103,75 @@ class StatementImportCoordinator(
                     }
                     throw e
                 }
-                var preview: ImportPreviewResult? = null
+                // 1. Instant local on-device rule parsing (<100ms)
+                val localPreview = StatementImportService.parseStatementBytes(context, bytes, resolvedFileName, currentRules, existingTxs)
+                var preview: ImportPreviewResult? = if (localPreview.validRows.isNotEmpty()) localPreview else null
 
-                // Attempt AI-assisted statement parsing
-                if (rawText.isNotBlank()) {
+                // 2. Fallback to AI-assisted parsing with 5s timeout if local parser found no rows and text is available
+                if (preview == null && rawText.isNotBlank()) {
                     try {
-                        val api = com.example.data.remote.ApiClient.getAuthApi(context)
-                        val aiResponse = api.parseStatementAi(
-                            com.example.data.remote.StatementAiParseRequest(
-                                textContent = rawText.take(50000),
-                                fileName = resolvedFileName
+                        withTimeoutOrNull(5000L) {
+                            val api = com.example.data.remote.ApiClient.getAuthApi(context)
+                            val aiResponse = api.parseStatementAi(
+                                com.example.data.remote.StatementAiParseRequest(
+                                    textContent = rawText.take(50000),
+                                    fileName = resolvedFileName
+                                )
                             )
-                        )
-                        if (aiResponse.isSuccessful && aiResponse.body()?.success == true && !aiResponse.body()?.transactions.isNullOrEmpty()) {
-                            val aiTxs: List<StatementAiTransactionDto> = aiResponse.body()!!.transactions
-                            val parsedRows: List<ParsedImportRow> = aiTxs.map { aiTx ->
-                                val isDuplicate = existingTxs.any { ex ->
-                                    ex.transactionDate == aiTx.transactionDate &&
-                                    kotlin.math.abs(ex.amount - aiTx.amount) < 0.01 &&
-                                    ((ex.referenceNumber.isNotBlank() && ex.referenceNumber == aiTx.referenceNumber) ||
-                                     ex.description.contains(aiTx.description, ignoreCase = true) ||
-                                     aiTx.description.contains(ex.description, ignoreCase = true))
-                                }
-                                val txType = if (aiTx.transactionType.equals("INCOME", ignoreCase = true)) TransactionType.INCOME else TransactionType.EXPENSE
-                                val catResult = CategorizationEngine.categorize(aiTx.description, currentRules, txType == TransactionType.INCOME)
-                                val finalCategory = if (!catResult.categoryName.equals("Uncategorized", ignoreCase = true)) {
-                                    catResult.categoryName
-                                } else {
-                                    aiTx.suggestedCategory.ifBlank { "General" }
-                                }
+                            if (aiResponse.isSuccessful && aiResponse.body()?.success == true && !aiResponse.body()?.transactions.isNullOrEmpty()) {
+                                val aiTxs: List<StatementAiTransactionDto> = aiResponse.body()!!.transactions
+                                val parsedRows: List<ParsedImportRow> = aiTxs.map { aiTx ->
+                                    val isDuplicate = existingTxs.any { ex ->
+                                        ex.transactionDate == aiTx.transactionDate &&
+                                        kotlin.math.abs(ex.amount - aiTx.amount) < 0.01 &&
+                                        ((ex.referenceNumber.isNotBlank() && ex.referenceNumber == aiTx.referenceNumber) ||
+                                         ex.description.contains(aiTx.description, ignoreCase = true) ||
+                                         aiTx.description.contains(ex.description, ignoreCase = true))
+                                    }
+                                    val txType = if (aiTx.transactionType.equals("INCOME", ignoreCase = true)) TransactionType.INCOME else TransactionType.EXPENSE
+                                    val catResult = CategorizationEngine.categorize(aiTx.description, currentRules, txType == TransactionType.INCOME)
+                                    val finalCategory = if (!catResult.categoryName.equals("Uncategorized", ignoreCase = true)) {
+                                        catResult.categoryName
+                                    } else {
+                                        aiTx.suggestedCategory.ifBlank { "General" }
+                                    }
 
-                                ParsedImportRow(
-                                    rawLine = "${aiTx.transactionDate} ${aiTx.description} ${aiTx.amount}",
-                                    date = aiTx.transactionDate,
-                                    description = aiTx.description,
-                                    debitAmount = aiTx.debitAmount,
-                                    creditAmount = aiTx.creditAmount,
-                                    amount = aiTx.amount,
-                                    balance = aiTx.balanceAfterTransaction,
-                                    referenceNumber = aiTx.referenceNumber,
-                                    suggestedCategory = finalCategory,
-                                    suggestedCategoryId = catResult.categoryId,
-                                    suggestedType = txType,
-                                    confidence = 0.95f,
-                                    isDuplicate = isDuplicate
+                                    ParsedImportRow(
+                                        rawLine = "${aiTx.transactionDate} ${aiTx.description} ${aiTx.amount}",
+                                        date = aiTx.transactionDate,
+                                        description = aiTx.description,
+                                        debitAmount = aiTx.debitAmount,
+                                        creditAmount = aiTx.creditAmount,
+                                        amount = aiTx.amount,
+                                        balance = aiTx.balanceAfterTransaction,
+                                        referenceNumber = aiTx.referenceNumber,
+                                        suggestedCategory = finalCategory,
+                                        suggestedCategoryId = catResult.categoryId,
+                                        suggestedType = txType,
+                                        confidence = 0.95f,
+                                        isDuplicate = isDuplicate
+                                    )
+                                }
+                                preview = ImportPreviewResult(
+                                    totalRows = parsedRows.size,
+                                    validRows = parsedRows,
+                                    duplicateCount = parsedRows.count { it.isDuplicate },
+                                    detectedColumns = listOf("Date", "Description", "Debit", "Credit", "Balance", "AI Category"),
+                                    fileName = "$resolvedFileName (AI Enhanced)"
                                 )
                             }
-                            preview = ImportPreviewResult(
-                                totalRows = parsedRows.size,
-                                validRows = parsedRows,
-                                duplicateCount = parsedRows.count { it.isDuplicate },
-                                detectedColumns = listOf("Date", "Description", "Debit", "Credit", "Balance", "AI Category"),
-                                fileName = "$resolvedFileName (AI Enhanced)"
-                            )
                         }
                     } catch (_: Exception) {
-                        // Offline or network error -> fallback seamlessly to local parser
+                        // Offline or network error -> fallback seamlessly
                     }
                 }
 
-                // Seamless fallback to local on-device rule parser
-                if (preview == null || preview.validRows.isEmpty()) {
-                    preview = StatementImportService.parseStatementBytes(context, bytes, resolvedFileName, currentRules, existingTxs)
-                }
+                val finalPreview = preview ?: localPreview
 
-                if (preview.validRows.isEmpty()) {
+                if (finalPreview.validRows.isEmpty()) {
                     showMessage("No valid transaction rows found in '$resolvedFileName'. Please ensure it's a supported bank statement.")
                 }
-                _importPreview.value = preview
+                _importPreview.value = finalPreview
             } catch (e: Exception) {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.e("FinanceViewModel", "Statement import failed", e)
@@ -199,70 +201,73 @@ class StatementImportCoordinator(
 
                 val currentRules = repository.getActiveRulesList()
                 val existingTxs = allTransactionsFlow.value
-                var preview: ImportPreviewResult? = null
+                // 1. Instant local on-device rule parsing
+                val localPreview = StatementImportService.parseStatementText(rawText, currentRules, existingTxs, resolvedFileName)
+                var preview: ImportPreviewResult? = if (localPreview.validRows.isNotEmpty()) localPreview else null
 
-                if (rawText.isNotBlank()) {
+                // 2. Fallback to AI-assisted parsing if local parser found no rows
+                if (preview == null && rawText.isNotBlank()) {
                     try {
-                        val api = com.example.data.remote.ApiClient.getAuthApi(context)
-                        val aiResponse = api.parseStatementAi(
-                            com.example.data.remote.StatementAiParseRequest(
-                                textContent = rawText.take(50000),
-                                fileName = resolvedFileName
+                        withTimeoutOrNull(5000L) {
+                            val api = com.example.data.remote.ApiClient.getAuthApi(context)
+                            val aiResponse = api.parseStatementAi(
+                                com.example.data.remote.StatementAiParseRequest(
+                                    textContent = rawText.take(50000),
+                                    fileName = resolvedFileName
+                                )
                             )
-                        )
-                        if (aiResponse.isSuccessful && aiResponse.body()?.success == true && !aiResponse.body()?.transactions.isNullOrEmpty()) {
-                            val aiTxs = aiResponse.body()!!.transactions
-                            val parsedRows = aiTxs.map { aiTx ->
-                                val isDuplicate = existingTxs.any { ex ->
-                                    ex.transactionDate == aiTx.transactionDate &&
-                                    kotlin.math.abs(ex.amount - aiTx.amount) < 0.01 &&
-                                    ((ex.referenceNumber.isNotBlank() && ex.referenceNumber == aiTx.referenceNumber) ||
-                                     ex.description.contains(aiTx.description, ignoreCase = true) ||
-                                     aiTx.description.contains(ex.description, ignoreCase = true))
-                                }
-                                val txType = if (aiTx.transactionType.equals("INCOME", ignoreCase = true)) TransactionType.INCOME else TransactionType.EXPENSE
-                                val catResult = CategorizationEngine.categorize(aiTx.description, currentRules, txType == TransactionType.INCOME)
-                                val finalCategory = if (!catResult.categoryName.equals("Uncategorized", ignoreCase = true)) {
-                                    catResult.categoryName
-                                } else {
-                                    aiTx.suggestedCategory.ifBlank { "General" }
-                                }
+                            if (aiResponse.isSuccessful && aiResponse.body()?.success == true && !aiResponse.body()?.transactions.isNullOrEmpty()) {
+                                val aiTxs = aiResponse.body()!!.transactions
+                                val parsedRows = aiTxs.map { aiTx ->
+                                    val isDuplicate = existingTxs.any { ex ->
+                                        ex.transactionDate == aiTx.transactionDate &&
+                                        kotlin.math.abs(ex.amount - aiTx.amount) < 0.01 &&
+                                        ((ex.referenceNumber.isNotBlank() && ex.referenceNumber == aiTx.referenceNumber) ||
+                                         ex.description.contains(aiTx.description, ignoreCase = true) ||
+                                         aiTx.description.contains(ex.description, ignoreCase = true))
+                                    }
+                                    val txType = if (aiTx.transactionType.equals("INCOME", ignoreCase = true)) TransactionType.INCOME else TransactionType.EXPENSE
+                                    val catResult = CategorizationEngine.categorize(aiTx.description, currentRules, txType == TransactionType.INCOME)
+                                    val finalCategory = if (!catResult.categoryName.equals("Uncategorized", ignoreCase = true)) {
+                                        catResult.categoryName
+                                    } else {
+                                        aiTx.suggestedCategory.ifBlank { "General" }
+                                    }
 
-                                ParsedImportRow(
-                                    rawLine = "${aiTx.transactionDate} ${aiTx.description} ${aiTx.amount}",
-                                    date = aiTx.transactionDate,
-                                    description = aiTx.description,
-                                    debitAmount = aiTx.debitAmount,
-                                    creditAmount = aiTx.creditAmount,
-                                    amount = aiTx.amount,
-                                    balance = aiTx.balanceAfterTransaction,
-                                    referenceNumber = aiTx.referenceNumber,
-                                    suggestedCategory = finalCategory,
-                                    suggestedCategoryId = catResult.categoryId,
-                                    suggestedType = txType,
-                                    confidence = 0.95f,
-                                    isDuplicate = isDuplicate
+                                    ParsedImportRow(
+                                        rawLine = "${aiTx.transactionDate} ${aiTx.description} ${aiTx.amount}",
+                                        date = aiTx.transactionDate,
+                                        description = aiTx.description,
+                                        debitAmount = aiTx.debitAmount,
+                                        creditAmount = aiTx.creditAmount,
+                                        amount = aiTx.amount,
+                                        balance = aiTx.balanceAfterTransaction,
+                                        referenceNumber = aiTx.referenceNumber,
+                                        suggestedCategory = finalCategory,
+                                        suggestedCategoryId = catResult.categoryId,
+                                        suggestedType = txType,
+                                        confidence = 0.95f,
+                                        isDuplicate = isDuplicate
+                                    )
+                                }
+                                preview = ImportPreviewResult(
+                                    totalRows = parsedRows.size,
+                                    validRows = parsedRows,
+                                    duplicateCount = parsedRows.count { it.isDuplicate },
+                                    detectedColumns = listOf("Date", "Description", "Debit", "Credit", "Balance", "AI Category"),
+                                    fileName = "$resolvedFileName (AI Enhanced)"
                                 )
                             }
-                            preview = ImportPreviewResult(
-                                totalRows = parsedRows.size,
-                                validRows = parsedRows,
-                                duplicateCount = parsedRows.count { it.isDuplicate },
-                                detectedColumns = listOf("Date", "Description", "Debit", "Credit", "Balance", "AI Category"),
-                                fileName = "$resolvedFileName (AI Enhanced)"
-                            )
                         }
                     } catch (_: Exception) {}
                 }
 
-                if (preview == null || preview.validRows.isEmpty()) {
-                    preview = StatementImportService.parseStatementText(rawText, currentRules, existingTxs, resolvedFileName)
-                }
+                val finalPreview = preview ?: localPreview
 
-                if (preview.validRows.isEmpty()) {
+                if (finalPreview.validRows.isEmpty()) {
                     showMessage("No valid transaction rows found in '$resolvedFileName'. Please ensure it's a supported bank statement.")
                 }
-                _importPreview.value = preview
+                _importPreview.value = finalPreview
             } catch (e: Exception) {
                 showMessage("Could not parse statement: ${e.localizedMessage ?: "Invalid password or corrupted format"}")
             } finally {

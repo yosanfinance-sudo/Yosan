@@ -281,8 +281,8 @@ abstract class AppDatabase : RoomDatabase() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 super.onCreate(db)
                 scope.launch(Dispatchers.IO) {
-                    val database = instances[dbName] ?: buildDatabase(context, scope, dbName)
-                    DatabaseInitializer.seedInitialData(database)
+                    val database = synchronized(lock) { instances[dbName] }
+                    database?.let { DatabaseInitializer.seedInitialData(it) }
                 }
             }
         }

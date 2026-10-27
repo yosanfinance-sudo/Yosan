@@ -140,6 +140,11 @@ class UndoCoordinator(
                     }
                 }
 
+                val affectedAccountIds = prevTxs.map { it.accountId }.distinct()
+                affectedAccountIds.forEach { accId ->
+                    repository.recalculateAccountBalance(accId)
+                }
+
                 repository.deleteUndoAction(actionId)
                 withContext(Dispatchers.Main) {
                     showMessage("Undone: ${action.description}")

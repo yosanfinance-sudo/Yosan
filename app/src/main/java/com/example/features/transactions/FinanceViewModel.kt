@@ -97,17 +97,17 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     // Base Flows from DB
     val userProfile: StateFlow<UserProfileEntity?> = getUserProfileUseCase()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
 
     val accounts: StateFlow<List<AccountEntity>> = getAccountsUseCase()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     private val _isDataLoaded = MutableStateFlow(false)
     val isDataLoaded: StateFlow<Boolean> = _isDataLoaded.asStateFlow()
 
     val allTransactions: StateFlow<List<TransactionEntity>> = getTransactionsUseCase()
         .onEach { _isDataLoaded.value = true }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     // UI Message
     private val _uiMessage = MutableStateFlow<String?>(null)
@@ -423,25 +423,29 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         accounts
     ) { txs, lns, compExp, accs ->
         FinancialCalculationService.calculateSummary(txs, lns, compExp, accs)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, DashboardSummary())
+    }.flowOn(Dispatchers.Default)
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DashboardSummary())
 
     val categoryBreakdown: StateFlow<List<CategoryExpenseItem>> = combine(
         allTransactions,
         categories
     ) { txs, cats ->
         FinancialCalculationService.calculateCategoryExpenseBreakdown(txs, cats)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }.flowOn(Dispatchers.Default)
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     val categoryIncomeBreakdown: StateFlow<List<CategoryExpenseItem>> = combine(
         allTransactions,
         categories
     ) { txs, cats ->
         FinancialCalculationService.calculateCategoryIncomeBreakdown(txs, cats)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }.flowOn(Dispatchers.Default)
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     val monthlyTrends: StateFlow<List<MonthlyTrendItem>> = allTransactions.map { txs ->
         FinancialCalculationService.calculateMonthlyTrends(txs)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }.flowOn(Dispatchers.Default)
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     val financialInsights: StateFlow<List<FinancialInsight>> = combine(
         dashboardSummary,
@@ -452,7 +456,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val monthlyBudget = budgetPrefs.monthlyBudget
         val catBudgets = budgetPrefs.getAllCategoryBudgets()
         FinancialCalculationService.generateInsights(summary, breakdown, trends, monthlyBudget, catBudgets)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }.flowOn(Dispatchers.Default)
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     fun setMonthlyBudget(amount: Double) {
         val budgetPrefs = com.example.utils.BudgetPreferences(getApplication())
