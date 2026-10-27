@@ -395,14 +395,29 @@ class UpdateManager(
 
             // Android 8.0+ unknown sources permission check
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (!context.packageManager.canRequestPackageInstalls()) {
-                    val settingsIntent = Intent(
-                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:${context.packageName}")
-                    ).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                val canInstall = try {
+                    context.packageManager.canRequestPackageInstalls()
+                } catch (_: SecurityException) {
+                    false
+                }
+
+                if (!canInstall) {
+                    try {
+                        val settingsIntent = Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:${context.packageName}")
+                        ).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(settingsIntent)
+                    } catch (_: Exception) {
+                        try {
+                            val genericSettingsIntent = Intent(Settings.ACTION_SECURITY_SETTINGS).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(genericSettingsIntent)
+                        } catch (_: Exception) {}
                     }
-                    context.startActivity(settingsIntent)
                     return
                 }
             }
@@ -418,11 +433,21 @@ class UpdateManager(
             }
 
             // Grant explicit URI read permission to all matching package installer handlers
-            val resInfoList = context.packageManager.queryIntentActivities(installIntent, 0)
-            for (resolveInfo in resInfoList) {
-                val pkgName = resolveInfo.activityInfo.packageName
-                context.grantUriPermission(pkgName, contentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
+            try {
+                val resInfoList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    context.packageManager.queryIntentActivities(
+                        installIntent,
+                        android.content.pm.PackageManager.ResolveInfoFlags.of(0)
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    context.packageManager.queryIntentActivities(installIntent, 0)
+                }
+                for (resolveInfo in resInfoList) {
+                    val pkgName = resolveInfo.activityInfo.packageName
+                    context.grantUriPermission(pkgName, contentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            } catch (_: Exception) {}
 
             context.startActivity(installIntent)
         } catch (e: Exception) {
