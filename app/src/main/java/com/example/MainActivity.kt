@@ -65,6 +65,13 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
+            // Explicitly sync AppDatabase partition key synchronously before ViewModel resolution
+            if (isAuthenticated && !authUser?.email.isNullOrBlank()) {
+                com.example.data.local.AppDatabase.setActiveUserKey(authUser!!.email)
+            } else if (appPreferences.isOfflineMode) {
+                com.example.data.local.AppDatabase.setActiveUserKey("guest")
+            }
+
             val financeViewModel: FinanceViewModel = viewModel(key = "finance_vm_$activeUserKey")
 
             // Check if activity was launched with an OAuth deep link intent

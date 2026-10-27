@@ -12,7 +12,8 @@ data class RememberedAccount(
     val profilePicture: String = "",
     val googleSub: String = "",
     val bankName: String = "",
-    val lastUsedTimestamp: Long = System.currentTimeMillis()
+    val lastUsedTimestamp: Long = System.currentTimeMillis(),
+    val sessionToken: String = ""
 )
 
 class AppPreferences(private val context: Context) {
@@ -25,6 +26,22 @@ class AppPreferences(private val context: Context) {
         set(value) {
             prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, value).apply()
         }
+
+    fun isOnboardingCompletedForUser(userEmail: String?): Boolean {
+        if (userEmail.isNullOrBlank()) return isOnboardingCompleted
+        val userKey = com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+        return prefs.getBoolean("${KEY_ONBOARDING_COMPLETED}_$userKey", false) ||
+               (userEmail.equals(lastUserEmail, ignoreCase = true) && isOnboardingCompleted)
+    }
+
+    fun setOnboardingCompletedForUser(userEmail: String?, completed: Boolean) {
+        val editor = prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, completed)
+        if (!userEmail.isNullOrBlank()) {
+            val userKey = com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+            editor.putBoolean("${KEY_ONBOARDING_COMPLETED}_$userKey", completed)
+        }
+        editor.apply()
+    }
 
     var isDarkMode: Boolean?
         get() {
@@ -174,6 +191,7 @@ class AppPreferences(private val context: Context) {
                     put("googleSub", item.googleSub)
                     put("bankName", item.bankName)
                     put("lastUsedTimestamp", item.lastUsedTimestamp)
+                    put("sessionToken", item.sessionToken)
                 }
                 array.put(obj)
             }
@@ -199,7 +217,8 @@ class AppPreferences(private val context: Context) {
                                 profilePicture = obj.optString("profilePicture", ""),
                                 googleSub = obj.optString("googleSub", ""),
                                 bankName = obj.optString("bankName", ""),
-                                lastUsedTimestamp = obj.optLong("lastUsedTimestamp", System.currentTimeMillis())
+                                lastUsedTimestamp = obj.optLong("lastUsedTimestamp", System.currentTimeMillis()),
+                                sessionToken = obj.optString("sessionToken", "")
                             )
                         )
                     }
@@ -243,6 +262,7 @@ class AppPreferences(private val context: Context) {
                 profilePicture = account.profilePicture.ifBlank { old.profilePicture },
                 googleSub = account.googleSub.ifBlank { old.googleSub },
                 bankName = account.bankName.ifBlank { old.bankName },
+                sessionToken = account.sessionToken.ifBlank { old.sessionToken },
                 lastUsedTimestamp = System.currentTimeMillis()
             )
         } else {

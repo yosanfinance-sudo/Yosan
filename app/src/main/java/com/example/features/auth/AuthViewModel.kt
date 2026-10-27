@@ -256,17 +256,22 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         // 2. Offline-First fallback token generation if backend is unreachable
                         if (accessToken.isBlank()) {
                             accessToken = idToken
-                            refreshToken = "offline_refresh_${System.currentTimeMillis()}"
+                            refreshToken = "yosan_ref_${com.example.data.local.AppDatabase.sanitizeUserKey(email)}_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "")}"
                         }
 
-                        tokenManager.saveTokens(accessToken, refreshToken, expiresIn)
+                        val sessionToken = SecureTokenManager.generateSessionToken(email)
+                        tokenManager.saveTokens(accessToken, refreshToken, expiresIn, email = email)
                         tokenManager.saveUserSession(
                             userId = 1L,
                             googleSub = sub,
                             email = email,
                             name = name,
                             profilePicture = photoUrl,
-                            emailVerified = true
+                            emailVerified = true,
+                            sessionToken = sessionToken,
+                            accessToken = accessToken,
+                            refreshToken = refreshToken,
+                            expiresInSeconds = expiresIn
                         )
                         _isEmailVerified.value = true
 
@@ -285,7 +290,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             profilePicture = photoUrl,
                             googleSub = sub,
                             bankName = primaryBank,
-                            lastUsedTimestamp = System.currentTimeMillis()
+                            lastUsedTimestamp = System.currentTimeMillis(),
+                            sessionToken = sessionToken
                         )
                         prefs.saveRememberedAccount(rememberedAccount)
                         prefs.isLoggedOut = false
@@ -389,9 +395,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val sub = account.googleSub.ifBlank { prefs.lastGoogleSub.ifBlank { currentProfile?.googleSub ?: email.ifBlank { "yosan_user" } } }
                 val bank = account.bankName.ifBlank { prefs.lastBankName.ifBlank { "Indian Bank" } }
 
+                val restoredAccessToken = "offline_restored_${System.currentTimeMillis()}"
+                val restoredRefreshToken = "offline_refresh_${System.currentTimeMillis()}"
                 tokenManager.saveTokens(
-                    accessToken = "offline_restored_${System.currentTimeMillis()}",
-                    refreshToken = "offline_refresh_${System.currentTimeMillis()}"
+                    accessToken = restoredAccessToken,
+                    refreshToken = restoredRefreshToken,
+                    email = email
                 )
                 tokenManager.saveUserSession(
                     userId = 1L,
@@ -399,7 +408,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     email = email,
                     name = name,
                     profilePicture = pic,
-                    emailVerified = true
+                    emailVerified = true,
+                    accessToken = restoredAccessToken,
+                    refreshToken = restoredRefreshToken
                 )
                 _isEmailVerified.value = true
 
@@ -501,9 +512,14 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     ?: existingAccounts.firstOrNull()?.bankName
                     ?: prefs.lastBankName
 
+                val sessionToken = SecureTokenManager.generateSessionToken(cleanEmail)
+                val dynamicAccessToken = "yosan_tok_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "")}"
+                val dynamicRefreshToken = "yosan_ref_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "")}"
+
                 tokenManager.saveTokens(
-                    accessToken = "offline_google_${System.currentTimeMillis()}",
-                    refreshToken = "offline_refresh_${System.currentTimeMillis()}"
+                    accessToken = dynamicAccessToken,
+                    refreshToken = dynamicRefreshToken,
+                    email = cleanEmail
                 )
                 tokenManager.saveUserSession(
                     userId = 1L,
@@ -511,7 +527,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     email = cleanEmail,
                     name = resolvedName,
                     profilePicture = "",
-                    emailVerified = true
+                    emailVerified = true,
+                    sessionToken = sessionToken,
+                    accessToken = dynamicAccessToken,
+                    refreshToken = dynamicRefreshToken
                 )
                 _isEmailVerified.value = true
 
@@ -521,7 +540,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     profilePicture = "",
                     googleSub = sub,
                     bankName = primaryBank,
-                    lastUsedTimestamp = System.currentTimeMillis()
+                    lastUsedTimestamp = System.currentTimeMillis(),
+                    sessionToken = sessionToken
                 )
                 prefs.saveRememberedAccount(remembered)
                 prefs.isLoggedOut = false
@@ -612,16 +632,25 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     if (accessToken.isNotBlank() || idToken.isNotBlank()) {
-                        tokenManager.saveTokens(accessToken.ifBlank { idToken }, refreshToken, expiresIn)
+                        val sessionToken = SecureTokenManager.generateSessionToken(email)
+                        val effectiveAccess = accessToken.ifBlank { idToken }
+                        tokenManager.saveTokens(effectiveAccess, refreshToken, expiresIn, email = email)
                         tokenManager.saveUserSession(
                             userId = 1L,
                             googleSub = uid.ifBlank { email.ifBlank { "google_user" } },
                             email = email,
                             name = name,
                             profilePicture = avatar,
-                            emailVerified = true
+                            emailVerified = true,
+                            sessionToken = sessionToken,
+                            accessToken = effectiveAccess,
+                            refreshToken = refreshToken,
+                            expiresInSeconds = expiresIn
                         )
                         _isEmailVerified.value = true
+
+                        // Switch database partition to this user
+                        AppDatabase.setActiveUserKey(email)
 
                         val prefs = com.example.utils.AppPreferences(app)
                         val existingAccounts = database.accountDao().getAllAccountsList()
@@ -645,7 +674,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             profilePicture = avatar,
                             googleSub = uid,
                             bankName = primaryBank,
-                            lastUsedTimestamp = System.currentTimeMillis()
+                            lastUsedTimestamp = System.currentTimeMillis(),
+                            sessionToken = sessionToken
                         )
                         prefs.saveRememberedAccount(remembered)
 
@@ -683,15 +713,19 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         val response = authApi.authenticateGoogle(GoogleAuthRequest(idToken = code))
                         if (response.isSuccessful && response.body() != null) {
                             val body = response.body()!!
-                            tokenManager.saveTokens(body.accessToken, body.refreshToken, null)
                             val user = body.user
+                            val sessionToken = SecureTokenManager.generateSessionToken(user.email)
+                            tokenManager.saveTokens(body.accessToken, body.refreshToken, null, email = user.email)
                             tokenManager.saveUserSession(
                                 userId = user.id,
                                 googleSub = user.googleSub,
                                 email = user.email,
                                 name = user.name,
                                 profilePicture = user.profilePictureUrl ?: "",
-                                emailVerified = user.emailVerified
+                                emailVerified = user.emailVerified,
+                                sessionToken = sessionToken,
+                                accessToken = body.accessToken,
+                                refreshToken = body.refreshToken
                             )
                             _isEmailVerified.value = user.emailVerified
 
@@ -1083,16 +1117,23 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val response = api.verifyOtp(VerifyOtpRequest(email = cleanEmail, otp = cleanOtp, purpose = purpose, name = name.ifBlank { null }))
                 if (response.isSuccessful && response.body() != null) {
                     val authRes = response.body()!!
-                    tokenManager.saveTokens(authRes.accessToken, authRes.refreshToken)
+                    val sessionToken = SecureTokenManager.generateSessionToken(cleanEmail)
+                    tokenManager.saveTokens(authRes.accessToken, authRes.refreshToken, email = authRes.user.email)
                     tokenManager.saveUserSession(
                         userId = authRes.user.id,
                         googleSub = authRes.user.googleSub,
                         email = authRes.user.email,
                         name = authRes.user.name,
                         profilePicture = authRes.user.profilePictureUrl ?: "",
-                        emailVerified = true
+                        emailVerified = true,
+                        sessionToken = sessionToken,
+                        accessToken = authRes.accessToken,
+                        refreshToken = authRes.refreshToken
                     )
                     _isEmailVerified.value = true
+
+                    // Switch database partition to this user BEFORE reading accounts or profile
+                    AppDatabase.setActiveUserKey(authRes.user.email)
 
                     val prefs = com.example.utils.AppPreferences(app)
                     prefs.isLoggedOut = false
@@ -1111,7 +1152,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         profilePicture = authRes.user.profilePictureUrl ?: "",
                         googleSub = authRes.user.googleSub,
                         bankName = primaryBank,
-                        lastUsedTimestamp = System.currentTimeMillis()
+                        lastUsedTimestamp = System.currentTimeMillis(),
+                        sessionToken = sessionToken
                     )
                     prefs.saveRememberedAccount(remembered)
 
@@ -1250,13 +1292,15 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 ?: prefs.lastBankName.ifBlank { "Indian Bank" }
             prefs.lastBankName = primaryBank
 
+            val currentSessionToken = tokenManager.getSessionToken() ?: SecureTokenManager.generateSessionToken(email)
             val remembered = com.example.utils.RememberedAccount(
                 email = email,
                 name = name,
                 profilePicture = pic,
                 googleSub = sub,
                 bankName = primaryBank,
-                lastUsedTimestamp = System.currentTimeMillis()
+                lastUsedTimestamp = System.currentTimeMillis(),
+                sessionToken = currentSessionToken
             )
             prefs.saveRememberedAccount(remembered)
 
@@ -1277,8 +1321,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             prefs.isLoggedOut = true
             prefs.isOfflineMode = false
 
-            tokenManager.clearSession()
-            tokenManager.clearCredentials()
+            // Clear active session slot while keeping remembered user session for account switching
+            tokenManager.clearActiveSession(preserveSavedSession = true)
             tokenManager.clearDriveTokens()
             driveService.disconnectDrive()
             refreshDriveStatus()
@@ -1288,6 +1332,197 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             _isEmailVerified.value = false
             _authState.value = AuthState.Unauthenticated
             onComplete?.invoke()
+        }
+    }
+
+    /**
+     * Switches the active session to another user account on this device.
+     * Restores the selected user's tokens, session, and isolated database cleanly.
+     * Prevents previous user details from showing in the switched account.
+     */
+    fun switchAccount(email: String, onComplete: (() -> Unit)? = null) {
+        val cleanEmail = email.trim().lowercase()
+        if (cleanEmail.isBlank()) return
+
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val app = getApplication<Application>()
+                val prefs = com.example.utils.AppPreferences(app)
+
+                // 1. Close current database partition cleanly before switching
+                val currentEmail = tokenManager.getUserEmail()?.trim()?.lowercase()
+                if (!currentEmail.isNullOrBlank() && !currentEmail.equals(cleanEmail, ignoreCase = true)) {
+                    AppDatabase.closeDatabaseForUser(app, currentEmail)
+                }
+
+                // 2. Switch session tokens and active user identity in SecureTokenManager
+                val switched = tokenManager.switchUserSession(cleanEmail)
+                if (!switched) {
+                    Log.w(TAG, "No stored session found for $cleanEmail. Initializing session.")
+                    val sessionToken = SecureTokenManager.generateSessionToken(cleanEmail)
+                    tokenManager.saveUserSession(
+                        userId = 1L,
+                        googleSub = "user_${AppDatabase.sanitizeUserKey(cleanEmail)}",
+                        email = cleanEmail,
+                        name = cleanEmail.substringBefore("@").replace(".", " ")
+                            .split(" ")
+                            .filter { it.isNotBlank() }
+                            .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+                            .ifBlank { "User" },
+                        profilePicture = "",
+                        emailVerified = true,
+                        sessionToken = sessionToken
+                    )
+                }
+
+                // 3. Set active database partition to target user
+                AppDatabase.setActiveUserKey(cleanEmail)
+
+                // 4. Load target user's isolated profile
+                val userDb = AppDatabase.getDatabaseForUser(app, viewModelScope, cleanEmail)
+                val targetProfile = userDb.userProfileDao().getUserProfileOnce()
+                val targetAccounts = userDb.accountDao().getAllAccountsList()
+
+                val resolvedName = tokenManager.getUserName()
+                    ?: targetProfile?.name
+                    ?: cleanEmail.substringBefore("@")
+                val resolvedPic = tokenManager.getProfilePic()
+                    ?: targetProfile?.profilePictureUrl ?: ""
+
+                val activeProfile = (targetProfile ?: UserProfileEntity(id = 1)).copy(
+                    email = cleanEmail,
+                    name = resolvedName,
+                    profilePictureUrl = resolvedPic,
+                    googleSub = tokenManager.getGoogleSub() ?: targetProfile?.googleSub ?: "",
+                    emailVerified = tokenManager.isEmailVerified() || targetProfile?.emailVerified == true,
+                    isOnboardingCompleted = targetAccounts.isNotEmpty() || targetProfile?.isOnboardingCompleted == true,
+                    updatedAt = System.currentTimeMillis()
+                )
+                userDb.userProfileDao().insertOrUpdateProfile(activeProfile)
+
+                prefs.isLoggedOut = false
+                prefs.isOfflineMode = false
+                prefs.lastUserEmail = cleanEmail
+                prefs.lastUserName = resolvedName
+                prefs.lastUserProfilePic = resolvedPic
+
+                val primaryBank = targetAccounts.firstOrNull { it.isDefault }?.bankName
+                    ?: targetAccounts.firstOrNull()?.bankName
+                    ?: "Indian Bank"
+                prefs.lastBankName = primaryBank
+
+                // Update remembered accounts registry
+                val remembered = com.example.utils.RememberedAccount(
+                    email = cleanEmail,
+                    name = resolvedName,
+                    profilePicture = resolvedPic,
+                    googleSub = activeProfile.googleSub,
+                    bankName = primaryBank,
+                    lastUsedTimestamp = System.currentTimeMillis(),
+                    sessionToken = tokenManager.getSessionToken() ?: ""
+                )
+                prefs.saveRememberedAccount(remembered)
+
+                // 5. Update auth state and sync managers
+                _isEmailVerified.value = activeProfile.emailVerified
+                _user.value = buildLocalUser(activeProfile)
+                _authState.value = AuthState.Authenticated(isNewUser = !activeProfile.isOnboardingCompleted)
+                refreshDriveStatus()
+                syncManager.loadInitialStatus()
+
+                onComplete?.invoke()
+            } catch (e: Exception) {
+                Log.e(TAG, "switchAccount error: ${e.message}", e)
+                _errorMessage.value = "Failed to switch account: ${e.localizedMessage ?: e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /**
+     * Prepares the app to add another user account on the same phone.
+     * Preserves existing user sessions in SecureTokenManager and remembered accounts.
+     * Resets active session and memory state to a clean slate so previous user details
+     * are never shown when adding or logging into the new account.
+     */
+    fun prepareAddAnotherAccount(onComplete: (() -> Unit)? = null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val app = getApplication<Application>()
+                val prefs = com.example.utils.AppPreferences(app)
+
+                // Close active user's database cleanly
+                val currentEmail = tokenManager.getUserEmail()?.trim()?.lowercase()
+                if (!currentEmail.isNullOrBlank()) {
+                    AppDatabase.closeDatabaseForUser(app, currentEmail)
+                }
+
+                // Preserve existing user sessions, but clear active session slot
+                tokenManager.clearActiveSession(preserveSavedSession = true)
+
+                // Reset active DB partition to guest
+                AppDatabase.setActiveUserKey("guest")
+                prefs.isLoggedOut = true
+                prefs.isOfflineMode = false
+
+                _user.value = null
+                _isNewUser.value = true
+                _isEmailVerified.value = false
+                _errorMessage.value = null
+                _authState.value = AuthState.Unauthenticated
+
+                onComplete?.invoke()
+            } catch (e: Exception) {
+                Log.e(TAG, "prepareAddAnotherAccount error: ${e.message}", e)
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /**
+     * Removes a user account session from this device.
+     */
+    fun removeAccount(email: String, onComplete: (() -> Unit)? = null) {
+        val cleanEmail = email.trim().lowercase()
+        if (cleanEmail.isBlank()) return
+
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val app = getApplication<Application>()
+                val prefs = com.example.utils.AppPreferences(app)
+
+                // 1. Remove from SecureTokenManager and AppPreferences
+                tokenManager.removeUserSession(cleanEmail)
+                prefs.removeRememberedAccount(cleanEmail)
+
+                // 2. Close isolated database
+                AppDatabase.closeDatabaseForUser(app, cleanEmail)
+
+                // 3. If currently active user was removed, switch to another account or unauthenticate
+                val currentActive = _user.value?.email?.trim()?.lowercase()
+                if (cleanEmail.equals(currentActive, ignoreCase = true)) {
+                    val remaining = prefs.getRememberedAccounts()
+                    if (remaining.isNotEmpty()) {
+                        switchAccount(remaining.first().email, onComplete)
+                        return@launch
+                    } else {
+                        AppDatabase.setActiveUserKey("guest")
+                        prefs.isLoggedOut = true
+                        _user.value = null
+                        _authState.value = AuthState.Unauthenticated
+                    }
+                }
+                onComplete?.invoke()
+            } catch (e: Exception) {
+                Log.e(TAG, "removeAccount error: ${e.message}", e)
+            } finally {
+                _isLoading.value = false
+            }
         }
     }
 
