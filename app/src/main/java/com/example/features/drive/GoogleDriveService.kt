@@ -236,14 +236,32 @@ class GoogleDriveService(
         }
     }
 
+    private fun getBackupManifestFileName(): String {
+        val email = tokenManager.getUserEmail()
+        val userKey = AppDatabase.sanitizeUserKey(email)
+        return if (userKey.isBlank() || userKey == "guest") {
+            "detailsaboutbackup.json"
+        } else {
+            "detailsaboutbackup_$userKey.json"
+        }
+    }
+
     /**
-     * Retrieves the content of 'detailsaboutbackup.json' from root Yosan-Backup folder.
+     * Retrieves the content of the latest backup JSON from root Yosan-Backup folder.
      */
     suspend fun getLatestBackupContent(driveToken: String): String? = withContext(Dispatchers.IO) {
         try {
             val rootFolderId = getOrCreateRootFolder(driveToken) ?: return@withContext null
-            val query = "name = 'detailsaboutbackup.json' and '$rootFolderId' in parents and trashed = false"
-            val listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+            val manifestName = getBackupManifestFileName()
+            var query = "name = '$manifestName' and '$rootFolderId' in parents and trashed = false"
+            var listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+
+            // Backwards compatibility fallback to legacy unpartitioned manifest if user-specific manifest not found
+            if ((!listRes.isSuccessful || listRes.body()?.files.isNullOrEmpty()) && manifestName != "detailsaboutbackup.json") {
+                query = "name = 'detailsaboutbackup.json' and '$rootFolderId' in parents and trashed = false"
+                listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+            }
+
             if (listRes.isSuccessful && listRes.body()?.files?.isNotEmpty() == true) {
                 val file = listRes.body()!!.files.first()
                 return@withContext downloadJsonFile(driveToken, file.id)
@@ -283,17 +301,23 @@ class GoogleDriveService(
             val backupJson = BackupService.generateBackupJsonObject(database, nextVersion)
             val jsonStr = backupJson.toString(2)
 
-            // 1. Save versioned snapshot: versions/backup-v%04d.json
-            val snapshotName = "backup-v%04d.json".format(java.util.Locale.US, nextVersion)
+            val email = tokenManager.getUserEmail()
+            val userKey = AppDatabase.sanitizeUserKey(email)
+            val snapshotName = if (userKey.isBlank() || userKey == "guest") {
+                "backup-v%04d.json".format(java.util.Locale.US, nextVersion)
+            } else {
+                "backup-$userKey-v%04d.json".format(java.util.Locale.US, nextVersion)
+            }
             uploadJsonFile(driveToken, versionsFolderId, snapshotName, jsonStr)
 
-            // 2. Update current backup file: detailsaboutbackup.json
-            val currentFileId = uploadJsonFile(driveToken, rootFolderId, "detailsaboutbackup.json", jsonStr)
-                ?: return@withContext DriveOperationResult.Error("Failed to update 'detailsaboutbackup.json' on Google Drive.")
+            // 2. Update current backup file
+            val manifestName = getBackupManifestFileName()
+            val currentFileId = uploadJsonFile(driveToken, rootFolderId, manifestName, jsonStr)
+                ?: return@withContext DriveOperationResult.Error("Failed to update '$manifestName' on Google Drive.")
 
             val dto = DriveBackupVersionDto(
                 version = nextVersion,
-                fileName = "detailsaboutbackup.json",
+                fileName = manifestName,
                 fileId = currentFileId,
                 isCurrent = true,
                 createdTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
@@ -326,8 +350,16 @@ class GoogleDriveService(
             val rootFolderId = getOrCreateRootFolder(driveToken)
                 ?: return@withContext DriveOperationResult.Error("Google Drive folder 'Yosan-Backup' not found.")
 
-            val query = "name = 'detailsaboutbackup.json' and '$rootFolderId' in parents and trashed = false"
-            val listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+            val manifestName = getBackupManifestFileName()
+            var query = "name = '$manifestName' and '$rootFolderId' in parents and trashed = false"
+            var listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+
+            // Backwards compatibility fallback to legacy unpartitioned manifest
+            if ((!listRes.isSuccessful || listRes.body()?.files.isNullOrEmpty()) && manifestName != "detailsaboutbackup.json") {
+                query = "name = 'detailsaboutbackup.json' and '$rootFolderId' in parents and trashed = false"
+                listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+            }
+
             if (!listRes.isSuccessful) {
                 return@withContext DriveOperationResult.Error("Failed to access Google Drive: ${listRes.code()} ${listRes.message()}")
             }

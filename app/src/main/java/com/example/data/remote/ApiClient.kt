@@ -80,6 +80,7 @@ object ApiClient {
                 val original = chain.request()
                 val accessToken = tokenManager.getAccessToken()
                 val userEmail = tokenManager.getUserEmail()
+                val sessionToken = tokenManager.getSessionToken()
 
                 val requestBuilder = original.newBuilder()
                 if (!accessToken.isNullOrBlank()) {
@@ -87,6 +88,9 @@ object ApiClient {
                 }
                 if (!userEmail.isNullOrBlank()) {
                     requestBuilder.header("X-User-Email", userEmail)
+                }
+                if (!sessionToken.isNullOrBlank()) {
+                    requestBuilder.header("X-Session-Token", sessionToken)
                 }
                 val response = chain.proceed(requestBuilder.build())
 
@@ -109,6 +113,10 @@ object ApiClient {
                                 .header("Authorization", "Bearer $newToken")
                             if (!userEmail.isNullOrBlank()) {
                                 retryRequestBuilder.header("X-User-Email", userEmail)
+                            }
+                            val currentSession = tokenManager.getSessionToken()
+                            if (!currentSession.isNullOrBlank()) {
+                                retryRequestBuilder.header("X-Session-Token", currentSession)
                             }
                             return@Interceptor chain.proceed(retryRequestBuilder.build())
                         }

@@ -279,39 +279,47 @@ class SecureTokenManager(context: Context) {
     }
 
     fun getDriveAccessToken(): String? {
+        val token = sharedPreferences.getString(KEY_DRIVE_ACCESS_TOKEN, null)
+        if (!token.isNullOrBlank()) return token
+
         val activeEmail = getUserEmail()?.trim()?.lowercase()
-        val driveEmail = sharedPreferences.getString(KEY_DRIVE_EMAIL, null)?.trim()?.lowercase()
-        if (activeEmail.isNullOrBlank() || driveEmail.isNullOrBlank() || activeEmail != driveEmail) {
-            return null
+        if (!activeEmail.isNullOrBlank()) {
+            return getUserSession(activeEmail)?.driveAccessToken
         }
-        return sharedPreferences.getString(KEY_DRIVE_ACCESS_TOKEN, null)
+        return null
     }
 
     fun getDriveRefreshToken(): String? {
+        val token = sharedPreferences.getString(KEY_DRIVE_REFRESH_TOKEN, null)
+        if (!token.isNullOrBlank()) return token
+
         val activeEmail = getUserEmail()?.trim()?.lowercase()
-        val driveEmail = sharedPreferences.getString(KEY_DRIVE_EMAIL, null)?.trim()?.lowercase()
-        if (activeEmail.isNullOrBlank() || driveEmail.isNullOrBlank() || activeEmail != driveEmail) {
-            return null
+        if (!activeEmail.isNullOrBlank()) {
+            return getUserSession(activeEmail)?.driveRefreshToken
         }
-        return sharedPreferences.getString(KEY_DRIVE_REFRESH_TOKEN, null)
+        return null
     }
 
     fun getDriveTokenExpiresAt(): Long {
+        val expiresAt = sharedPreferences.getLong(KEY_DRIVE_TOKEN_EXPIRES_AT, 0L)
+        if (expiresAt > 0L) return expiresAt
+
         val activeEmail = getUserEmail()?.trim()?.lowercase()
-        val driveEmail = sharedPreferences.getString(KEY_DRIVE_EMAIL, null)?.trim()?.lowercase()
-        if (activeEmail.isNullOrBlank() || driveEmail.isNullOrBlank() || activeEmail != driveEmail) {
-            return 0L
+        if (!activeEmail.isNullOrBlank()) {
+            return getUserSession(activeEmail)?.driveTokenExpiresAt ?: 0L
         }
-        return sharedPreferences.getLong(KEY_DRIVE_TOKEN_EXPIRES_AT, 0L)
+        return 0L
     }
 
     fun getDriveEmail(): String? {
-        val activeEmail = getUserEmail()?.trim()?.lowercase()
         val driveEmail = sharedPreferences.getString(KEY_DRIVE_EMAIL, null)?.trim()?.lowercase()
-        if (activeEmail.isNullOrBlank() || driveEmail.isNullOrBlank() || activeEmail != driveEmail) {
-            return null
+        if (!driveEmail.isNullOrBlank()) return driveEmail
+
+        val activeEmail = getUserEmail()?.trim()?.lowercase()
+        if (!activeEmail.isNullOrBlank()) {
+            return getUserSession(activeEmail)?.driveEmail
         }
-        return driveEmail
+        return null
     }
 
     fun isDriveConnected(): Boolean = !getDriveAccessToken().isNullOrBlank() || !getDriveRefreshToken().isNullOrBlank()
@@ -410,16 +418,11 @@ class SecureTokenManager(context: Context) {
 
         val currentActive = getUserEmail()?.trim()?.lowercase()
         if (cleanEmail.equals(currentActive, ignoreCase = true)) {
-            clearActiveSession(preserveSavedSession = false)
+            clearActiveSessionPreferences()
         }
     }
 
-    fun clearActiveSession(preserveSavedSession: Boolean = true) {
-        val activeEmail = getUserEmail()?.trim()?.lowercase()
-        if (!preserveSavedSession && !activeEmail.isNullOrBlank()) {
-            removeUserSession(activeEmail)
-        }
-
+    private fun clearActiveSessionPreferences() {
         sharedPreferences.edit()
             .remove(KEY_ACTIVE_USER_EMAIL)
             .remove(KEY_ACCESS_TOKEN)
@@ -437,6 +440,16 @@ class SecureTokenManager(context: Context) {
             .remove(KEY_DRIVE_TOKEN_EXPIRES_AT)
             .remove(KEY_DRIVE_EMAIL)
             .apply()
+    }
+
+    fun clearActiveSession(preserveSavedSession: Boolean = true) {
+        val activeEmail = getUserEmail()?.trim()?.lowercase()
+        if (!preserveSavedSession && !activeEmail.isNullOrBlank()) {
+            val sanitized = sanitizeKey(activeEmail)
+            unregisterUserSessionEmail(activeEmail)
+            sharedPreferences.edit().remove(KEY_SESSION_PREFIX + sanitized).apply()
+        }
+        clearActiveSessionPreferences()
     }
 
     fun clearSession() {

@@ -76,21 +76,22 @@ class MainActivity : FragmentActivity() {
 
             val userProfile by financeViewModel.userProfile.collectAsState()
             val allTransactions by financeViewModel.allTransactions.collectAsState()
+            val userAccounts by financeViewModel.accounts.collectAsState()
 
-            val isBiometricEnabled = userProfile?.isBiometricEnabled ?: appPreferences.isBiometricEnabled
+            val isBiometricEnabled = userProfile?.isBiometricEnabled ?: appPreferences.isBiometricEnabledForUser(currentEmail)
 
-            // GPay-Style Security Gatekeeper state
-            var isAppLocked by remember { mutableStateOf(appPreferences.isBiometricEnabled) }
+            // GPay-Style Security Gatekeeper state keyed by active user partition
+            var isAppLocked by remember(activeUserKey) { mutableStateOf(appPreferences.isBiometricEnabledForUser(currentEmail)) }
             var lockErrorMessage by remember { mutableStateOf<String?>(null) }
             var lastPauseTimestamp by remember { mutableLongStateOf(0L) }
 
             // Keep AppPreferences synchronized with Room UserProfile updates
-            LaunchedEffect(userProfile) {
+            LaunchedEffect(userProfile, activeUserKey) {
                 userProfile?.let { profile ->
-                    if (profile.isOnboardingCompleted && !appPreferences.isLoggedOut) {
-                        appPreferences.isOnboardingCompleted = true
+                    if (profile.isOnboardingCompleted && !appPreferences.isLoggedOutForUser(currentEmail)) {
+                        appPreferences.setOnboardingCompletedForUser(currentEmail, true)
                     }
-                    appPreferences.isBiometricEnabled = profile.isBiometricEnabled
+                    appPreferences.setBiometricEnabledForUser(currentEmail, profile.isBiometricEnabled)
                 }
             }
 
@@ -240,14 +241,18 @@ class MainActivity : FragmentActivity() {
                     }
                                         // Priority 2: Authenticated Main Container (with Bank Selection onboarding if not completed)
                     else if (isAuthenticated) {
-                        if (!appPreferences.isOnboardingCompleted) {
+                        val isUserOnboardingDone = appPreferences.isOnboardingCompletedForUser(currentEmail) ||
+                            (userProfile?.isOnboardingCompleted == true && userAccounts.isNotEmpty()) ||
+                            userAccounts.isNotEmpty()
+
+                        if (!isUserOnboardingDone) {
                             OnboardingScreen(
                                 authViewModel = authViewModel,
                                 financeViewModel = financeViewModel,
                                 initialStep = 2,
                                 onComplete = {
-                                    appPreferences.isOnboardingCompleted = true
-                                    appPreferences.isLoggedOut = false
+                                    appPreferences.setOnboardingCompletedForUser(currentEmail, true)
+                                    appPreferences.setLoggedOutForUser(currentEmail, false)
                                     authViewModel.completeOnboarding()
                                 }
                             )
@@ -265,8 +270,8 @@ class MainActivity : FragmentActivity() {
                             financeViewModel = financeViewModel,
                             initialStep = 1,
                             onComplete = {
-                                appPreferences.isOnboardingCompleted = true
-                                appPreferences.isLoggedOut = false
+                                appPreferences.setOnboardingCompletedForUser(currentEmail, true)
+                                appPreferences.setLoggedOutForUser(currentEmail, false)
                                 authViewModel.completeOnboarding()
                             }
                         )

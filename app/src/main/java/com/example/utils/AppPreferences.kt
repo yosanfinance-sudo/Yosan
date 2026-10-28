@@ -30,8 +30,7 @@ class AppPreferences(private val context: Context) {
     fun isOnboardingCompletedForUser(userEmail: String?): Boolean {
         if (userEmail.isNullOrBlank()) return isOnboardingCompleted
         val userKey = com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
-        return prefs.getBoolean("${KEY_ONBOARDING_COMPLETED}_$userKey", false) ||
-               (userEmail.equals(lastUserEmail, ignoreCase = true) && isOnboardingCompleted)
+        return prefs.getBoolean("${KEY_ONBOARDING_COMPLETED}_$userKey", false)
     }
 
     fun setOnboardingCompletedForUser(userEmail: String?, completed: Boolean) {
@@ -62,6 +61,26 @@ class AppPreferences(private val context: Context) {
     var isBiometricEnabled: Boolean
         get() = prefs.getBoolean(KEY_BIOMETRIC_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_BIOMETRIC_ENABLED, value).apply()
+
+    fun isBiometricEnabledForUser(userEmail: String?): Boolean {
+        if (userEmail.isNullOrBlank()) return isBiometricEnabled
+        val userKey = com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+        return if (prefs.contains("${KEY_BIOMETRIC_ENABLED}_$userKey")) {
+            prefs.getBoolean("${KEY_BIOMETRIC_ENABLED}_$userKey", false)
+        } else {
+            isBiometricEnabled
+        }
+    }
+
+    fun setBiometricEnabledForUser(userEmail: String?, enabled: Boolean) {
+        val editor = prefs.edit()
+        if (!userEmail.isNullOrBlank()) {
+            val userKey = com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+            editor.putBoolean("${KEY_BIOMETRIC_ENABLED}_$userKey", enabled)
+        }
+        editor.putBoolean(KEY_BIOMETRIC_ENABLED, enabled)
+        editor.apply()
+    }
 
     var appLockTimeoutSeconds: Int
         get() = prefs.getInt(KEY_APP_LOCK_TIMEOUT_SECONDS, 30)
@@ -129,6 +148,26 @@ class AppPreferences(private val context: Context) {
     var isLoggedOut: Boolean
         get() = prefs.getBoolean(KEY_IS_LOGGED_OUT, false)
         set(value) = prefs.edit().putBoolean(KEY_IS_LOGGED_OUT, value).apply()
+
+    fun isLoggedOutForUser(userEmail: String?): Boolean {
+        if (userEmail.isNullOrBlank()) return isLoggedOut
+        val userKey = com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+        return if (prefs.contains("${KEY_IS_LOGGED_OUT}_$userKey")) {
+            prefs.getBoolean("${KEY_IS_LOGGED_OUT}_$userKey", false)
+        } else {
+            isLoggedOut
+        }
+    }
+
+    fun setLoggedOutForUser(userEmail: String?, loggedOut: Boolean) {
+        val editor = prefs.edit()
+        if (!userEmail.isNullOrBlank()) {
+            val userKey = com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+            editor.putBoolean("${KEY_IS_LOGGED_OUT}_$userKey", loggedOut)
+        }
+        editor.putBoolean(KEY_IS_LOGGED_OUT, loggedOut)
+        editor.apply()
+    }
 
     var isOfflineMode: Boolean
         get() = prefs.getBoolean(KEY_IS_OFFLINE_MODE, false)

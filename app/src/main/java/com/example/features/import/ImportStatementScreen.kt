@@ -134,10 +134,10 @@ fun ImportStatementScreen(
                 if (matched != null) {
                     selectedAccountId = matched.id
                 } else if (selectedAccountId == null || accounts.none { it.id == selectedAccountId }) {
-                    selectedAccountId = accounts.first().id
+                    selectedAccountId = accounts.firstOrNull()?.id
                 }
             } else if (selectedAccountId == null || accounts.none { it.id == selectedAccountId }) {
-                selectedAccountId = accounts.first().id
+                selectedAccountId = accounts.firstOrNull()?.id
             }
         }
     }
@@ -714,7 +714,7 @@ fun ImportStatementScreen(
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             accounts.forEach { acc ->
-                                                val isSelected = (selectedAccountId ?: accounts.first().id) == acc.id
+                                                val isSelected = (selectedAccountId ?: accounts.firstOrNull()?.id) == acc.id
                                                 FilterChip(
                                                     selected = isSelected,
                                                     onClick = { selectedAccountId = acc.id },

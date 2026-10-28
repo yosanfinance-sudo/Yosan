@@ -253,4 +253,66 @@ class MultiUserSessionTest {
         assertEquals("token_bob", tokenManager.getAccessToken())
         assertEquals(tokenB, tokenManager.getSessionToken())
     }
+
+    @Test
+    fun testRemoveActiveUserDoesNotCauseRecursionCrash() {
+        val userA = "alice@example.com"
+        val tokenA = SecureTokenManager.generateSessionToken(userA)
+
+        tokenManager.saveTokens("token_alice", "refresh_alice", email = userA)
+        tokenManager.saveUserSession(1L, "sub_a", userA, "Alice", "", true, tokenA, accessToken = "token_alice", refreshToken = "refresh_alice")
+
+        assertEquals(userA, tokenManager.getUserEmail())
+
+        // Removing the active user must clean active preferences without infinite recursion or StackOverflow
+        tokenManager.removeUserSession(userA)
+
+        assertNull("Active user email must be cleared after removing active user", tokenManager.getUserEmail())
+        assertNull("Active access token must be cleared", tokenManager.getAccessToken())
+        assertNull("Active session token must be cleared", tokenManager.getSessionToken())
+        assertTrue("Saved sessions must be empty", tokenManager.getAllUserSessions().isEmpty())
+    }
+
+    @Test
+    fun testDriveTokenRetrievalWithDifferentDriveEmail() {
+        val userA = "alice@workplace.com"
+        val driveEmail = "alice.personal@gmail.com"
+        val tokenA = SecureTokenManager.generateSessionToken(userA)
+
+        tokenManager.saveTokens("token_alice", "refresh_alice", email = userA)
+        tokenManager.saveUserSession(1L, "sub_a", userA, "Alice", "", true, tokenA, accessToken = "token_alice", refreshToken = "refresh_alice")
+        tokenManager.saveDriveTokens(
+            accessToken = "drive_tok_123",
+            refreshToken = "drive_ref_456",
+            expiresInSeconds = 3600L,
+            driveEmail = driveEmail
+        )
+
+        assertEquals("drive_tok_123", tokenManager.getDriveAccessToken())
+        assertEquals("drive_ref_456", tokenManager.getDriveRefreshToken())
+        assertEquals(driveEmail, tokenManager.getDriveEmail())
+        assertTrue(tokenManager.isDriveConnected())
+    }
+
+    @Test
+    fun testPerUserLogoutAndOnboardingPreferences() {
+        val userA = "alice@example.com"
+        val userB = "bob@example.com"
+
+        // Step 1: User A completes onboarding and logs in
+        appPreferences.setOnboardingCompletedForUser(userA, true)
+        appPreferences.setLoggedOutForUser(userA, false)
+
+        // Step 2: User B is added as a new user
+        appPreferences.setOnboardingCompletedForUser(userB, false)
+        appPreferences.setLoggedOutForUser(userB, false)
+
+        assertTrue("User A onboarding must be completed", appPreferences.isOnboardingCompletedForUser(userA))
+        assertFalse("User B onboarding must NOT be marked completed before bank setup", appPreferences.isOnboardingCompletedForUser(userB))
+
+        // Step 3: User A logs out
+        appPreferences.setLoggedOutForUser(userA, true)
+        assertTrue("User A must be logged out", appPreferences.isLoggedOutForUser(userA))
+        assertFalse("User B must NOT be affected by User A's logout", appPreferences.isLoggedOutForUser(userB))
+    }
 }

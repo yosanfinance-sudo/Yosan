@@ -112,18 +112,24 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val app = getApplication<Application>()
                 val prefs = com.example.utils.AppPreferences(app)
 
-                // 1. Explicit logout check - strictly respected, prevents zombie logins
-                if (prefs.isLoggedOut) {
-                    _user.value = null
-                    _authState.value = AuthState.Unauthenticated
-                    return@launch
-                }
-
-                // 2. Check stored session credentials
+                // 1. Check stored session credentials
                 val storedAccessToken = tokenManager.getAccessToken()
                 val storedRefreshToken = tokenManager.getRefreshToken()
                 val userEmail = tokenManager.getUserEmail()
                 val googleSub = tokenManager.getGoogleSub()
+
+                // Explicit logout check - check per-user status if logged in, or fallback to global
+                val isExplicitlyLoggedOut = if (!userEmail.isNullOrBlank()) {
+                    prefs.isLoggedOutForUser(userEmail)
+                } else {
+                    prefs.isLoggedOut
+                }
+
+                if (isExplicitlyLoggedOut) {
+                    _user.value = null
+                    _authState.value = AuthState.Unauthenticated
+                    return@launch
+                }
 
                 // If user is not logged in via credentials, check if offline mode was completed
                 if (storedAccessToken.isNullOrBlank() || userEmail.isNullOrBlank() || googleSub.isNullOrBlank()) {
@@ -1383,9 +1389,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             val logoutEmail = email.takeIf { !it.isNullOrBlank() } ?: _user.value?.email ?: tokenManager.getUserEmail()
             if (!logoutEmail.isNullOrBlank()) {
                 AppDatabase.closeDatabaseForUser(app, logoutEmail)
+                prefs.setLoggedOutForUser(logoutEmail, true)
+            } else {
+                prefs.isLoggedOut = true
             }
             AppDatabase.setActiveUserKey("guest")
-            prefs.isLoggedOut = true
             prefs.isOfflineMode = false
 
             // Clear active session slot while keeping remembered user session for account switching
@@ -1522,6 +1530,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 userDb.userProfileDao().insertOrUpdateProfile(activeProfile)
 
                 prefs.isLoggedOut = false
+                prefs.setLoggedOutForUser(cleanEmail, false)
                 prefs.isOfflineMode = false
                 prefs.lastUserEmail = cleanEmail
                 prefs.lastUserName = resolvedName
@@ -1579,6 +1588,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val currentEmail = tokenManager.getUserEmail()?.trim()?.lowercase()
                 if (!currentEmail.isNullOrBlank()) {
                     AppDatabase.closeDatabaseForUser(app, currentEmail)
+                    prefs.setLoggedOutForUser(currentEmail, true)
                 }
 
                 // Preserve existing user sessions, but clear active session slot
@@ -1750,20 +1760,48 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     database.clearAllTables()
                 } catch (_: Exception) {}
             }
-            tokenManager.clearCredentials()
-            tokenManager.clearDriveTokens()
             val prefs = com.example.utils.AppPreferences(app)
-            prefs.removeRememberedAccount(currentEmail)
-            prefs.clearAll()
-            AppDatabase.closeDatabaseForUser(app, currentEmail.ifBlank { "guest" })
-            AppDatabase.setActiveUserKey("guest")
-            _user.value = null
-            _isNewUser.value = true
-            _isEmailVerified.value = false
-            _authState.value = AuthState.Unauthenticated
+            if (currentEmail.isNotBlank()) {
+                tokenManager.removeUserSession(currentEmail)
+                prefs.removeRememberedAccount(currentEmail)
+                prefs.setLoggedOutForUser(currentEmail, true)
+                prefs.setOnboardingCompletedForUser(currentEmail, false)
+            } else {
+                tokenManager.clearActiveSession(preserveSavedSession = true)
+                prefs.removeRememberedAccount("")
+                prefs.isLoggedOut = true
+            }
+            tokenManager.clearDriveTokens()
+
+            val targetPartition = currentEmail.ifBlank { "guest" }
+            AppDatabase.closeDatabaseForUser(app, targetPartition)
+            withContext(Dispatchers.IO) {
+                try {
+                    val dbFile = AppDatabase.getDatabaseFileName(app, targetPartition)
+                    app.deleteDatabase(dbFile)
+                } catch (_: Exception) {}
+            }
+
             refreshRememberedAccounts()
-            _isLoading.value = false
-            onComplete?.invoke()
+            val remainingAccounts = prefs.getRememberedAccounts()
+            if (remainingAccounts.isNotEmpty()) {
+                val nextAccount = remainingAccounts.first()
+                switchAccount(nextAccount.email) {
+                    _isLoading.value = false
+                    onComplete?.invoke()
+                }
+                return@launch
+            } else {
+                AppDatabase.setActiveUserKey("guest")
+                prefs.isLoggedOut = true
+                prefs.isOfflineMode = false
+                _user.value = null
+                _isNewUser.value = true
+                _isEmailVerified.value = false
+                _authState.value = AuthState.Unauthenticated
+                _isLoading.value = false
+                onComplete?.invoke()
+            }
         }
     }
 
