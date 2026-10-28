@@ -283,6 +283,7 @@ class UpdateManager(
                     }
                 )
                 _uiState.value = UpdateUiState.UpdateAvailable(finalInfo)
+                showSystemUpdateNotification(finalInfo)
                 Result.success(finalInfo)
             } else {
                 _uiState.value = UpdateUiState.UpToDate(BuildConfig.VERSION_NAME)
@@ -453,6 +454,58 @@ class UpdateManager(
         } catch (e: Exception) {
             _uiState.value = UpdateUiState.Error("Failed to launch installer: ${e.localizedMessage}")
         }
+    }
+
+    fun showSystemUpdateNotification(info: UpdateInfo) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val permission = androidx.core.content.ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                )
+                if (permission != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    return
+                }
+            }
+
+            val channelId = "yosan_updates_channel"
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    channelId,
+                    "Yosan App Updates",
+                    android.app.NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Notifications when a newer app update is available."
+                    enableVibration(true)
+                }
+                notificationManager.createNotificationChannel(channel)
+            }
+
+            val intent = Intent(context, com.example.MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("EXTRA_OPEN_UPDATE_DIALOG", true)
+            }
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                context,
+                1001,
+                intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) android.app.PendingIntent.FLAG_IMMUTABLE else 0)
+            )
+
+            val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("You got an update!")
+                .setContentText("Yosan ${info.versionName} is available. Tap to review and install.")
+                .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText("Yosan ${info.versionName} is now available!\n${info.releaseTitle}\nTap to update now."))
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .build()
+
+            notificationManager.notify(1001, notification)
+        } catch (_: Exception) {}
     }
 
     companion object {

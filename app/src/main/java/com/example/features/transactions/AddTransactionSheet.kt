@@ -763,6 +763,43 @@ fun AddTransactionSheet(
                 }
             }
 
+            // Account / Hand Cash Selector for all non-transfer transactions
+            if (accounts.isNotEmpty() && selectedTab != AddTab.TRANSFER) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = if (selectedTab == AddTab.INCOME || selectedTab == AddTab.BORROW_MONEY) "Deposit Account" else "Payment Method / Account",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(accounts) { acc ->
+                        val isSelected = selectedAccountId == acc.id
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                HapticHelper.vibrateTick(context)
+                                selectedAccountId = acc.id
+                            },
+                            label = { Text(acc.accountName.ifBlank { acc.bankName }) },
+                            leadingIcon = {
+                                val icon = when (acc.accountType) {
+                                    com.example.data.local.entity.AccountType.CASH -> Icons.Default.Payments
+                                    com.example.data.local.entity.AccountType.WALLET -> Icons.Default.AccountBalanceWallet
+                                    com.example.data.local.entity.AccountType.CREDIT_CARD -> Icons.Default.CreditCard
+                                    else -> Icons.Default.AccountBalance
+                                }
+                                Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+                            }
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(12.dp))
 
             // Notes

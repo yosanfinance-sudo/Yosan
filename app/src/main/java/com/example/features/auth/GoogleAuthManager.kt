@@ -128,23 +128,39 @@ class GoogleAuthManager(private val context: Context) {
                 )
             }
         } catch (e: GetCredentialCancellationException) {
-            val msg = e.message ?: ""
-            Log.d(TAG, "GetCredentialCancellationException: $msg")
-            if (msg.contains("Cannot find a matching credential", ignoreCase = true) || msg.contains("[16]")) {
-                GoogleAuthResult.FallbackAccountPicker("No matching credential in Credential Manager. Opening device account chooser.")
-            } else {
-                GoogleAuthResult.Cancelled
-            }
+            Log.d(TAG, "GetCredentialCancellationException: user dismissed or cancelled Google Sign-In")
+            GoogleAuthResult.Cancelled
         } catch (e: NoCredentialException) {
             Log.w(TAG, "No Google accounts available on device: ${e.message}")
             GoogleAuthResult.FallbackAccountPicker("No Google accounts found in Credential Manager. Opening device account chooser.")
         } catch (e: GetCredentialException) {
             Log.e(TAG, "GetCredentialException [type=${e.type}]: ${e.message}", e)
-            val rawMsg = e.message ?: "Google Sign-In failed"
-            GoogleAuthResult.FallbackAccountPicker(rawMsg)
+            val typeStr = e.type ?: ""
+            if (typeStr.contains("USER_CANCELED", ignoreCase = true) || typeStr.contains("CANCELLED", ignoreCase = true)) {
+                GoogleAuthResult.Cancelled
+            } else if (isDeveloperConsoleError(e)) {
+                val currentSha1 = getSigningCertificateSha1(targetContext)
+                Log.w(TAG, "Google Credential Manager developer error detected (code 28444 / DEVELOPER_ERROR)")
+                Log.w(TAG, "Package Name: ${targetContext.packageName}")
+                Log.w(TAG, "Signing SHA-1: $currentSha1")
+                Log.w(TAG, "Web Client ID: $webClientId")
+                Log.w(TAG, "To enable 1-tap Credential Manager, add this SHA-1 to Google Cloud Console (Credentials -> Android Client ID).")
+                Log.w(TAG, "Seamlessly falling back to native Account Chooser / Browser OAuth so user is not blocked.")
+                GoogleAuthResult.FallbackAccountPicker("Developer console SHA-1 setup required for 1-tap. Opening device account selector.")
+            } else {
+                val rawMsg = e.message ?: "Google Sign-In failed"
+                GoogleAuthResult.Error(rawMsg, e.type)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Unexpected auth error: ${e.message}", e)
-            GoogleAuthResult.FallbackAccountPicker(e.message ?: "An unexpected error occurred during Google Auth")
+            if (isDeveloperConsoleError(e)) {
+                val currentSha1 = getSigningCertificateSha1(targetContext)
+                Log.w(TAG, "Developer console error caught in general catch: ${e.message}")
+                Log.w(TAG, "Signing SHA-1: $currentSha1")
+                GoogleAuthResult.FallbackAccountPicker("Developer console SHA-1 setup required for 1-tap. Opening device account selector.")
+            } else {
+                GoogleAuthResult.Error(e.message ?: "An unexpected error occurred during Google Auth")
+            }
         }
     }
 
@@ -247,6 +263,48 @@ class GoogleAuthManager(private val context: Context) {
 
     companion object {
         const val DEFAULT_CLIENT_ID = "649210682299-k4cl29pr14o0pkblsodq208iajj2ivad.apps.googleusercontent.com"
+
+        fun getSigningCertificateSha1(ctx: Context): String {
+            return try {
+                val packageInfo = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    ctx.packageManager.getPackageInfo(
+                        ctx.packageName,
+                        android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    ctx.packageManager.getPackageInfo(
+                        ctx.packageName,
+                        android.content.pm.PackageManager.GET_SIGNATURES
+                    )
+                }
+                val signatures = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    packageInfo.signingInfo?.apkContentsSigners
+                } else {
+                    @Suppress("DEPRECATION")
+                    packageInfo.signatures
+                }
+                val cert = signatures?.firstOrNull()?.toByteArray() ?: return ""
+                val md = java.security.MessageDigest.getInstance("SHA-1")
+                val digest = md.digest(cert)
+                digest.joinToString(":") { "%02X".format(it) }
+            } catch (e: Exception) {
+                ""
+            }
+        }
+
+        fun isDeveloperConsoleError(e: Throwable): Boolean {
+            val msg = (e.message ?: "").lowercase()
+            val type = ((e as? GetCredentialException)?.type ?: "").lowercase()
+            return msg.contains("developer console") ||
+                   msg.contains("28444") ||
+                   msg.contains("developer_error") ||
+                   msg.contains("statuscode=developer_error") ||
+                   msg.contains("statuscode=10") ||
+                   msg.contains("code 10") ||
+                   type.contains("developer_error") ||
+                   type.contains("developer")
+        }
     }
 }
 

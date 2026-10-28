@@ -476,6 +476,50 @@ object LocalFinancialAiAnalyzer {
             """.trimIndent()
         }
 
+        // 9. Natural Language Transaction & Hand Cash Parser
+        val isLoggingIntent = msgLower.startsWith("add") || msgLower.startsWith("paid") ||
+                msgLower.startsWith("spent") || msgLower.startsWith("bought") ||
+                msgLower.contains("cash entry") || msgLower.contains("record")
+        val amountMatch = Regex("""(?:(?:rs\.?|inr|₹)\s*)?(\d+(?:\.\d{1,2})?)""", RegexOption.IGNORE_CASE).find(msgRaw)
+
+        if (isLoggingIntent && amountMatch != null) {
+            val parsedAmount = amountMatch.groupValues[1].toDoubleOrNull()
+            if (parsedAmount != null && parsedAmount > 0.0) {
+                val isCash = msgLower.contains("cash") || msgLower.contains("hand")
+                val availableCategories = viewModel?.categories?.value ?: emptyList()
+                val matchedCat = availableCategories.firstOrNull { cat ->
+                    msgLower.contains(cat.name.lowercase())
+                } ?: availableCategories.firstOrNull { it.type == com.example.data.local.entity.CategoryType.EXPENSE }
+
+                val targetAccount = if (isCash) {
+                    accounts.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
+                        ?: accounts.firstOrNull()
+                } else {
+                    accounts.firstOrNull { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                        ?: accounts.firstOrNull()
+                }
+
+                val accountLabel = targetAccount?.accountName ?: if (isCash) "Cash in Hand" else "Primary Bank"
+                val catLabel = matchedCat?.name ?: "Personal Expense"
+
+                return """
+                    ### 🤖 Natural Language Entry Parsed
+
+                    I detected a transaction entry request from your message:
+
+                    | Field | Value | Notes |
+                    | :--- | :--- | :--- |
+                    | **Type** | Expense | Outflow record |
+                    | **Amount** | ${formatCurrency(parsedAmount)} | Parsed amount |
+                    | **Category** | $catLabel | Categorized automatically |
+                    | **Account / Channel** | $accountLabel | ${if (isCash) "Hand cash payment" else "Account payment"} |
+                    | **Date** | Today | Current transaction date |
+
+                    ✨ **Quick Action:** Tap the **+** button on your Dashboard or Statement screen to confirm and log this ${if (isCash) "hand cash" else ""} transaction in one tap!
+                """.trimIndent()
+            }
+        }
+
         // 10. Default / Comprehensive Monthly Breakdown
         val summary = viewModel?.dashboardSummary?.value
         val totalIncome = summary?.totalIncome ?: allIncomes.sumOf { if (it.creditAmount > 0.0) it.creditAmount else it.amount }

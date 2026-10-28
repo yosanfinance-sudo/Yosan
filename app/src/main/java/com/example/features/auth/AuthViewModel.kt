@@ -231,7 +231,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     is GoogleAuthResult.FallbackAccountPicker -> {
                         Log.i(TAG, "Credential Manager unavailable, delegating to system picker: ${result.message}")
                         _isLoading.value = false
-                        onFallbackPicker?.invoke()
+                        _errorMessage.value = null
+                        if (onFallbackPicker != null) {
+                            onFallbackPicker.invoke()
+                        } else {
+                            launchGoogleOAuth2Flow(context)
+                        }
                         return@launch
                     }
                     is GoogleAuthResult.Success -> {
@@ -933,6 +938,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val response = api.getDriveStatus()
                 if (response.isSuccessful && response.body() != null) {
                     _driveStatus.value = response.body()
+                } else {
+                    _driveStatus.value = DriveStatusResponse(isConnected = false)
                 }
             } catch (_: Exception) {
                 if (tokenManager.isDriveConnected()) {
@@ -940,6 +947,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         isConnected = true,
                         driveEmail = tokenManager.getDriveEmail()
                     )
+                } else {
+                    _driveStatus.value = DriveStatusResponse(isConnected = false)
                 }
             }
         }
@@ -1400,6 +1409,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             tokenManager.clearActiveSession(preserveSavedSession = true)
             tokenManager.clearDriveTokens()
             driveService.disconnectDrive()
+            _driveStatus.value = DriveStatusResponse(isConnected = false)
             refreshDriveStatus()
             prefs.clearSession(preserveDeviceIdentity = true)
             _user.value = null
@@ -1434,6 +1444,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (isTargetOffline) {
                     tokenManager.clearActiveSession(preserveSavedSession = true)
+                    _driveStatus.value = DriveStatusResponse(isConnected = false)
                     AppDatabase.setActiveUserKey("guest")
 
                     val guestDb = AppDatabase.getDatabaseForUser(app, viewModelScope, "guest")
@@ -1457,11 +1468,13 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     guestDb.userProfileDao().insertOrUpdateProfile(activeProfile)
 
                     prefs.isLoggedOut = false
+                    prefs.setLoggedOutForUser("guest", false)
                     prefs.isOfflineMode = true
                     prefs.lastUserEmail = ""
                     prefs.lastUserName = resolvedName
                     prefs.lastBankName = primaryBank
                     prefs.isOnboardingCompleted = activeProfile.isOnboardingCompleted
+                    prefs.setOnboardingCompletedForUser("guest", activeProfile.isOnboardingCompleted)
 
                     val remembered = com.example.utils.RememberedAccount(
                         email = "",
@@ -1506,6 +1519,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 // 3. Set active database partition to target user
                 AppDatabase.setActiveUserKey(cleanEmail)
+                _driveStatus.value = DriveStatusResponse(isConnected = false)
 
                 // 4. Load target user's isolated profile
                 val userDb = AppDatabase.getDatabaseForUser(app, viewModelScope, cleanEmail)
@@ -1540,6 +1554,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     ?: targetAccounts.firstOrNull()?.bankName
                     ?: "Indian Bank"
                 prefs.lastBankName = primaryBank
+                prefs.isOnboardingCompleted = activeProfile.isOnboardingCompleted
+                prefs.setOnboardingCompletedForUser(cleanEmail, activeProfile.isOnboardingCompleted)
 
                 // Update remembered accounts registry
                 val remembered = com.example.utils.RememberedAccount(

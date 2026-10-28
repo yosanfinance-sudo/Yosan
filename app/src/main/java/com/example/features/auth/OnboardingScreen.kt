@@ -81,6 +81,11 @@ fun OnboardingScreen(
     var emailInput by remember { mutableStateOf(appPreferences.lastUserEmail) }
     val rememberedAccounts by authViewModel.rememberedAccounts.collectAsState()
     var accountToRemove by remember { mutableStateOf<com.example.utils.RememberedAccount?>(null) }
+    var showSwitchAccountDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        authViewModel.refreshRememberedAccounts()
+    }
 
     var showBackupFoundDialog by remember { mutableStateOf(false) }
     var foundBackupInfo by remember { mutableStateOf<LatestBackupResponse?>(null) }
@@ -110,8 +115,13 @@ fun OnboardingScreen(
                     userName = claims.name
                     emailInput = claims.email
                     financeViewModel.updateUserProfile(userName, currencySymbol)
-                    if (accounts.isNotEmpty()) {
+                    val isReturning = (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false ||
+                        appPreferences.isOnboardingCompletedForUser(claims.email) ||
+                        rememberedAccounts.any { it.email.equals(claims.email, ignoreCase = true) && it.bankName.isNotBlank() }
+                    if (isReturning) {
                         appPreferences.isLoggedOut = false
+                        appPreferences.setLoggedOutForUser(claims.email, false)
+                        appPreferences.setOnboardingCompletedForUser(claims.email, true)
                         appPreferences.isOnboardingCompleted = true
                         authViewModel.completeOnboarding()
                         onComplete()
@@ -504,110 +514,211 @@ fun OnboardingScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
 
-                                Spacer(modifier = Modifier.height(16.dp))
+                                Spacer(modifier = Modifier.height(24.dp))
 
+                                // Saved Accounts / Switch Account Section (Shown after logout or if device has remembered accounts)
                                 if (rememberedAccounts.isNotEmpty()) {
-                                    Text(
-                                        text = "Accounts on this device",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Column(
+                                    Card(
                                         modifier = Modifier.fillMaxWidth(),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        shape = RoundedCornerShape(20.dp),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                        ),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                                     ) {
-                                        rememberedAccounts.forEach { acc ->
-                                            Card(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clickable {
-                                                        HapticHelper.vibrateClick(context)
-                                                        authViewModel.switchAccount(acc.email) {
-                                                            if (appPreferences.isOnboardingCompleted || accounts.isNotEmpty()) {
-                                                                appPreferences.isLoggedOut = false
-                                                                appPreferences.isOnboardingCompleted = true
-                                                                authViewModel.completeOnboarding()
-                                                                onComplete()
-                                                            } else {
-                                                                userName = acc.name.ifBlank { "User" }
-                                                                emailInput = acc.email
-                                                                step = 2
-                                                            }
-                                                        }
-                                                    },
-                                                shape = RoundedCornerShape(14.dp),
-                                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(16.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(12.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Surface(
-                                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                                        shape = CircleShape,
-                                                        modifier = Modifier.size(40.dp)
-                                                    ) {
-                                                        Box(contentAlignment = Alignment.Center) {
-                                                            Text(
-                                                                text = acc.name.take(1).uppercase().ifBlank { "U" },
-                                                                style = MaterialTheme.typography.titleMedium,
-                                                                fontWeight = FontWeight.Bold,
-                                                                color = MaterialTheme.colorScheme.primary
-                                                            )
-                                                        }
-                                                    }
-                                                    Spacer(modifier = Modifier.width(12.dp))
-                                                    Column(modifier = Modifier.weight(1f)) {
-                                                        Text(
-                                                            text = acc.name.ifBlank { "User" },
-                                                            style = MaterialTheme.typography.titleSmall,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
-                                                        Text(
-                                                            text = acc.email.ifBlank { "Offline Profile" },
-                                                            style = MaterialTheme.typography.bodySmall,
-                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                            maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis
-                                                        )
-                                                        if (acc.bankName.isNotBlank()) {
-                                                            Text(
-                                                                text = "Bank: ${acc.bankName}",
-                                                                style = MaterialTheme.typography.labelSmall,
-                                                                color = MaterialTheme.colorScheme.primary
-                                                            )
-                                                        }
-                                                    }
-                                                    IconButton(
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.SwitchAccount,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text(
+                                                        text = "Saved Accounts",
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                }
+                                                if (rememberedAccounts.size > 1) {
+                                                    TextButton(
                                                         onClick = {
                                                             HapticHelper.vibrateClick(context)
-                                                            accountToRemove = acc
+                                                            showSwitchAccountDialog = true
                                                         },
-                                                        modifier = Modifier.size(32.dp)
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                                                     ) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Close,
-                                                            contentDescription = "Remove account",
-                                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                                            modifier = Modifier.size(16.dp)
+                                                        Text(
+                                                            text = "Switch Account",
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.primary
                                                         )
                                                     }
                                                 }
                                             }
+
+                                            Spacer(modifier = Modifier.height(10.dp))
+
+                                            val visibleAccounts = rememberedAccounts.take(2)
+                                            visibleAccounts.forEachIndexed { index, acc ->
+                                                if (index > 0) {
+                                                    Spacer(modifier = Modifier.height(8.dp))
+                                                }
+                                                val isTargetOffline = acc.email.isBlank() ||
+                                                    acc.email.equals("offline", ignoreCase = true) ||
+                                                    acc.email.equals("guest", ignoreCase = true)
+                                                val initialLetter = acc.name.take(1).uppercase().ifBlank {
+                                                    if (isTargetOffline) "O" else "U"
+                                                }
+                                                Surface(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(14.dp))
+                                                        .clickable {
+                                                            HapticHelper.vibrateClick(context)
+                                                            authViewModel.switchAccount(acc.email) {
+                                                                val userKey = if (isTargetOffline) "guest" else com.example.data.local.AppDatabase.sanitizeUserKey(acc.email)
+                                                                appPreferences.isLoggedOut = false
+                                                                appPreferences.setLoggedOutForUser(acc.email, false)
+                                                                val isConfigured = appPreferences.isOnboardingCompletedForUser(userKey) || acc.bankName.isNotBlank()
+                                                                if (isConfigured) {
+                                                                    appPreferences.setOnboardingCompletedForUser(userKey, true)
+                                                                    appPreferences.isOnboardingCompleted = true
+                                                                    authViewModel.completeOnboarding()
+                                                                    onComplete()
+                                                                } else {
+                                                                    step = 2
+                                                                }
+                                                            }
+                                                        },
+                                                    color = MaterialTheme.colorScheme.surface,
+                                                    shape = RoundedCornerShape(14.dp),
+                                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(12.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Surface(
+                                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                                            shape = CircleShape,
+                                                            modifier = Modifier.size(40.dp)
+                                                        ) {
+                                                            Box(contentAlignment = Alignment.Center) {
+                                                                Text(
+                                                                    text = initialLetter,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    style = MaterialTheme.typography.titleMedium,
+                                                                    color = MaterialTheme.colorScheme.primary
+                                                                )
+                                                            }
+                                                        }
+                                                        Spacer(modifier = Modifier.width(12.dp))
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Text(
+                                                                text = acc.name.ifBlank { if (isTargetOffline) "Offline Profile" else "User" },
+                                                                style = MaterialTheme.typography.titleSmall,
+                                                                fontWeight = FontWeight.Bold,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                            Text(
+                                                                text = if (isTargetOffline) "Offline Profile (Local Only)" else acc.email,
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                            if (acc.bankName.isNotBlank()) {
+                                                                Text(
+                                                                    text = "Bank: ${acc.bankName}",
+                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    color = MaterialTheme.colorScheme.primary,
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                            }
+                                                        }
+                                                        IconButton(
+                                                            onClick = {
+                                                                HapticHelper.vibrateClick(context)
+                                                                accountToRemove = acc
+                                                            },
+                                                            modifier = Modifier.size(32.dp)
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.Close,
+                                                                contentDescription = "Remove account",
+                                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                                modifier = Modifier.size(18.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            if (rememberedAccounts.size > 2) {
+                                                Spacer(modifier = Modifier.height(10.dp))
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        HapticHelper.vibrateClick(context)
+                                                        showSwitchAccountDialog = true
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    shape = RoundedCornerShape(12.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.SwitchAccount,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text(
+                                                        text = "View All Accounts (${rememberedAccounts.size})",
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
-                                    Spacer(modifier = Modifier.height(14.dp))
-                                    Text(
-                                        text = "Or add another account:",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    Spacer(modifier = Modifier.height(20.dp))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        HorizontalDivider(
+                                            modifier = Modifier.weight(1f),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                        )
+                                        Text(
+                                            text = "OR SIGN IN WITH NEW ACCOUNT",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 12.dp)
+                                        )
+                                        HorizontalDivider(
+                                            modifier = Modifier.weight(1f),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(20.dp))
                                 }
 
                                 // 1. Primary Action: Continue with Google
@@ -622,15 +733,24 @@ fun OnboardingScreen(
                                                 if (pickerIntent != null) {
                                                     try {
                                                         accountPickerLauncher.launch(pickerIntent)
-                                                    } catch (_: Exception) {}
+                                                    } catch (_: Exception) {
+                                                        googleAuthManager.launchOAuth2Browser(context)
+                                                    }
+                                                } else {
+                                                    googleAuthManager.launchOAuth2Browser(context)
                                                 }
                                             }
                                         ) { claims ->
                                             userName = claims.name.ifBlank { claims.email.substringBefore("@") }
                                             emailInput = claims.email
                                             financeViewModel.updateUserProfile(userName, currencySymbol)
-                                            if (accounts.isNotEmpty()) {
+                                            val isReturning = (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false ||
+                                                appPreferences.isOnboardingCompletedForUser(claims.email) ||
+                                                rememberedAccounts.any { it.email.equals(claims.email, ignoreCase = true) && it.bankName.isNotBlank() }
+                                            if (isReturning) {
                                                 appPreferences.isLoggedOut = false
+                                                appPreferences.setLoggedOutForUser(claims.email, false)
+                                                appPreferences.setOnboardingCompletedForUser(claims.email, true)
                                                 appPreferences.isOnboardingCompleted = true
                                                 authViewModel.completeOnboarding()
                                                 onComplete()
@@ -714,17 +834,26 @@ fun OnboardingScreen(
                                         HapticHelper.vibrateClick(context)
                                         isOfflineModeSelected = true
                                         authViewModel.setStoragePreference(com.example.features.sync.StorageMode.LOCAL_ONLY)
-                                        if (accounts.isNotEmpty()) {
-                                            appPreferences.isOfflineMode = true
-                                            appPreferences.isLoggedOut = false
-                                            appPreferences.isOnboardingCompleted = true
-                                            authViewModel.completeOnboarding()
-                                            onComplete()
-                                        } else {
-                                            if (userName.isBlank()) {
-                                                userName = "User"
+                                        val guestRemembered = rememberedAccounts.firstOrNull {
+                                            it.email.isBlank() || it.email.equals("offline", ignoreCase = true) || it.email.equals("guest", ignoreCase = true)
+                                        }
+                                        val isGuestConfigured = appPreferences.isOnboardingCompletedForUser("guest") ||
+                                            (guestRemembered != null && guestRemembered.bankName.isNotBlank())
+                                        if (isGuestConfigured) {
+                                            authViewModel.switchAccount("guest") {
+                                                appPreferences.isOfflineMode = true
+                                                appPreferences.isLoggedOut = false
+                                                appPreferences.setLoggedOutForUser("guest", false)
+                                                appPreferences.setOnboardingCompletedForUser("guest", true)
+                                                appPreferences.isOnboardingCompleted = true
+                                                authViewModel.completeOnboarding()
+                                                onComplete()
                                             }
-                                            financeViewModel.updateUserProfile(userName, currencySymbol)
+                                        } else {
+                                            com.example.data.local.AppDatabase.setActiveUserKey("guest")
+                                            if (userName.isBlank() || userName.equals("User", ignoreCase = true)) {
+                                                userName = ""
+                                            }
                                             step = 2
                                         }
                                     },
@@ -750,28 +879,71 @@ fun OnboardingScreen(
                                 }
 
                                 authError?.let { err ->
+                                    val isDevError = GoogleAuthManager.isDeveloperConsoleError(Exception(err))
                                     Spacer(modifier = Modifier.height(14.dp))
                                     Card(
                                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)),
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Info,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.error,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(10.dp))
-                                            Text(
-                                                text = err,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onErrorContainer
-                                            )
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Info,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.error,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Text(
+                                                    text = if (isDevError) "Google Cloud requires SHA-1 registration for 1-tap sign-in." else err,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                                )
+                                            }
+                                            if (isDevError) {
+                                                Spacer(modifier = Modifier.height(10.dp))
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Button(
+                                                        onClick = {
+                                                            val googleAuthManager = GoogleAuthManager(context)
+                                                            val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
+                                                            if (pickerIntent != null) {
+                                                                try {
+                                                                    accountPickerLauncher.launch(pickerIntent)
+                                                                } catch (_: Exception) {
+                                                                    googleAuthManager.launchOAuth2Browser(context)
+                                                                }
+                                                            } else {
+                                                                googleAuthManager.launchOAuth2Browser(context)
+                                                            }
+                                                        },
+                                                        modifier = Modifier.weight(1f),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                                    ) {
+                                                        Text("Select Account", style = MaterialTheme.typography.labelMedium)
+                                                    }
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            val currentSha1 = GoogleAuthManager.getSigningCertificateSha1(context)
+                                                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                                            val clip = android.content.ClipData.newPlainText("SHA-1", currentSha1)
+                                                            clipboard?.setPrimaryClip(clip)
+                                                            android.widget.Toast.makeText(context, "Copied SHA-1 to clipboard!", android.widget.Toast.LENGTH_SHORT).show()
+                                                        },
+                                                        modifier = Modifier.weight(1f),
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    ) {
+                                                        Text("Copy SHA-1", style = MaterialTheme.typography.labelMedium)
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -834,14 +1006,34 @@ fun OnboardingScreen(
                                 )
                                 Spacer(modifier = Modifier.height(14.dp))
 
+                                val isNameValid = userName.trim().length >= 2
+                                val isNameTouched = userName.isNotEmpty()
+
                                 OutlinedTextField(
                                     value = userName,
                                     onValueChange = { userName = it },
-                                    label = { Text("Display Name") },
-                                    placeholder = { Text("Enter your name") },
+                                    label = { Text("Display Name *") },
+                                    placeholder = { Text("Enter your full name") },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true,
-                                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                                    isError = isNameTouched && !isNameValid,
+                                    supportingText = {
+                                        if (isNameTouched && !isNameValid) {
+                                            Text(
+                                                text = "Name must be at least 2 characters",
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        } else {
+                                            Text(
+                                                text = "Required for personalizing your financial statements",
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    keyboardOptions = KeyboardOptions(
+                                        capitalization = KeyboardCapitalization.Words,
+                                        imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                                    ),
                                     shape = RoundedCornerShape(14.dp)
                                 )
 
@@ -1141,13 +1333,14 @@ fun OnboardingScreen(
                         }
 
                         val finalBank = selectedBankName.trim()
-                        val isNextEnabled = finalBank.isNotBlank()
+                        val isNameValid = userName.trim().length >= 2
+                        val isNextEnabled = finalBank.isNotBlank() && isNameValid
 
                         Button(
                             onClick = {
                                 HapticHelper.vibrateClick(context)
                                 val bank = finalBank.ifBlank { "Indian Bank" }
-                                val finalName = userName.trim().ifBlank { "User" }
+                                val finalName = userName.trim()
                                 coroutineScope.launch {
                                     val existingAcc = accounts.firstOrNull { it.bankName.equals(bank, ignoreCase = true) }
                                     if (existingAcc == null) {
@@ -1168,6 +1361,21 @@ fun OnboardingScreen(
                                         )
                                     } else {
                                         financeViewModel.updateAccount(existingAcc.copy(isDefault = true))
+                                    }
+                                    // Seed default Cash in Hand account if missing
+                                    val existingCash = accounts.firstOrNull { it.accountType == AccountType.CASH }
+                                    if (existingCash == null) {
+                                        financeViewModel.addAccount(
+                                            AccountEntity(
+                                                accountName = "Cash in Hand",
+                                                bankName = "Hand Cash",
+                                                accountNumberMasked = "",
+                                                accountType = AccountType.CASH,
+                                                openingBalance = 0.0,
+                                                currentBalance = 0.0,
+                                                isDefault = false
+                                            )
+                                        )
                                     }
                                     financeViewModel.completeOnboarding(
                                         themeMode = selectedThemeMode,
@@ -1221,6 +1429,139 @@ fun OnboardingScreen(
 
             }
         }
+    }
+
+    if (showSwitchAccountDialog) {
+        AlertDialog(
+            onDismissRequest = { showSwitchAccountDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.SwitchAccount,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Switch Account",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Select an account to log in. Each user's database, accounts, and preferences are kept completely isolated.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    rememberedAccounts.forEach { acc ->
+                        val isTargetOffline = acc.email.isBlank() ||
+                            acc.email.equals("offline", ignoreCase = true) ||
+                            acc.email.equals("guest", ignoreCase = true)
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    HapticHelper.vibrateClick(context)
+                                    showSwitchAccountDialog = false
+                                    authViewModel.switchAccount(acc.email) {
+                                        val userKey = if (isTargetOffline) "guest" else com.example.data.local.AppDatabase.sanitizeUserKey(acc.email)
+                                        appPreferences.isLoggedOut = false
+                                        appPreferences.setLoggedOutForUser(acc.email, false)
+                                        val isConfigured = appPreferences.isOnboardingCompletedForUser(userKey) || acc.bankName.isNotBlank()
+                                        if (isConfigured) {
+                                            appPreferences.setOnboardingCompletedForUser(userKey, true)
+                                            appPreferences.isOnboardingCompleted = true
+                                            authViewModel.completeOnboarding()
+                                            onComplete()
+                                        } else {
+                                            step = 2
+                                        }
+                                    }
+                                },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    shape = CircleShape,
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = acc.name.take(1).uppercase().ifBlank { if (isTargetOffline) "O" else "U" },
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = acc.name.ifBlank { if (isTargetOffline) "Offline Profile" else "User" },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = if (isTargetOffline) "Offline Profile" else acc.email,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (acc.bankName.isNotBlank()) {
+                                        Text(
+                                            text = "Bank: ${acc.bankName}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = {
+                                        HapticHelper.vibrateClick(context)
+                                        accountToRemove = acc
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove account",
+                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showSwitchAccountDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
     }
 
     if (accountToRemove != null) {

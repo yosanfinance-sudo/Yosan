@@ -2,6 +2,7 @@ package com.example.features.settings
 import com.example.features.auth.GoogleClaims
 
 import androidx.fragment.app.FragmentActivity
+import com.example.features.auth.findFragmentActivity
 import android.content.Intent
 import android.net.Uri
 import android.app.Activity
@@ -803,7 +804,7 @@ fun SettingsScreen(
             val biometricAuthManager = remember { BiometricAuthManager(context) }
             val isBioEnabled = userProfile?.isBiometricEnabled ?: appPrefs.isBiometricEnabled
             val currentTimeout by viewModel.appLockTimeoutSeconds.collectAsState()
-            val activity = context as? FragmentActivity
+            val activity = remember(context) { context.findFragmentActivity() }
 
             Card(
                 modifier = Modifier
@@ -1425,7 +1426,7 @@ fun SettingsScreen(
 
     if (showEnrollmentDialog) {
         val biometricAuthManager = remember { BiometricAuthManager(context) }
-        val activity = context as? FragmentActivity
+        val activity = remember(context) { context.findFragmentActivity() }
         AlertDialog(
             onDismissRequest = { showEnrollmentDialog = false },
             title = {
@@ -3319,8 +3320,12 @@ fun SettingsScreen(
                             }
                         }
                         val subjectText = "[Yosan Feedback - $feedbackCategory] $sub"
-                        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
-                            data = Uri.parse("mailto:yosanfinance@gmail.com")
+                        val mailtoUri = Uri.parse(
+                            "mailto:yosanfinance@gmail.com" +
+                                "?subject=" + Uri.encode(subjectText) +
+                                "&body=" + Uri.encode(body)
+                        )
+                        val emailIntent = Intent(Intent.ACTION_SENDTO, mailtoUri).apply {
                             putExtra(Intent.EXTRA_EMAIL, arrayOf("yosanfinance@gmail.com"))
                             putExtra(Intent.EXTRA_SUBJECT, subjectText)
                             putExtra(Intent.EXTRA_TEXT, body)
@@ -4408,6 +4413,39 @@ private fun DeveloperDetailsDialog(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+
+                val currentSha1 = remember { GoogleAuthManager.getSigningCertificateSha1(context) }
+                val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+                var shaCopied by remember { mutableStateOf(false) }
+
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text("Google Cloud Console Setup", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text("Android OAuth Signing SHA-1", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Package: yosan.finance\nSHA-1: ${currentSha1.ifBlank { "FC:45:DA:2D:AD:7C:D7:79:3C:21:AF:FB:0A:B8:CE:F9:D1:52:CF:CE" }}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                val toCopy = currentSha1.ifBlank { "FC:45:DA:2D:AD:7C:D7:79:3C:21:AF:FB:0A:B8:CE:F9:D1:52:CF:CE" }
+                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(toCopy))
+                                shaCopied = true
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (shaCopied) "SHA-1 Copied!" else "Copy SHA-1 Fingerprint")
+                        }
                     }
                 }
 

@@ -108,43 +108,42 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
+            // Request Notification Permission on Android 13+ (API 33+) for Update & Sync Alerts
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+                ) {}
+                LaunchedEffect(Unit) {
+                    if (androidx.core.content.ContextCompat.checkSelfPermission(
+                            this@MainActivity,
+                            android.Manifest.permission.POST_NOTIFICATIONS
+                        ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+            }
+
             val keyguardManager = remember { getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager }
+
+            var isAuthenticatingScreenLock by remember { mutableStateOf(false) }
+            var lastUnlockTimestamp by remember { mutableLongStateOf(0L) }
 
             val deviceCredentialLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
                 contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
             ) { result ->
+                isAuthenticatingScreenLock = false
                 if (result.resultCode == android.app.Activity.RESULT_OK) {
                     isAppLocked = false
                     lockErrorMessage = null
+                    lastUnlockTimestamp = System.currentTimeMillis()
+                    lastPauseTimestamp = 0L
                 } else {
-                    lockErrorMessage = "PIN/Pattern authentication failed or was cancelled."
+                    lockErrorMessage = "PIN/Pattern authentication was cancelled."
                 }
             }
 
-            // Dedicated prompt for Biometric (Fingerprint / Face)
-            val triggerBiometricUnlock = remember {
-                {
-                    lockErrorMessage = null
-                    biometricAuthManager.authenticateBiometric(
-                        activity = this@MainActivity,
-                        title = "Unlock Yosan",
-                        subtitle = "Verify your fingerprint or face to continue",
-                        onSuccess = {
-                            isAppLocked = false
-                            lockErrorMessage = null
-                        },
-                        onError = { errorCode, errString ->
-                            if (errorCode != androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED &&
-                                errorCode != androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
-                                lockErrorMessage = errString
-                            }
-                        },
-                        onFailed = {
-                            lockErrorMessage = "Biometric not recognized. Try again or use PIN."
-                        }
-                    )
-                }
-            }
+            var triggerBiometricUnlockAction: () -> Unit = {}
 
             // Dedicated prompt for Device Credential (PIN / Pattern / Password)
             val triggerPinUnlock = remember {
@@ -157,9 +156,10 @@ class MainActivity : FragmentActivity() {
                             "Enter your phone PIN, pattern, or password"
                         )
                         if (intent != null) {
+                            isAuthenticatingScreenLock = true
                             deviceCredentialLauncher.launch(intent)
                         } else {
-                            triggerBiometricUnlock()
+                            triggerBiometricUnlockAction()
                         }
                     } else {
                         lockErrorMessage = "No device PIN, pattern, or password is set on this phone."
@@ -167,9 +167,41 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
+            // Dedicated prompt for Biometric (Fingerprint / PIN)
+            val triggerBiometricUnlock = remember {
+                {
+                    lockErrorMessage = null
+                    biometricAuthManager.authenticate(
+                        activity = this@MainActivity,
+                        title = "Unlock Yosan",
+                        subtitle = "Verify your fingerprint or phone PIN",
+                        onSuccess = {
+                            isAppLocked = false
+                            lockErrorMessage = null
+                            lastUnlockTimestamp = System.currentTimeMillis()
+                            lastPauseTimestamp = 0L
+                        },
+                        onError = { errorCode, errString ->
+                            if (errorCode != androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED &&
+                                errorCode != androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                                lockErrorMessage = errString
+                            }
+                        },
+                        onUsePin = {
+                            triggerPinUnlock()
+                        },
+                        onFailed = {
+                            lockErrorMessage = "Biometric not recognized. Try again or use PIN."
+                        }
+                    )
+                }
+            }
+            triggerBiometricUnlockAction = triggerBiometricUnlock
+
             // Automatically challenge user with biometric prompt when app is in locked state
             LaunchedEffect(isAppLocked, isBiometricEnabled, isAuthenticated) {
                 if (isAppLocked && isBiometricEnabled && isAuthenticated) {
+                    kotlinx.coroutines.delay(150)
                     triggerBiometricUnlock()
                 }
             }
@@ -184,12 +216,15 @@ class MainActivity : FragmentActivity() {
                         }
                         Lifecycle.Event.ON_START -> {
                             if (isBiometricEnabled && isAuthenticated) {
-                                if (appPreferences.isExternalIntentActive) {
+                                val now = System.currentTimeMillis()
+                                if (isAuthenticatingScreenLock || (now - lastUnlockTimestamp) < 3000L) {
+                                    isAuthenticatingScreenLock = false
+                                } else if (appPreferences.isExternalIntentActive) {
                                     // User returned from an intentional file picker / share sheet
                                     appPreferences.isExternalIntentActive = false
                                 } else if (lastPauseTimestamp > 0L) {
                                     val timeoutMillis = appPreferences.appLockTimeoutSeconds * 1000L
-                                    val elapsed = System.currentTimeMillis() - lastPauseTimestamp
+                                    val elapsed = now - lastPauseTimestamp
                                     if (elapsed >= timeoutMillis) {
                                         isAppLocked = true
                                     }
