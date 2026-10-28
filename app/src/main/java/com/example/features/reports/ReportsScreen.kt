@@ -522,20 +522,43 @@ fun ReportsScreen(
                         Text(
                             text = "${selectedReportType.displayName} • $periodLabel",
                             style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
 
-                        if (pdfPreviewBitmaps.size > 1) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text(
-                                    text = "Page ${currentPageIndex + 1} of ${pdfPreviewBitmaps.size}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (privacyEnabled) {
+                                IconButton(
+                                    onClick = {
+                                        com.example.utils.HapticHelper.vibrateClick(context)
+                                        viewModel.toggleAmountReveal()
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isMasked) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (isMasked) "Unhide report" else "Hide report",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+
+                            if (pdfPreviewBitmaps.size > 1) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Page ${currentPageIndex + 1} of ${pdfPreviewBitmaps.size}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -620,12 +643,15 @@ fun ReportsScreen(
                                     border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
                                     modifier = Modifier
                                         .size(68.dp)
-                                        .clickable { viewModel.revealAmountsTemporarily() }
+                                        .clickable {
+                                            com.example.utils.HapticHelper.vibrateClick(context)
+                                            viewModel.revealAmountsTemporarily()
+                                        }
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
-                                            imageVector = Icons.Default.Lock,
-                                            contentDescription = "Report Blurred - Tap to reveal",
+                                            imageVector = Icons.Default.VisibilityOff,
+                                            contentDescription = "Report Hidden - Tap to unhide",
                                             tint = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.size(32.dp)
                                         )
