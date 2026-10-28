@@ -43,15 +43,15 @@ class BiometricAuthManager(private val context: Context) {
 
     private val biometricManager = BiometricManager.from(context)
 
-    // Primary authenticators: Strong biometric or device PIN/pattern
-    private val authenticators = Authenticators.BIOMETRIC_STRONG or Authenticators.DEVICE_CREDENTIAL
+    // Primary biometric authenticators: Strong biometric or Weak (covers optical under-display fingerprint sensors)
+    private val biometricAuthenticators = Authenticators.BIOMETRIC_STRONG or Authenticators.BIOMETRIC_WEAK
 
     fun checkCapability(): BiometricCapability {
-        val authResult = biometricManager.canAuthenticate(authenticators)
+        val authResult = biometricManager.canAuthenticate(biometricAuthenticators)
         return when (authResult) {
             BiometricManager.BIOMETRIC_SUCCESS -> BiometricCapability.READY
             BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> {
-                // If strong biometrics not enrolled, verify whether device lock (PIN/pattern) is configured
+                // If strong/weak biometrics not enrolled, verify whether device lock (PIN/pattern) is configured
                 val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
                 if (km?.isDeviceSecure == true) {
                     BiometricCapability.READY
@@ -86,7 +86,7 @@ class BiometricAuthManager(private val context: Context) {
     }
 
     fun hasEnrolledBiometrics(): Boolean {
-        return biometricManager.canAuthenticate(Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+        return biometricManager.canAuthenticate(biometricAuthenticators) == BiometricManager.BIOMETRIC_SUCCESS
     }
 
     fun authenticate(
@@ -122,17 +122,16 @@ class BiometricAuthManager(private val context: Context) {
 
         val prompt = BiometricPrompt(activity, executor, promptCallback)
 
-        // Standard Android Jetpack combination: BIOMETRIC_STRONG or DEVICE_CREDENTIAL
-        // Enables under-display fingerprint sensor natively alongside the "Use PIN / Pattern" button
         try {
             val promptInfo = BiometricPrompt.PromptInfo.Builder()
                 .setTitle(title)
                 .setSubtitle(subtitle)
-                .setAllowedAuthenticators(authenticators)
+                .setAllowedAuthenticators(biometricAuthenticators)
+                .setNegativeButtonText(if (onUsePin != null) "Use PIN / Password" else "Cancel")
                 .build()
             prompt.authenticate(promptInfo)
         } catch (e: Exception) {
-            // Fallback for OEMs / older Android versions requiring explicit negative button
+            // Fallback for OEMs / older Android versions requiring explicit BIOMETRIC_STRONG
             try {
                 val fallbackPromptInfo = BiometricPrompt.PromptInfo.Builder()
                     .setTitle(title)
@@ -148,26 +147,59 @@ class BiometricAuthManager(private val context: Context) {
     }
 
     /**
-     * Backward-compatible alias for authenticate() that passes through title, subtitle, and pin handlers.
+     * Dedicated biometric-only prompt (Fingerprint / Face) matching the proven working method.
+     * Uses Strong + Weak authenticators with a standard "Cancel" negative button.
      */
     fun authenticateBiometric(
         activity: FragmentActivity,
         title: String = "Unlock Yosan",
-        subtitle: String = "Verify your fingerprint or phone PIN",
+        subtitle: String = "Verify your fingerprint or face to continue",
         onSuccess: () -> Unit,
         onError: (errorCode: Int, errorMessage: String) -> Unit,
-        onUsePin: (() -> Unit)? = null,
         onFailed: () -> Unit = {}
     ) {
-        authenticate(
-            activity = activity,
-            title = title,
-            subtitle = subtitle,
-            onSuccess = onSuccess,
-            onError = onError,
-            onUsePin = onUsePin,
-            onFailed = onFailed
-        )
+        val executor = ContextCompat.getMainExecutor(activity)
+        val promptCallback = object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                super.onAuthenticationSucceeded(result)
+                onSuccess()
+            }
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                super.onAuthenticationError(errorCode, errString)
+                onError(errorCode, errString.toString())
+            }
+
+            override fun onAuthenticationFailed() {
+                super.onAuthenticationFailed()
+                onFailed()
+            }
+        }
+
+        val prompt = BiometricPrompt(activity, executor, promptCallback)
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(title)
+            .setSubtitle(subtitle)
+            .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG or Authenticators.BIOMETRIC_WEAK)
+            .setNegativeButtonText("Cancel")
+            .build()
+
+        try {
+            prompt.authenticate(promptInfo)
+        } catch (e: Exception) {
+            try {
+                val fallbackPromptInfo = BiometricPrompt.PromptInfo.Builder()
+                    .setTitle(title)
+                    .setSubtitle(subtitle)
+                    .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG)
+                    .setNegativeButtonText("Cancel")
+                    .build()
+                prompt.authenticate(fallbackPromptInfo)
+            } catch (ex: Exception) {
+                onError(BiometricPrompt.ERROR_UNABLE_TO_PROCESS, ex.localizedMessage ?: "Unable to start biometric prompt")
+            }
+        }
     }
 
     fun openEnrollmentSettings(activity: Activity) {
@@ -176,7 +208,7 @@ class BiometricAuthManager(private val context: Context) {
                 val enrollIntent = Intent(Settings.ACTION_BIOMETRIC_ENROLL).apply {
                     putExtra(
                         Settings.EXTRA_BIOMETRIC_AUTHENTICATORS_ALLOWED,
-                        authenticators
+                        biometricAuthenticators
                     )
                 }
                 if (enrollIntent.resolveActivity(activity.packageManager) != null) {

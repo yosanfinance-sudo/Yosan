@@ -320,6 +320,25 @@ fun TransactionItemCard(
                                 )
                             }
                         }
+                        val isCashTx = transaction.source.equals("CASH", ignoreCase = true) ||
+                                transaction.categoryName.contains("cash", ignoreCase = true) ||
+                                transaction.description.contains("cash", ignoreCase = true) ||
+                                transaction.description.contains("atm", ignoreCase = true)
+                        if (isCashTx) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Surface(
+                                color = IncomeGreen.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = "Cash",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = IncomeGreen,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = DateUtils.formatForDisplay(transaction.transactionDate),

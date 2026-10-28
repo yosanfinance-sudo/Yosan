@@ -12,9 +12,18 @@ import java.util.zip.ZipInputStream
 
 enum class SupportedBank(val displayName: String) {
     INDIAN_BANK("Indian Bank"),
-    STATE_BANK("State Bank"),
+    STATE_BANK("State Bank of India"),
+    HDFC_BANK("HDFC Bank"),
+    ICICI_BANK("ICICI Bank"),
+    AXIS_BANK("Axis Bank"),
+    KOTAK_BANK("Kotak Mahindra Bank"),
     YES_BANK("YES Bank"),
     INDUSIND_BANK("IndusInd Bank"),
+    CANARA_BANK("Canara Bank"),
+    BANK_OF_BARODA("Bank of Baroda"),
+    UNION_BANK("Union Bank of India"),
+    PNB("Punjab National Bank"),
+    FEDERAL_BANK("Federal Bank"),
     UNKNOWN("Generic / Supported Bank")
 }
 
@@ -490,6 +499,18 @@ object StatementImportService {
                     lowerContent.contains("sbin0") || lowerName.contains("sbi") || lowerName.contains("state_bank") -> {
                 SupportedBank.STATE_BANK
             }
+            lowerContent.contains("hdfc") || lowerContent.contains("hdfc0") || lowerName.contains("hdfc") -> {
+                SupportedBank.HDFC_BANK
+            }
+            lowerContent.contains("icici") || lowerContent.contains("icic0") || lowerName.contains("icici") -> {
+                SupportedBank.ICICI_BANK
+            }
+            lowerContent.contains("axis bank") || lowerContent.contains("utib0") || lowerName.contains("axis") -> {
+                SupportedBank.AXIS_BANK
+            }
+            lowerContent.contains("kotak") || lowerContent.contains("kmbl0") || lowerName.contains("kotak") -> {
+                SupportedBank.KOTAK_BANK
+            }
             lowerContent.contains("yes bank") || lowerContent.contains("yes touch") ||
                     lowerContent.contains("yesbank") || lowerContent.contains("yes first") ||
                     lowerContent.contains("smart salary") || lowerContent.contains("cin - l65190mh2003plc143249") ||
@@ -499,6 +520,21 @@ object StatementImportService {
             lowerContent.contains("indusind") || lowerContent.contains("indb0") ||
                     lowerName.contains("indusind") -> {
                 SupportedBank.INDUSIND_BANK
+            }
+            lowerContent.contains("canara") || lowerContent.contains("cnrb0") || lowerName.contains("canara") -> {
+                SupportedBank.CANARA_BANK
+            }
+            lowerContent.contains("bank of baroda") || lowerContent.contains("bob") || lowerContent.contains("barb0") || lowerName.contains("baroda") -> {
+                SupportedBank.BANK_OF_BARODA
+            }
+            lowerContent.contains("union bank") || lowerContent.contains("ubin0") || lowerName.contains("union") -> {
+                SupportedBank.UNION_BANK
+            }
+            lowerContent.contains("punjab national") || lowerContent.contains("pnb") || lowerContent.contains("punb0") || lowerName.contains("pnb") -> {
+                SupportedBank.PNB
+            }
+            lowerContent.contains("federal bank") || lowerContent.contains("fdrl0") || lowerName.contains("federal") -> {
+                SupportedBank.FEDERAL_BANK
             }
             else -> SupportedBank.UNKNOWN
         }
@@ -805,6 +841,13 @@ object StatementImportService {
             finalizedRows
         }
 
+        if (auditedRows.isEmpty()) {
+            val fallback = parseFallbackUnstructured(content, rules, existingTransactions, fileName)
+            if (fallback.validRows.isNotEmpty()) {
+                return fallback
+            }
+        }
+
         return ImportPreviewResult(
             totalRows = auditedRows.size,
             validRows = auditedRows,
@@ -813,6 +856,116 @@ object StatementImportService {
             fileName = fileName,
             detectedBank = detectedBank,
             auditReport = auditReport
+        )
+    }
+
+    fun parseFallbackUnstructured(
+        content: String,
+        rules: List<CategorizationRuleEntity> = emptyList(),
+        existingTransactions: List<TransactionEntity> = emptyList(),
+        fileName: String = "statement.csv"
+    ): ImportPreviewResult {
+        if (content.isBlank()) return ImportPreviewResult(0, emptyList(), 0, emptyList(), fileName)
+
+        val dateRegex = Regex("(\\d{1,2}[/-](?:[A-Za-z]{3,9}|\\d{1,2})[/-]\\d{2,4}|\\d{4}[/-]\\d{1,2}[/-]\\d{1,2})")
+        val amountRegex = Regex("([0-9]{1,3}(?:,[0-9]{3})*\\.[0-9]{2}|[0-9]+\\.[0-9]{2})")
+
+        val rawLines = content.lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !isHeaderLine(it) && !isIgnoredOrTotalLine(it) }
+
+        val parsedRows = mutableListOf<ParsedImportRow>()
+        var duplicates = 0
+
+        for (line in rawLines) {
+            val dateMatch = dateRegex.find(line) ?: continue
+            val rawDate = dateMatch.value
+            val normDate = normalizeDate(rawDate)
+            if (!isValidNormalizedDate(normDate)) continue
+
+            val amounts = amountRegex.findAll(line).map { it.value }.toList()
+            if (amounts.isEmpty()) continue
+
+            val hasCredit = line.contains("Cr", ignoreCase = true) || line.contains("Credit", ignoreCase = true) ||
+                    line.contains("Deposit", ignoreCase = true) || line.contains("Refund", ignoreCase = true) ||
+                    line.contains("Salary", ignoreCase = true) || line.contains("Received", ignoreCase = true)
+
+            val hasDebit = line.contains("Dr", ignoreCase = true) || line.contains("Debit", ignoreCase = true) ||
+                    line.contains("Withdrawal", ignoreCase = true) || line.contains("Paid", ignoreCase = true) ||
+                    line.contains("Transfer to", ignoreCase = true) || line.contains("POS", ignoreCase = true)
+
+            val (debit, credit, balance) = if (amounts.size >= 2) {
+                val bal = parseAmount(amounts.last())
+                val amt = parseAmount(amounts[amounts.size - 2])
+                if (hasCredit && !hasDebit) {
+                    Triple(0.0, amt, bal)
+                } else {
+                    Triple(amt, 0.0, bal)
+                }
+            } else {
+                val amt = parseAmount(amounts.first())
+                if (hasCredit && !hasDebit) {
+                    Triple(0.0, amt, null)
+                } else {
+                    Triple(amt, 0.0, null)
+                }
+            }
+
+            val finalAmount = if (debit > 0.0) debit else credit
+            if (finalAmount <= 0.0) continue
+
+            // Clean description by stripping the date and amounts out of the line
+            var desc = line
+            desc = desc.replace(rawDate, " ")
+            for (amtStr in amounts) {
+                desc = desc.replace(amtStr, " ")
+            }
+            desc = sanitizeText(desc)
+            if (desc.isBlank()) {
+                desc = "Bank Transaction"
+            }
+
+            val txType = if (credit > 0.0) TransactionType.INCOME else TransactionType.EXPENSE
+            val catResult = CategorizationEngine.categorize(desc, rules, txType == TransactionType.INCOME)
+            val finalCategory = if (!catResult.categoryName.equals("Uncategorized", ignoreCase = true)) {
+                catResult.categoryName
+            } else {
+                "General"
+            }
+
+            val isDup = existingTransactions.any {
+                it.transactionDate == normDate &&
+                        it.description.equals(desc, ignoreCase = true) &&
+                        Math.abs(it.amount - finalAmount) < 0.01
+            }
+            if (isDup) duplicates++
+
+            parsedRows.add(
+                ParsedImportRow(
+                    rawLine = line,
+                    date = normDate,
+                    description = desc,
+                    debitAmount = debit,
+                    creditAmount = credit,
+                    amount = finalAmount,
+                    balance = balance,
+                    referenceNumber = "",
+                    suggestedCategory = finalCategory,
+                    suggestedCategoryId = catResult.categoryId,
+                    suggestedType = txType,
+                    confidence = 0.85f,
+                    isDuplicate = isDup
+                )
+            )
+        }
+
+        return ImportPreviewResult(
+            totalRows = parsedRows.size,
+            validRows = parsedRows,
+            duplicateCount = duplicates,
+            detectedColumns = listOf("Date", "Description", "Debit", "Credit", "Balance"),
+            fileName = "$fileName (Smart Fallback)",
+            detectedBank = SupportedBank.UNKNOWN
         )
     }
 

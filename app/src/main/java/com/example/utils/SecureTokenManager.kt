@@ -202,6 +202,18 @@ class SecureTokenManager(context: Context) {
         if (expiresAtMs > 0L) {
             editor.putLong(KEY_EXPIRES_AT, expiresAtMs)
         }
+        if (!currentDriveAccess.isNullOrBlank()) {
+            editor.putString(KEY_DRIVE_ACCESS_TOKEN, currentDriveAccess)
+        }
+        if (!currentDriveRefresh.isNullOrBlank()) {
+            editor.putString(KEY_DRIVE_REFRESH_TOKEN, currentDriveRefresh)
+        }
+        if (currentDriveExpiresAt > 0L) {
+            editor.putLong(KEY_DRIVE_TOKEN_EXPIRES_AT, currentDriveExpiresAt)
+        }
+        if (!currentDriveEmail.isNullOrBlank()) {
+            editor.putString(KEY_DRIVE_EMAIL, currentDriveEmail)
+        }
         editor.apply()
     }
 

@@ -107,7 +107,15 @@ class StatementImportCoordinator(
                 val localPreview = StatementImportService.parseStatementBytes(context, bytes, resolvedFileName, currentRules, existingTxs)
                 var preview: ImportPreviewResult? = if (localPreview.validRows.isNotEmpty()) localPreview else null
 
-                // 2. Fallback to AI-assisted parsing with 5s timeout if local parser found no rows and text is available
+                // 2. On-device smart fallback parser if standard parsing yielded no rows
+                if (preview == null && rawText.isNotBlank()) {
+                    val fallbackPreview = StatementImportService.parseFallbackUnstructured(rawText, currentRules, existingTxs, resolvedFileName)
+                    if (fallbackPreview.validRows.isNotEmpty()) {
+                        preview = fallbackPreview
+                    }
+                }
+
+                // 3. Fallback to AI-assisted parsing if local and fallback parser both found no rows
                 if (preview == null && rawText.isNotBlank()) {
                     try {
                         withTimeoutOrNull(5000L) {
@@ -205,7 +213,15 @@ class StatementImportCoordinator(
                 val localPreview = StatementImportService.parseStatementText(rawText, currentRules, existingTxs, resolvedFileName)
                 var preview: ImportPreviewResult? = if (localPreview.validRows.isNotEmpty()) localPreview else null
 
-                // 2. Fallback to AI-assisted parsing if local parser found no rows
+                // 2. On-device smart fallback parser
+                if (preview == null && rawText.isNotBlank()) {
+                    val fallbackPreview = StatementImportService.parseFallbackUnstructured(rawText, currentRules, existingTxs, resolvedFileName)
+                    if (fallbackPreview.validRows.isNotEmpty()) {
+                        preview = fallbackPreview
+                    }
+                }
+
+                // 3. Fallback to AI-assisted parsing if local parser found no rows
                 if (preview == null && rawText.isNotBlank()) {
                     try {
                         withTimeoutOrNull(5000L) {

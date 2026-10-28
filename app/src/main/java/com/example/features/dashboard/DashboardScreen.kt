@@ -65,16 +65,12 @@ fun DashboardScreen(
     val appPreferences = remember { com.example.utils.AppPreferences(context) }
     val updateManager = remember { UpdateManager(context) }
     val updateState by updateManager.uiState.collectAsState()
-    var showUpdateDialog by remember { mutableStateOf(false) }
+    val openFromNotification = (context as? android.app.Activity)?.intent?.getBooleanExtra("EXTRA_OPEN_UPDATE_DIALOG", false) == true
+    var showUpdateDialog by remember { mutableStateOf(openFromNotification) }
 
-    LaunchedEffect(Unit) {
-        if (appPreferences.isAutoCheckUpdatesEnabled) {
-            updateManager.checkForUpdates()
-        }
-    }
-
-    LaunchedEffect(updateState) {
-        if (updateState is UpdateUiState.UpdateAvailable) {
+    LaunchedEffect(openFromNotification) {
+        if (openFromNotification) {
+            (context as? android.app.Activity)?.intent?.removeExtra("EXTRA_OPEN_UPDATE_DIALOG")
             showUpdateDialog = true
         }
     }
@@ -262,6 +258,156 @@ fun DashboardScreen(
             cardsConfig.forEach { cardItem ->
                 if (cardItem.isEnabled) {
                     when (cardItem.type) {
+                        // Hand Cash Card
+                        DashboardCardType.HAND_CASH -> {
+                            item {
+                                val accounts by viewModel.accounts.collectAsState()
+                                val cashAccount = remember(accounts) {
+                                    accounts.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
+                                }
+                                val cashTxs = remember(allTransactions, cashAccount) {
+                                    allTransactions.filter { tx -> viewModel.isCashTransaction(tx) }
+                                }
+                                val cashInflow = remember(cashTxs, cashAccount) {
+                                    cashTxs.filter { tx ->
+                                        val isAtmOrCashWdl = tx.description.contains("atm", ignoreCase = true) ||
+                                                tx.description.contains("cash wdl", ignoreCase = true) ||
+                                                tx.description.contains("cash with", ignoreCase = true)
+                                        if (isAtmOrCashWdl && tx.accountId != cashAccount?.id) {
+                                            true
+                                        } else {
+                                            tx.transactionType == TransactionType.INCOME || tx.creditAmount > 0
+                                        }
+                                    }.sumOf { if (it.creditAmount > 0.0) it.creditAmount else it.amount }
+                                }
+                                val cashOutflow = remember(cashTxs, cashAccount) {
+                                    cashTxs.filter { tx ->
+                                        val isAtmOrCashWdl = tx.description.contains("atm", ignoreCase = true) ||
+                                                tx.description.contains("cash wdl", ignoreCase = true) ||
+                                                tx.description.contains("cash with", ignoreCase = true)
+                                        if (isAtmOrCashWdl && tx.accountId != cashAccount?.id) {
+                                            false
+                                        } else {
+                                            tx.transactionType == TransactionType.EXPENSE || tx.debitAmount > 0
+                                        }
+                                    }.sumOf { if (it.debitAmount > 0.0) it.debitAmount else it.amount }
+                                }
+                                val cashBalance = (cashAccount?.openingBalance ?: 0.0) + cashInflow - cashOutflow
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .clickable {
+                                            com.example.utils.HapticHelper.vibrateClick(context)
+                                            viewModel.setAccountFilter(cashAccount?.id ?: -999L)
+                                            onNavigateToTransactions()
+                                        },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = if (LocalFloatingEffectEnabled.current) 3.dp else 0.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Surface(
+                                                    color = IncomeGreen.copy(alpha = 0.12f),
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    modifier = Modifier.size(40.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Payments,
+                                                            contentDescription = "Hand Cash",
+                                                            tint = IncomeGreen,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Column {
+                                                    Text(
+                                                        text = "Cash in Hand",
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "${cashTxs.size} cash records",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                                contentDescription = "View Cash Statement",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(14.dp))
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    text = "In Hand Balance",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                PrivacyAmountText(
+                                                    amount = cashBalance,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (cashBalance >= 0) IncomeGreen else ExpenseRed,
+                                                    isRevealed = isRevealed,
+                                                    isPrivacyEnabled = privacyEnabled,
+                                                    onTap = { viewModel.revealAmountsTemporarily() }
+                                                )
+                                            }
+                                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text(text = "Received", style = MaterialTheme.typography.labelSmall, color = IncomeGreen)
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    PrivacyAmountText(
+                                                        amount = cashInflow,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = IncomeGreen,
+                                                        isRevealed = isRevealed,
+                                                        isPrivacyEnabled = privacyEnabled,
+                                                        onTap = { viewModel.revealAmountsTemporarily() }
+                                                    )
+                                                }
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text(text = "Spent", style = MaterialTheme.typography.labelSmall, color = ExpenseRed)
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    PrivacyAmountText(
+                                                        amount = cashOutflow,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = ExpenseRed,
+                                                        isRevealed = isRevealed,
+                                                        isPrivacyEnabled = privacyEnabled,
+                                                        onTap = { viewModel.revealAmountsTemporarily() }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         // 1. Personal Expense Card
                         DashboardCardType.PERSONAL_EXPENSE -> {
                             item {

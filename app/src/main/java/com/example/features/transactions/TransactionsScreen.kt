@@ -49,6 +49,7 @@ fun TransactionsScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedType by viewModel.selectedTypeFilter.collectAsState()
     val selectedCategory by viewModel.selectedCategoryFilter.collectAsState()
+    val selectedAccount by viewModel.selectedAccountFilter.collectAsState()
     val selectedMonth by viewModel.selectedMonthFilter.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val accounts by viewModel.accounts.collectAsState()
@@ -597,12 +598,27 @@ fun TransactionsScreen(
             }
             item {
                 FilterChip(
-                    selected = selectedType == null && selectedCategory == null,
+                    selected = selectedType == null && selectedCategory == null && selectedAccount == null,
                     onClick = {
                         HapticHelper.vibrateTick(context)
                         viewModel.clearFilters()
                     },
                     label = { Text("All") }
+                )
+            }
+            item {
+                val cashAccount = accounts.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
+                val isCashSelected = selectedAccount != null && ((cashAccount != null && selectedAccount == cashAccount.id) || selectedAccount == -999L)
+                FilterChip(
+                    selected = isCashSelected,
+                    onClick = {
+                        HapticHelper.vibrateTick(context)
+                        if (isCashSelected) viewModel.setAccountFilter(null) else viewModel.setAccountFilter(cashAccount?.id ?: -999L)
+                    },
+                    label = { Text("Hand Cash") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
                 )
             }
             item {

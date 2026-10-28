@@ -308,7 +308,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                                 val tokenRes = driveAuth.fetchAccessTokenForEmail(email)
                                 if (tokenRes is DriveAuthTokenResult.Success) {
                                     tokenManager.saveDriveTokens(tokenRes.token, driveEmail = email)
-                                    val restoreRes = driveService.restoreLatestFromDrive(database)
+                                    val restoreRes = driveService.restoreLatestFromDrive(database, email)
                                     if (restoreRes is DriveOperationResult.Success) {
                                         Log.i(TAG, "Cross-device auto-restored Google Drive data on login for $email")
                                         activeAccounts = database.accountDao().getAllAccountsList()
@@ -1038,7 +1038,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 // 1. Try direct Drive download if Drive token is active
                 if (driveService.isConnected() && !tokenManager.getDriveAccessToken().isNullOrBlank()) {
-                    val driveRes = driveService.restoreLatestFromDrive(database)
+                    val driveRes = driveService.restoreLatestFromDrive(database, tokenManager.getUserEmail())
                     when (driveRes) {
                         is DriveOperationResult.Success -> {
                             onResult?.invoke(true, driveRes.message)
@@ -1099,7 +1099,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     else -> null
                 }
                 if (!driveToken.isNullOrBlank()) {
-                    val json = driveService.getLatestBackupContent(driveToken)
+                    val json = driveService.getLatestBackupContent(driveToken, email)
                     if (!json.isNullOrBlank()) {
                         val jsonObj = org.json.JSONObject(json)
                         val accountsCount = jsonObj.optJSONArray("accounts")?.length() ?: 0
@@ -1407,8 +1407,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
             // Clear active session slot while keeping remembered user session for account switching
             tokenManager.clearActiveSession(preserveSavedSession = true)
-            tokenManager.clearDriveTokens()
-            driveService.disconnectDrive()
             _driveStatus.value = DriveStatusResponse(isConnected = false)
             refreshDriveStatus()
             prefs.clearSession(preserveDeviceIdentity = true)

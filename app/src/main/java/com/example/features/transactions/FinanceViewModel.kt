@@ -109,6 +109,26 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         .onEach { _isDataLoaded.value = true }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val accList = database.accountDao().getAllAccountsList()
+                if (accList.none { it.accountType == com.example.data.local.entity.AccountType.CASH }) {
+                    val cashAccount = com.example.data.local.entity.AccountEntity(
+                        accountName = "Cash in Hand",
+                        bankName = "Hand Cash",
+                        accountNumberMasked = "CASH-001",
+                        accountType = com.example.data.local.entity.AccountType.CASH,
+                        openingBalance = 0.0,
+                        currentBalance = 0.0,
+                        isDefault = false
+                    )
+                    database.accountDao().insertAccount(cashAccount)
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
     // UI Message
     private val _uiMessage = MutableStateFlow<String?>(null)
     val uiMessage: StateFlow<String?> = _uiMessage.asStateFlow()
@@ -489,6 +509,18 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val _selectedMonthFilter = MutableStateFlow<String?>(null)
     val selectedMonthFilter: StateFlow<String?> = _selectedMonthFilter.asStateFlow()
 
+    fun isCashTransaction(tx: TransactionEntity): Boolean {
+        val cashAcc = accounts.value.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
+        if (cashAcc != null && tx.accountId == cashAcc.id) return true
+        if (tx.source.equals("CASH", ignoreCase = true)) return true
+        if (tx.categoryName.contains("cash", ignoreCase = true)) return true
+        val desc = tx.description.lowercase()
+        val notes = tx.notes.lowercase()
+        return desc.contains("cash") || desc.contains("atm wdl") || desc.contains("atm-wdl") ||
+               desc.contains("atm cash") || desc.contains("hand cash") ||
+               notes.contains("cash") || notes.contains("hand cash")
+    }
+
     val filteredTransactions: StateFlow<List<TransactionEntity>> = combine(
         allTransactions,
         searchQuery,
@@ -498,6 +530,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     ) { txs, query, typeFilter, catFilter, accFilter ->
         FilterParams(txs, query, typeFilter, catFilter, accFilter)
     }.combine(selectedMonthFilter) { params, monthFilter ->
+        val cashAcc = accounts.value.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
+        val isFilteringCash = params.accFilter != null && (params.accFilter == -999L || (cashAcc != null && params.accFilter == cashAcc.id))
         params.txs.filter { tx ->
             val matchesQuery = params.query.isBlank() ||
                     tx.description.contains(params.query, ignoreCase = true) ||
@@ -506,7 +540,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     (tx.advanceId != null && tx.advanceId.contains(params.query, ignoreCase = true))
             val matchesType = params.typeFilter == null || tx.transactionType == params.typeFilter
             val matchesCat = params.catFilter == null || tx.categoryName.equals(params.catFilter, ignoreCase = true)
-            val matchesAcc = params.accFilter == null || tx.accountId == params.accFilter
+            val matchesAcc = if (isFilteringCash) {
+                isCashTransaction(tx)
+            } else {
+                params.accFilter == null || tx.accountId == params.accFilter
+            }
             val matchesMonth = monthFilter == null || tx.transactionDate.startsWith(monthFilter)
             matchesQuery && matchesType && matchesCat && matchesAcc && matchesMonth
         }

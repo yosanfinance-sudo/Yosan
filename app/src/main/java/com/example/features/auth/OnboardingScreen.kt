@@ -551,21 +551,19 @@ fun OnboardingScreen(
                                                         color = MaterialTheme.colorScheme.onSurface
                                                     )
                                                 }
-                                                if (rememberedAccounts.size > 1) {
-                                                    TextButton(
-                                                        onClick = {
-                                                            HapticHelper.vibrateClick(context)
-                                                            showSwitchAccountDialog = true
-                                                        },
-                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = "Switch Account",
-                                                            style = MaterialTheme.typography.labelMedium,
-                                                            fontWeight = FontWeight.Bold,
-                                                            color = MaterialTheme.colorScheme.primary
-                                                        )
-                                                    }
+                                                TextButton(
+                                                    onClick = {
+                                                        HapticHelper.vibrateClick(context)
+                                                        showSwitchAccountDialog = true
+                                                    },
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Switch Account",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
                                                 }
                                             }
 
@@ -1552,6 +1550,20 @@ fun OnboardingScreen(
                                 }
                             }
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedButton(
+                        onClick = {
+                            HapticHelper.vibrateClick(context)
+                            showSwitchAccountDialog = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Sign In with Another / New Account")
                     }
                 }
             },

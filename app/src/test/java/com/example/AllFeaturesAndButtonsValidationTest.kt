@@ -168,7 +168,7 @@ class AllFeaturesAndButtonsValidationTest {
 
         // Test dashboard customizable cards
         val cards = DashboardCardType.values()
-        assertEquals(9, cards.size)
+        assertEquals(10, cards.size)
         cards.forEach { card ->
             assertTrue(card.title.isNotBlank())
             assertTrue(card.id.isNotBlank())

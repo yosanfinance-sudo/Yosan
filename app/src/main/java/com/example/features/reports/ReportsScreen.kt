@@ -530,22 +530,7 @@ fun ReportsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            if (privacyEnabled) {
-                                IconButton(
-                                    onClick = {
-                                        com.example.utils.HapticHelper.vibrateClick(context)
-                                        viewModel.toggleAmountReveal()
-                                    },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (isMasked) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                        contentDescription = if (isMasked) "Unhide report" else "Hide report",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
+
 
                             if (pdfPreviewBitmaps.size > 1) {
                                 Surface(

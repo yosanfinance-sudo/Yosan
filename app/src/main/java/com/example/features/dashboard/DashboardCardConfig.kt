@@ -19,7 +19,8 @@ enum class DashboardCardType(
     ROTATIONAL("ROTATIONAL", "Rotational / Transfers", "Inter-account self transfers and rotational cash flow", Icons.Default.SyncAlt),
     MONTHLY_BREAKDOWN("MONTHLY", "Monthly Breakdown", "Month-by-month income and expense trends", Icons.Default.TableChart),
     CATEGORY_WISE("CATEGORY", "Spending by Category", "Donut chart with category spending and percentages", Icons.Default.PieChart),
-    INCOME_CATEGORY("INCOME_CAT", "Income by Category", "Donut chart with income sources and breakdown", Icons.Default.TrendingUp)
+    INCOME_CATEGORY("INCOME_CAT", "Income by Category", "Donut chart with income sources and breakdown", Icons.Default.TrendingUp),
+    HAND_CASH("HAND_CASH", "Cash in Hand", "Physical hand cash ledger and wallet spends", Icons.Default.Payments)
 }
 
 data class DashboardCardItem(
@@ -30,6 +31,7 @@ data class DashboardCardItem(
 object DashboardCardConfigManager {
     val DEFAULT_CONFIG = listOf(
         DashboardCardItem(DashboardCardType.INCOME_CATEGORY, true),
+        DashboardCardItem(DashboardCardType.HAND_CASH, true),
         DashboardCardItem(DashboardCardType.CATEGORY_WISE, true),
         DashboardCardItem(DashboardCardType.PERSONAL_EXPENSE, true),
         DashboardCardItem(DashboardCardType.OFFICIAL_EXPENSE, true),
