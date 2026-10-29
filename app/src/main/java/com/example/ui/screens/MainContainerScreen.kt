@@ -421,7 +421,11 @@ fun MainContainerScreen(
                                 onNavigateToLending = { currentSubScreen = SubScreen.LENDING },
                                 onNavigateToExcelSync = { currentSubScreen = SubScreen.EXCEL_SYNC },
                                 onOpenWalkthrough = { showUserWalkthroughDialog = true },
-                                onOpenIntroNote = { showIntroNoteDialog = true }
+                                onOpenIntroNote = { showIntroNoteDialog = true },
+                                onAccountSwitched = {
+                                    currentTab = MainTab.DASHBOARD
+                                    currentSubScreen = SubScreen.NONE
+                                }
                             )
 
                             MainTab.REPORTS -> ReportsScreen(viewModel = viewModel)

@@ -43,8 +43,15 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     private val authRepository: com.example.features.auth.data.AuthRepository
         get() = com.example.features.auth.data.AuthRepository(database)
     private val driveService = GoogleDriveService(application, tokenManager)
+    private var _syncManager: SyncManager? = null
     val syncManager: SyncManager
-        get() = SyncManager(getApplication(), database, tokenManager)
+        get() {
+            val sm = _syncManager
+            if (sm != null) return sm
+            val newSm = SyncManager(getApplication(), database, tokenManager)
+            _syncManager = newSm
+            return newSm
+        }
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
@@ -1430,6 +1437,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             _isLoading.value = true
+            _syncManager = null
+            var completed = false
             try {
                 val app = getApplication<Application>()
                 val prefs = com.example.utils.AppPreferences(app)
@@ -1491,6 +1500,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     refreshDriveStatus()
                     syncManager.loadInitialStatus()
 
+                    completed = true
                     onComplete?.invoke()
                     return@launch
                 }
@@ -1575,12 +1585,16 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 syncManager.loadInitialStatus()
                 refreshRememberedAccounts()
 
+                completed = true
                 onComplete?.invoke()
             } catch (e: Exception) {
                 Log.e(TAG, "switchAccount error: ${e.message}", e)
                 _errorMessage.value = "Failed to switch account: ${e.localizedMessage ?: e.message}"
             } finally {
                 _isLoading.value = false
+                if (!completed) {
+                    onComplete?.invoke()
+                }
             }
         }
     }

@@ -76,7 +76,7 @@ class AppPreferences(private val context: Context) {
         return if (prefs.contains("${KEY_BIOMETRIC_ENABLED}_$userKey")) {
             prefs.getBoolean("${KEY_BIOMETRIC_ENABLED}_$userKey", false)
         } else {
-            isBiometricEnabled
+            false
         }
     }
 
@@ -95,6 +95,31 @@ class AppPreferences(private val context: Context) {
     var appLockTimeoutSeconds: Int
         get() = prefs.getInt(KEY_APP_LOCK_TIMEOUT_SECONDS, 30)
         set(value) = prefs.edit().putInt(KEY_APP_LOCK_TIMEOUT_SECONDS, value).apply()
+
+    fun getAppLockTimeoutForUser(userEmail: String?): Int {
+        val userKey = if (userEmail.isNullOrBlank() || userEmail.equals("guest", ignoreCase = true) || userEmail.equals("offline", ignoreCase = true)) {
+            "guest"
+        } else {
+            com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+        }
+        return if (prefs.contains("${KEY_APP_LOCK_TIMEOUT_SECONDS}_$userKey")) {
+            prefs.getInt("${KEY_APP_LOCK_TIMEOUT_SECONDS}_$userKey", 30)
+        } else {
+            appLockTimeoutSeconds
+        }
+    }
+
+    fun setAppLockTimeoutForUser(userEmail: String?, seconds: Int) {
+        val userKey = if (userEmail.isNullOrBlank() || userEmail.equals("guest", ignoreCase = true) || userEmail.equals("offline", ignoreCase = true)) {
+            "guest"
+        } else {
+            com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+        }
+        prefs.edit()
+            .putInt("${KEY_APP_LOCK_TIMEOUT_SECONDS}_$userKey", seconds)
+            .putInt(KEY_APP_LOCK_TIMEOUT_SECONDS, seconds)
+            .apply()
+    }
 
     var isExternalIntentActive: Boolean
         get() = prefs.getBoolean(KEY_EXTERNAL_INTENT_ACTIVE, false)

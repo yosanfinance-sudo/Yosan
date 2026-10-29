@@ -94,9 +94,11 @@ fun SettingsScreen(
     onNavigateToExcelSync: () -> Unit = {},
     onOpenWalkthrough: () -> Unit = {},
     onOpenIntroNote: () -> Unit = {},
+    onAccountSwitched: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
 
+    var switchingAccountName by remember { mutableStateOf<String?>(null) }
     val userProfile by viewModel.userProfile.collectAsState()
     val accounts by viewModel.accounts.collectAsState()
     val allTransactions by viewModel.allTransactions.collectAsState()
@@ -792,7 +794,7 @@ fun SettingsScreen(
         item {
             val appPrefs = remember { AppPreferences(context) }
             val biometricAuthManager = remember { BiometricAuthManager(context) }
-            val isBioEnabled = userProfile?.isBiometricEnabled ?: appPrefs.isBiometricEnabled
+            val isBioEnabled = userProfile?.isBiometricEnabled ?: appPrefs.isBiometricEnabledForUser(userProfile?.email)
             val currentTimeout by viewModel.appLockTimeoutSeconds.collectAsState()
             val activity = remember(context) { context.findFragmentActivity() }
 
@@ -1630,10 +1632,21 @@ fun SettingsScreen(
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(enabled = !isCurrent) {
+                                .clickable(enabled = !isCurrent && switchingAccountName == null) {
                                     com.example.utils.HapticHelper.vibrateClick(context)
                                     showSwitchAccountDialog = false
-                                    authViewModel?.switchAccount(acc.email)
+                                    val targetName = acc.name.ifBlank { acc.email.ifBlank { "User" } }
+                                    switchingAccountName = targetName
+                                    statusNotificationMsg = null
+                                    authViewModel?.switchAccount(acc.email) {
+                                        switchingAccountName = null
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Switched to $targetName",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                        onAccountSwitched()
+                                    }
                                 },
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(
@@ -1740,6 +1753,50 @@ fun SettingsScreen(
                 }
             }
         )
+
+        if (switchingAccountName != null) {
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = {},
+                properties = androidx.compose.ui.window.DialogProperties(
+                    dismissOnBackPress = false,
+                    dismissOnClickOutside = false
+                )
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 6.dp,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(44.dp)
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Text(
+                            text = "Switching Account",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Loading profile for $switchingAccountName...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
 
         if (accountToRemoveInSettings != null) {
             val target = accountToRemoveInSettings!!

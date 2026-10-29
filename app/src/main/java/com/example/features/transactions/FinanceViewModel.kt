@@ -254,7 +254,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun setBiometricLock(enabled: Boolean) {
         viewModelScope.launch {
-            com.example.utils.AppPreferences(getApplication()).isBiometricEnabled = enabled
+            val email = userProfile.value?.email
+            com.example.utils.AppPreferences(getApplication()).setBiometricEnabledForUser(email, enabled)
             repository.updateBiometricPreference(enabled)
             showMessage(if (enabled) "App Lock enabled" else "App Lock disabled")
         }
@@ -263,7 +264,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun setAppLockTimeout(seconds: Int) {
         _appLockTimeoutSeconds.value = seconds
         viewModelScope.launch {
-            com.example.utils.AppPreferences(getApplication()).appLockTimeoutSeconds = seconds
+            val email = userProfile.value?.email
+            com.example.utils.AppPreferences(getApplication()).setAppLockTimeoutForUser(email, seconds)
             val label = when (seconds) {
                 0 -> "Immediately"
                 30 -> "After 30 seconds"

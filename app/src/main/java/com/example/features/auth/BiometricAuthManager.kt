@@ -202,6 +202,69 @@ class BiometricAuthManager(private val context: Context) {
         }
     }
 
+    /**
+     * Dedicated device credential-only prompt (PIN / Pattern / Password).
+     * On API 30+ (Android 11+), requests Authenticators.DEVICE_CREDENTIAL exclusively,
+     * so Android presents the user's PIN/Password keypad with the given title and subtitle,
+     * without activating the biometric/fingerprint sensor.
+     */
+    fun authenticatePin(
+        activity: FragmentActivity,
+        title: String = "Unlock Yosan",
+        subtitle: String = "Enter your phone PIN, pattern, or password",
+        onSuccess: () -> Unit,
+        onError: (errorCode: Int, errorMessage: String) -> Unit,
+        onFailed: () -> Unit = {},
+        fallbackLauncher: ((Intent) -> Unit)? = null
+    ) {
+        val executor = ContextCompat.getMainExecutor(activity)
+        val promptCallback = object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                super.onAuthenticationSucceeded(result)
+                onSuccess()
+            }
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                super.onAuthenticationError(errorCode, errString)
+                onError(errorCode, errString.toString())
+            }
+
+            override fun onAuthenticationFailed() {
+                super.onAuthenticationFailed()
+                onFailed()
+            }
+        }
+
+        val prompt = BiometricPrompt(activity, executor, promptCallback)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                    .setTitle(title)
+                    .setSubtitle(subtitle)
+                    .setAllowedAuthenticators(Authenticators.DEVICE_CREDENTIAL)
+                    .build()
+                prompt.authenticate(promptInfo)
+                return
+            } catch (e: Exception) {
+                android.util.Log.w("BiometricAuthManager", "DEVICE_CREDENTIAL BiometricPrompt failed: ${e.message}")
+            }
+        }
+
+        val km = activity.getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        @Suppress("DEPRECATION")
+        val intent = km?.createConfirmDeviceCredentialIntent(title, subtitle)
+        if (intent != null) {
+            if (fallbackLauncher != null) {
+                fallbackLauncher(intent)
+            } else {
+                activity.startActivity(intent)
+            }
+        } else {
+            onError(BiometricPrompt.ERROR_UNABLE_TO_PROCESS, "Device PIN or pattern is not configured.")
+        }
+    }
+
     fun openEnrollmentSettings(activity: Activity) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

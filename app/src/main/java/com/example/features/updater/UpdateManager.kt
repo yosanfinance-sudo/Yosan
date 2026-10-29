@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import androidx.core.content.FileProvider
 import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
@@ -89,8 +90,9 @@ class UpdateManager(
 
                             val title = releaseObj.optString("name", tag)
                             val notes = releaseObj.optString("body", "")
+                            val cleanTag = tag.removePrefix("v").removePrefix("V")
                             var apkUrl = ""
-                            var apkName = "Yosan-Update.apk"
+                            var apkName = "yosan-$cleanTag.apk"
                             var apkSize = 0L
 
                             val assets = releaseObj.optJSONArray("assets")
@@ -107,7 +109,7 @@ class UpdateManager(
                                 }
                             }
                             if (apkUrl.isBlank()) {
-                                apkUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tag/Yosan-Update.apk"
+                                apkUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tag/$apkName"
                             }
 
                             releasesList.add(
@@ -149,10 +151,11 @@ class UpdateManager(
                             val json = JSONObject(bodyStr)
                             val tag = json.optString("tag_name", "").trim()
                             if (tag.isNotBlank()) {
+                                val cleanTag = tag.removePrefix("v").removePrefix("V")
                                 val title = json.optString("name", tag)
                                 val notes = json.optString("body", "")
                                 var apkUrl = ""
-                                var apkName = "Yosan-Update.apk"
+                                var apkName = "yosan-$cleanTag.apk"
                                 var apkSize = 0L
 
                                 val assets = json.optJSONArray("assets")
@@ -169,7 +172,7 @@ class UpdateManager(
                                     }
                                 }
                                 if (apkUrl.isBlank()) {
-                                    apkUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tag/Yosan-Update.apk"
+                                    apkUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tag/$apkName"
                                 }
 
                                 candidateRelease = UpdateInfo(
@@ -211,12 +214,14 @@ class UpdateManager(
                             }
 
                             if (highestTag != null && highestTag.isNotBlank()) {
+                                val cleanTag = highestTag.removePrefix("v").removePrefix("V")
+                                val apkName = "yosan-$cleanTag.apk"
                                 candidateRelease = UpdateInfo(
                                     versionName = highestTag,
                                     releaseTitle = "Release $highestTag",
                                     releaseNotes = "New updates and stability improvements for $highestTag.",
-                                    downloadUrl = "https://github.com/$repoOwner/$repoName/releases/download/$highestTag/Yosan-Update.apk",
-                                    fileName = "Yosan-Update.apk",
+                                    downloadUrl = "https://github.com/$repoOwner/$repoName/releases/download/$highestTag/$apkName",
+                                    fileName = apkName,
                                     fileSize = 0L,
                                     isNewer = false
                                 )
@@ -248,12 +253,14 @@ class UpdateManager(
                         }
 
                         if (tag.isNotBlank()) {
+                            val cleanTag = tag.removePrefix("v").removePrefix("V")
+                            val apkName = "yosan-$cleanTag.apk"
                             candidateRelease = UpdateInfo(
                                 versionName = tag,
                                 releaseTitle = "Release $tag",
                                 releaseNotes = "New updates and stability improvements for $tag.",
-                                downloadUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tag/Yosan-Update.apk",
-                                fileName = "Yosan-Update.apk",
+                                downloadUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tag/$apkName",
+                                fileName = apkName,
                                 fileSize = 0L,
                                 isNewer = false
                             )
@@ -300,7 +307,7 @@ class UpdateManager(
         _uiState.value = UpdateUiState.Downloading(0f, 0L, updateInfo.fileSize)
         try {
             val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
-            val apkFile = File(updatesDir, "yosan-update.apk")
+            val apkFile = File(updatesDir, updateInfo.fileName.ifBlank { "yosan-update.apk" })
             if (apkFile.exists()) {
                 apkFile.delete()
             }
@@ -505,7 +512,9 @@ class UpdateManager(
                 .build()
 
             notificationManager.notify(1001, notification)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.e("UpdateManager", "showSystemUpdateNotification failed: ${e.message}", e)
+        }
     }
 
     companion object {

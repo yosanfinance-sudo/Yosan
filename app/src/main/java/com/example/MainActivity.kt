@@ -130,6 +130,7 @@ class MainActivity : FragmentActivity() {
             val keyguardManager = remember { getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager }
 
             var isAuthenticatingScreenLock by remember { mutableStateOf(false) }
+            var isPinUnlockPreferred by remember { mutableStateOf(false) }
             var lastUnlockTimestamp by remember { mutableLongStateOf(0L) }
 
             val deviceCredentialLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -139,6 +140,7 @@ class MainActivity : FragmentActivity() {
                 if (result.resultCode == android.app.Activity.RESULT_OK) {
                     isAppLocked = false
                     lockErrorMessage = null
+                    isPinUnlockPreferred = false
                     lastUnlockTimestamp = System.currentTimeMillis()
                     lastPauseTimestamp = 0L
                 } else {
@@ -158,6 +160,7 @@ class MainActivity : FragmentActivity() {
                         onSuccess = {
                             isAuthenticatingScreenLock = false
                             isAppLocked = false
+                            isPinUnlockPreferred = false
                             lockErrorMessage = null
                             lastUnlockTimestamp = System.currentTimeMillis()
                             lastPauseTimestamp = 0L
@@ -180,58 +183,92 @@ class MainActivity : FragmentActivity() {
             val triggerPinUnlock = remember {
                 {
                     lockErrorMessage = null
-                    if (keyguardManager.isDeviceSecure) {
-                        @Suppress("DEPRECATION")
-                        val intent = keyguardManager.createConfirmDeviceCredentialIntent(
-                            "Unlock Yosan",
-                            "Enter your phone PIN, pattern, or password"
-                        )
-                        if (intent != null) {
-                            isAuthenticatingScreenLock = true
+                    isPinUnlockPreferred = true
+                    isAuthenticatingScreenLock = true
+                    biometricAuthManager.authenticatePin(
+                        activity = this@MainActivity,
+                        title = "Unlock Yosan",
+                        subtitle = "Enter your phone PIN, pattern, or password",
+                        onSuccess = {
+                            isAuthenticatingScreenLock = false
+                            isAppLocked = false
+                            isPinUnlockPreferred = false
+                            lockErrorMessage = null
+                            lastUnlockTimestamp = System.currentTimeMillis()
+                            lastPauseTimestamp = 0L
+                        },
+                        onError = { errorCode, errString ->
+                            isAuthenticatingScreenLock = false
+                            if (errorCode != androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED &&
+                                errorCode != androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                                lockErrorMessage = errString
+                            }
+                        },
+                        onFailed = {
+                            lockErrorMessage = "PIN/Password incorrect. Try again."
+                        },
+                        fallbackLauncher = { intent ->
                             deviceCredentialLauncher.launch(intent)
-                        } else {
-                            triggerBiometricUnlock()
                         }
-                    } else {
-                        lockErrorMessage = "No device PIN, pattern, or password is set on this phone."
-                    }
+                    )
                 }
             }
 
-            // Automatically challenge user with biometric prompt when app is in locked state
-            LaunchedEffect(isAppLocked, isBiometricEnabled, isAuthenticated) {
-                if (isAppLocked && isBiometricEnabled && isAuthenticated && !isAuthenticatingScreenLock) {
-                    kotlinx.coroutines.delay(200)
+            // Automatically challenge user with biometric prompt when app is in locked state (unless PIN mode was selected)
+            LaunchedEffect(isAppLocked, isBiometricEnabled, isAuthenticated, isPinUnlockPreferred) {
+                if (isAppLocked && isBiometricEnabled && isAuthenticated && !isAuthenticatingScreenLock && !isPinUnlockPreferred) {
+                    kotlinx.coroutines.delay(100)
                     triggerBiometricUnlock()
                 }
             }
 
             // Background Auto-lock Watcher with grace period & external intent immunity
             val lifecycleOwner = LocalLifecycleOwner.current
-            DisposableEffect(lifecycleOwner, isBiometricEnabled, isAuthenticated) {
+            DisposableEffect(lifecycleOwner, isBiometricEnabled, isAuthenticated, currentEmail) {
                 val observer = LifecycleEventObserver { _, event ->
                     when (event) {
                         Lifecycle.Event.ON_STOP -> {
-                            if (!isAuthenticatingScreenLock) {
-                                lastPauseTimestamp = System.currentTimeMillis()
+                            if (!isAuthenticatingScreenLock && !appPreferences.isExternalIntentActive) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastUnlockTimestamp > 3000L) {
+                                    lastPauseTimestamp = now
+                                    val userTimeout = appPreferences.getAppLockTimeoutForUser(currentEmail)
+                                    if (userTimeout == 0 && isBiometricEnabled && isAuthenticated) {
+                                        isAppLocked = true
+                                        isPinUnlockPreferred = false
+                                    }
+                                }
                             }
                         }
                         Lifecycle.Event.ON_START -> {
                             if (isBiometricEnabled && isAuthenticated) {
                                 val now = System.currentTimeMillis()
-                                if (isAuthenticatingScreenLock) {
-                                    // Awaiting credential result; don't re-lock
-                                } else if ((now - lastUnlockTimestamp) < 5000L || lastPauseTimestamp == 0L) {
-                                    // 5-second post-unlock grace period
+                                if (now - lastUnlockTimestamp < 3000L) {
+                                    // User unlocked within grace window (e.g. system dialog dismiss cycle); do not re-lock
                                     lastPauseTimestamp = 0L
+                                } else if (isAuthenticatingScreenLock) {
+                                    // Awaiting credential result; don't re-lock
                                 } else if (appPreferences.isExternalIntentActive) {
                                     // User returned from an intentional file picker / share sheet
                                     appPreferences.isExternalIntentActive = false
-                                } else if (lastPauseTimestamp > 0L) {
-                                    val timeoutMillis = appPreferences.appLockTimeoutSeconds * 1000L
-                                    val elapsed = now - lastPauseTimestamp
-                                    if (elapsed >= timeoutMillis) {
-                                        isAppLocked = true
+                                    lastPauseTimestamp = 0L
+                                } else {
+                                    val userTimeout = appPreferences.getAppLockTimeoutForUser(currentEmail)
+                                    if (userTimeout == 0) {
+                                        // "Immediately" timeout: always lock if the app was stopped/backgrounded
+                                        if (lastPauseTimestamp > 0L) {
+                                            isAppLocked = true
+                                            isPinUnlockPreferred = false
+                                            lastPauseTimestamp = 0L
+                                        }
+                                    } else {
+                                        val timeoutMillis = userTimeout * 1000L
+                                        val elapsed = now - lastPauseTimestamp
+                                        if (lastPauseTimestamp > 0L && elapsed >= timeoutMillis) {
+                                            isAppLocked = true
+                                            isPinUnlockPreferred = false
+                                            lastPauseTimestamp = 0L
+                                        }
                                     }
                                 }
                             }
@@ -274,9 +311,14 @@ class MainActivity : FragmentActivity() {
                         GPayLockScreen(
                             userName = userProfile?.name ?: "User",
                             errorMessage = lockErrorMessage,
-                            onFingerprintClick = triggerBiometricUnlock,
+                            onFingerprintClick = {
+                                isPinUnlockPreferred = false
+                                triggerBiometricUnlock()
+                            },
                             onPinPatternClick = triggerPinUnlock,
-                            onExitApp = { finishAffinity() }
+                            onExitApp = { finishAffinity() },
+                            isPinMode = isPinUnlockPreferred,
+                            onTogglePinMode = { isPinUnlockPreferred = it }
                         )
                     }
                                         // Priority 2: Authenticated Main Container (with Bank Selection onboarding if not completed)
@@ -286,21 +328,25 @@ class MainActivity : FragmentActivity() {
                             userAccounts.isNotEmpty()
 
                         if (!isUserOnboardingDone) {
-                            OnboardingScreen(
-                                authViewModel = authViewModel,
-                                financeViewModel = financeViewModel,
-                                initialStep = 2,
-                                onComplete = {
-                                    appPreferences.setOnboardingCompletedForUser(currentEmail, true)
-                                    appPreferences.setLoggedOutForUser(currentEmail, false)
-                                    authViewModel.completeOnboarding()
-                                }
-                            )
+                            key(activeUserKey) {
+                                OnboardingScreen(
+                                    authViewModel = authViewModel,
+                                    financeViewModel = financeViewModel,
+                                    initialStep = 2,
+                                    onComplete = {
+                                        appPreferences.setOnboardingCompletedForUser(currentEmail, true)
+                                        appPreferences.setLoggedOutForUser(currentEmail, false)
+                                        authViewModel.completeOnboarding()
+                                    }
+                                )
+                            }
                         } else {
-                            MainContainerScreen(
-                                viewModel = financeViewModel,
-                                authViewModel = authViewModel
-                            )
+                            key(activeUserKey) {
+                                MainContainerScreen(
+                                    viewModel = financeViewModel,
+                                    authViewModel = authViewModel
+                                )
+                            }
                         }
                     }
                     // Priority 3: Onboarding / Login Screen for unauthenticated or logged out users

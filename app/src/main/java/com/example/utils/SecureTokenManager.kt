@@ -291,47 +291,35 @@ class SecureTokenManager(context: Context) {
     }
 
     fun getDriveAccessToken(): String? {
-        val token = sharedPreferences.getString(KEY_DRIVE_ACCESS_TOKEN, null)
-        if (!token.isNullOrBlank()) return token
-
         val activeEmail = getUserEmail()?.trim()?.lowercase()
         if (!activeEmail.isNullOrBlank()) {
             return getUserSession(activeEmail)?.driveAccessToken
         }
-        return null
+        return sharedPreferences.getString(KEY_DRIVE_ACCESS_TOKEN, null)
     }
 
     fun getDriveRefreshToken(): String? {
-        val token = sharedPreferences.getString(KEY_DRIVE_REFRESH_TOKEN, null)
-        if (!token.isNullOrBlank()) return token
-
         val activeEmail = getUserEmail()?.trim()?.lowercase()
         if (!activeEmail.isNullOrBlank()) {
             return getUserSession(activeEmail)?.driveRefreshToken
         }
-        return null
+        return sharedPreferences.getString(KEY_DRIVE_REFRESH_TOKEN, null)
     }
 
     fun getDriveTokenExpiresAt(): Long {
-        val expiresAt = sharedPreferences.getLong(KEY_DRIVE_TOKEN_EXPIRES_AT, 0L)
-        if (expiresAt > 0L) return expiresAt
-
         val activeEmail = getUserEmail()?.trim()?.lowercase()
         if (!activeEmail.isNullOrBlank()) {
             return getUserSession(activeEmail)?.driveTokenExpiresAt ?: 0L
         }
-        return 0L
+        return sharedPreferences.getLong(KEY_DRIVE_TOKEN_EXPIRES_AT, 0L)
     }
 
     fun getDriveEmail(): String? {
-        val driveEmail = sharedPreferences.getString(KEY_DRIVE_EMAIL, null)?.trim()?.lowercase()
-        if (!driveEmail.isNullOrBlank()) return driveEmail
-
         val activeEmail = getUserEmail()?.trim()?.lowercase()
         if (!activeEmail.isNullOrBlank()) {
             return getUserSession(activeEmail)?.driveEmail
         }
-        return null
+        return sharedPreferences.getString(KEY_DRIVE_EMAIL, null)?.trim()?.lowercase()
     }
 
     fun isDriveConnected(): Boolean = !getDriveAccessToken().isNullOrBlank() || !getDriveRefreshToken().isNullOrBlank()

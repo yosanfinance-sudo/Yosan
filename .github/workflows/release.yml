@@ -131,8 +131,10 @@ jobs:
             exit 1
           fi
           echo "Found APK at $APK_PATH"
-          cp "$APK_PATH" Yosan-Update.apk
-          echo "apk_path=Yosan-Update.apk" >> "$GITHUB_OUTPUT"
+          RELEASE_APK_NAME="yosan-${{ steps.release_info.outputs.version_name }}.apk"
+          cp "$APK_PATH" "$RELEASE_APK_NAME"
+          echo "apk_name=$RELEASE_APK_NAME" >> "$GITHUB_OUTPUT"
+          echo "apk_path=$RELEASE_APK_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release and Upload APK
         uses: softprops/action-gh-release@v2
@@ -143,6 +145,6 @@ jobs:
           make_latest: true
           draft: false
           prerelease: false
-          files: Yosan-Update.apk
+          files: ${{ steps.find_apk.outputs.apk_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
