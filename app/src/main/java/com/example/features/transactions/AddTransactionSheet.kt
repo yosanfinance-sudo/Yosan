@@ -842,6 +842,18 @@ fun AddTransactionSheet(
                                 notes = notes,
                                 advanceId = advanceId.takeIf { it.isNotBlank() }
                             )
+                            if (cat.name.equals("Official Expense", ignoreCase = true)) {
+                                viewModel.addCompanyExpense(
+                                    date = dateText,
+                                    amount = amt,
+                                    reason = if (description.isNotBlank()) description else cat.name,
+                                    category = "Official Expense",
+                                    company = "Corporate",
+                                    method = "Corporate Card / UPI",
+                                    notes = notes,
+                                    advanceId = advanceId.takeIf { it.isNotBlank() }
+                                )
+                            }
                         }
                         AddTab.INCOME -> {
                             val cat = selectedCategory ?: categories.firstOrNull { it.type == com.example.data.local.entity.CategoryType.INCOME }

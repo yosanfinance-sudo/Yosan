@@ -47,6 +47,7 @@ class UpdateCheckJobService : JobService() {
     companion object {
         private const val TAG = "UpdateCheckJobService"
         private const val JOB_ID = 9001
+        private const val ONE_OFF_JOB_ID = 9002
 
         fun schedulePeriodicCheck(context: Context) {
             try {
@@ -70,6 +71,46 @@ class UpdateCheckJobService : JobService() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error scheduling update check job: ${e.message}", e)
+            }
+        }
+
+        fun scheduleOneOffCheck(context: Context, delayMillis: Long = 5_000L) {
+            try {
+                val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler ?: return
+                val component = ComponentName(context, UpdateCheckJobService::class.java)
+                val builder = JobInfo.Builder(ONE_OFF_JOB_ID, component)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setMinimumLatency(delayMillis)
+                    .setOverrideDeadline(delayMillis + 15_000L)
+
+                scheduler.schedule(builder.build())
+            } catch (e: Exception) {
+                Log.w(TAG, "Error scheduling one-off check: ${e.message}")
+            }
+        }
+
+        fun scheduleAlarmCheck(context: Context) {
+            try {
+                val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager ?: return
+                val intent = android.content.Intent(context, UpdateAlarmReceiver::class.java).apply {
+                    action = "com.example.ACTION_CHECK_UPDATES_ALARM"
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                } else {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                }
+                val pendingIntent = android.app.PendingIntent.getBroadcast(context, 9003, intent, flags)
+                val interval = 30 * 60 * 1000L // 30 minutes
+                alarmManager.setInexactRepeating(
+                    android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    android.os.SystemClock.elapsedRealtime() + interval,
+                    interval,
+                    pendingIntent
+                )
+                Log.d(TAG, "Scheduled background AlarmManager wakeup check successfully")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to schedule alarm check: ${e.message}")
             }
         }
     }

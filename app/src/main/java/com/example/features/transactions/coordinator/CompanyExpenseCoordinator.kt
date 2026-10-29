@@ -36,39 +36,43 @@ class CompanyExpenseCoordinator(
             try {
                 val transactions = database.transactionDao().getAllTransactionsList()
                 val expenses = database.companyExpenseDao().getAllCompanyExpensesList()
-                if (expenses.isEmpty()) {
-                    return@launch
-                }
 
-                val credits = transactions.filter {
-                    (it.creditAmount > 0.0 || (it.amount > 0.0 && it.transactionType == TransactionType.INCOME)) &&
-                    (it.description.contains("company", ignoreCase = true) ||
-                     it.description.contains("reimbursement", ignoreCase = true) ||
-                     it.description.contains("claim", ignoreCase = true))
-                }
-                val outstandingExpenses = expenses.filter { !it.isReimbursed }
+                // Check for Reimbursements against outstanding company expenses
+                if (expenses.isNotEmpty()) {
+                    val credits = transactions.filter {
+                        (it.creditAmount > 0.0 || (it.amount > 0.0 && it.transactionType == TransactionType.INCOME)) &&
+                        (it.description.contains("company", ignoreCase = true) ||
+                         it.description.contains("reimbursement", ignoreCase = true) ||
+                         it.description.contains("claim", ignoreCase = true))
+                    }
+                    val outstandingExpenses = expenses.filter { !it.isReimbursed }
 
-                for (credit in credits) {
-                    val creditAmt = if (credit.creditAmount > 0.0) credit.creditAmount else credit.amount
-                    val match = outstandingExpenses.firstOrNull { Math.abs(it.amount - creditAmt) < 0.01 }
-                    if (match != null) {
-                        _companyExpensePrompt.value = CompanyExpensePrompt(
-                            transactionId = credit.id,
-                            description = credit.description,
-                            amount = creditAmt,
-                            date = credit.transactionDate,
-                            isReimbursement = true,
-                            matchingExpenseId = match.id
-                        )
-                        return@launch
+                    for (credit in credits) {
+                        val creditAmt = if (credit.creditAmount > 0.0) credit.creditAmount else credit.amount
+                        val match = outstandingExpenses.firstOrNull { Math.abs(it.amount - creditAmt) < 0.01 }
+                        if (match != null) {
+                            _companyExpensePrompt.value = CompanyExpensePrompt(
+                                transactionId = credit.id,
+                                description = credit.description,
+                                amount = creditAmt,
+                                date = credit.transactionDate,
+                                isReimbursement = true,
+                                matchingExpenseId = match.id
+                            )
+                            return@launch
+                        }
                     }
                 }
 
                 val debits = transactions.filter {
                     (it.debitAmount > 0.0 || (it.amount > 0.0 && it.transactionType == TransactionType.EXPENSE)) &&
-                    (it.description.contains("official expense", ignoreCase = true) ||
+                    (it.categoryName.equals("Official Expense", ignoreCase = true) ||
+                     it.categoryName.contains("official", ignoreCase = true) ||
+                     it.description.contains("official", ignoreCase = true) ||
                      it.description.contains("reimbursement", ignoreCase = true) ||
-                     it.description.contains("corp claim", ignoreCase = true))
+                     it.description.contains("corp claim", ignoreCase = true) ||
+                     it.description.contains("company", ignoreCase = true) ||
+                     it.description.contains("corporate", ignoreCase = true))
                 }
                 val unlogged = debits.filter { debit ->
                     val debitAmt = if (debit.debitAmount > 0.0) debit.debitAmount else debit.amount
@@ -87,13 +91,9 @@ class CompanyExpenseCoordinator(
                     )
                 }
 
-                when {
-                    unlogged.size > 1 -> {
-                        _pendingCompanyExpenses.value = unlogged
-                    }
-                    unlogged.size == 1 -> {
-                        _companyExpensePrompt.value = unlogged.first()
-                    }
+                _pendingCompanyExpenses.value = unlogged
+                if (unlogged.isNotEmpty()) {
+                    _companyExpensePrompt.value = unlogged.first()
                 }
             } catch (_: Exception) {}
         }
@@ -162,7 +162,13 @@ class CompanyExpenseCoordinator(
                     showMessage("Expense is already logged")
                 }
                 _companyExpensePrompt.value = null
-                scanForCompanyExpenses()
+                val remaining = _pendingCompanyExpenses.value.filter { it.transactionId != prompt.transactionId }
+                _pendingCompanyExpenses.value = remaining
+                if (remaining.isNotEmpty()) {
+                    _companyExpensePrompt.value = remaining.first()
+                } else {
+                    scanForCompanyExpenses()
+                }
             } catch (_: Exception) {}
         }
     }
@@ -174,14 +180,28 @@ class CompanyExpenseCoordinator(
                     repository.updateReimbursementStatus(prompt.matchingExpenseId, true)
                     _companyExpensePrompt.value = null
                     showMessage("Expense marked as reimbursed")
-                    scanForCompanyExpenses()
+                    val remaining = _pendingCompanyExpenses.value.filter { it.transactionId != prompt.transactionId }
+                    _pendingCompanyExpenses.value = remaining
+                    if (remaining.isNotEmpty()) {
+                        _companyExpensePrompt.value = remaining.first()
+                    } else {
+                        scanForCompanyExpenses()
+                    }
                 }
             } catch (_: Exception) {}
         }
     }
 
     fun dismissCompanyExpensePrompt() {
+        val currentPrompt = _companyExpensePrompt.value
         _companyExpensePrompt.value = null
+        if (currentPrompt != null) {
+            val remaining = _pendingCompanyExpenses.value.filter { it.transactionId != currentPrompt.transactionId }
+            _pendingCompanyExpenses.value = remaining
+            if (remaining.isNotEmpty()) {
+                _companyExpensePrompt.value = remaining.first()
+            }
+        }
     }
 
     fun addCompanyExpense(

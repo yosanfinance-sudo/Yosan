@@ -37,6 +37,7 @@ import com.example.features.reports.FinancialInsight
 import com.example.features.reports.InsightType
 import com.example.features.updater.UpdateManager
 import com.example.features.updater.UpdateUiState
+import com.example.ui.components.MarkdownContent
 import kotlinx.coroutines.launch
 import com.example.ui.components.*
 import com.example.ui.theme.*
@@ -210,28 +211,14 @@ fun DashboardScreen(
                                 val cashTxs = remember(allTransactions, cashAccount) {
                                     allTransactions.filter { tx -> viewModel.isCashTransaction(tx) }
                                 }
-                                val cashInflow = remember(cashTxs, cashAccount) {
+                                val cashInflow = remember(cashTxs) {
                                     cashTxs.filter { tx ->
-                                        val isAtmOrCashWdl = tx.description.contains("atm", ignoreCase = true) ||
-                                                tx.description.contains("cash wdl", ignoreCase = true) ||
-                                                tx.description.contains("cash with", ignoreCase = true)
-                                        if (isAtmOrCashWdl && tx.accountId != cashAccount?.id) {
-                                            true
-                                        } else {
-                                            tx.transactionType == TransactionType.INCOME || tx.creditAmount > 0
-                                        }
+                                        tx.transactionType == TransactionType.INCOME || tx.creditAmount > 0
                                     }.sumOf { if (it.creditAmount > 0.0) it.creditAmount else it.amount }
                                 }
-                                val cashOutflow = remember(cashTxs, cashAccount) {
+                                val cashOutflow = remember(cashTxs) {
                                     cashTxs.filter { tx ->
-                                        val isAtmOrCashWdl = tx.description.contains("atm", ignoreCase = true) ||
-                                                tx.description.contains("cash wdl", ignoreCase = true) ||
-                                                tx.description.contains("cash with", ignoreCase = true)
-                                        if (isAtmOrCashWdl && tx.accountId != cashAccount?.id) {
-                                            false
-                                        } else {
-                                            tx.transactionType == TransactionType.EXPENSE || tx.debitAmount > 0
-                                        }
+                                        tx.transactionType == TransactionType.EXPENSE || tx.debitAmount > 0
                                     }.sumOf { if (it.debitAmount > 0.0) it.debitAmount else it.amount }
                                 }
                                 val cashBalance = (cashAccount?.openingBalance ?: 0.0) + cashInflow - cashOutflow
@@ -1241,11 +1228,17 @@ fun DashboardScreen(
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold
                                 )
-                                Text(
-                                    text = info.releaseNotes,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ) {
+                                    Box(modifier = Modifier.padding(10.dp)) {
+                                        MarkdownContent(
+                                            content = info.releaseNotes
+                                        )
+                                    }
+                                }
                             }
                         }
                     },

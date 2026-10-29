@@ -137,6 +137,10 @@ class AppPreferences(private val context: Context) {
         get() = prefs.getBoolean(KEY_AUTO_CHECK_UPDATES, true)
         set(value) = prefs.edit().putBoolean(KEY_AUTO_CHECK_UPDATES, value).apply()
 
+    var lastNotifiedUpdateVersion: String?
+        get() = prefs.getString("last_notified_update_version", null)
+        set(value) = prefs.edit().putString("last_notified_update_version", value).apply()
+
     var isBackupEncryptionEnabled: Boolean
         get() = prefs.getBoolean(KEY_BACKUP_ENCRYPTION_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_BACKUP_ENCRYPTION_ENABLED, value).apply()

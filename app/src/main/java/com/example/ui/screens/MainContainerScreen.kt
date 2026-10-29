@@ -118,7 +118,7 @@ fun MainContainerScreen(
                     text = if (prompt.isReimbursement) {
                         "We detected a potential reimbursement of ₹${prompt.amount} on ${prompt.date}: '${prompt.description}'. Would you like to mark the matching outstanding official expense as reimbursed?"
                     } else {
-                        "We detected a transaction containing the 'company' keyword of ₹${prompt.amount} on ${prompt.date}: '${prompt.description}'. Would you like to log it as an Official Expense?"
+                        "We detected an official transaction '${prompt.description}' of ₹${prompt.amount} on ${prompt.date}. Would you like to log it as an Official Expense?"
                     }
                 )
             },

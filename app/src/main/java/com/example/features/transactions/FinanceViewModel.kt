@@ -514,13 +514,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun isCashTransaction(tx: TransactionEntity): Boolean {
         val cashAcc = accounts.value.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
         if (cashAcc != null && tx.accountId == cashAcc.id) return true
-        if (tx.source.equals("CASH", ignoreCase = true)) return true
-        if (tx.categoryName.contains("cash", ignoreCase = true)) return true
-        val desc = tx.description.lowercase()
-        val notes = tx.notes.lowercase()
-        return desc.contains("cash") || desc.contains("atm wdl") || desc.contains("atm-wdl") ||
-               desc.contains("atm cash") || desc.contains("hand cash") ||
-               notes.contains("cash") || notes.contains("hand cash")
+        if (tx.source.equals("CASH", ignoreCase = true) || tx.source.equals("MANUAL_CASH", ignoreCase = true)) return true
+        return false
     }
 
     val filteredTransactions: StateFlow<List<TransactionEntity>> = combine(

@@ -45,6 +45,7 @@ class MainActivity : FragmentActivity() {
 
         // Schedule background periodic update checks so notification pops automatically when an update is sent
         com.example.features.updater.UpdateCheckJobService.schedulePeriodicCheck(applicationContext)
+        com.example.features.updater.UpdateCheckJobService.scheduleAlarmCheck(applicationContext)
 
         val appPreferences = AppPreferences(applicationContext)
         val biometricAuthManager = BiometricAuthManager(applicationContext)
@@ -239,6 +240,8 @@ class MainActivity : FragmentActivity() {
                                     }
                                 }
                             }
+                            // Schedule background check for updates after app is minimized
+                            com.example.features.updater.UpdateCheckJobService.scheduleOneOffCheck(applicationContext, 8_000L)
                         }
                         Lifecycle.Event.ON_START -> {
                             if (isBiometricEnabled && isAuthenticated) {

@@ -79,9 +79,14 @@ fun parseMarkdownText(rawText: String): List<MarkdownElement> {
             continue
         }
 
-        // 3. Bullet points (* item, - item, • item)
-        if (line.startsWith("- ") || line.startsWith("* ") || line.startsWith("• ")) {
+        // 3. Bullet points (* item, - item, • item, + item, 1. item)
+        if (line.startsWith("- ") || line.startsWith("* ") || line.startsWith("• ") || line.startsWith("+ ")) {
             elements.add(MarkdownElement.BulletPoint(line.drop(2).trim()))
+            i++
+            continue
+        }
+        if (line.matches(Regex("""^\d+\.\s+.*"""))) {
+            elements.add(MarkdownElement.BulletPoint(line.replaceFirst(Regex("""^\d+\.\s+"""), "").trim()))
             i++
             continue
         }

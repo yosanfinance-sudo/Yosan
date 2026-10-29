@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.components.MarkdownContent
 import java.io.File
 import java.util.Locale
 
@@ -148,14 +149,16 @@ fun UpdateDialog(
                             shape = RoundedCornerShape(10.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                         ) {
-                            Text(
-                                text = info.releaseNotes.ifBlank { "Performance improvements and UI updates." },
-                                style = MaterialTheme.typography.bodySmall,
-                                lineHeight = 18.sp,
+                            Box(
                                 modifier = Modifier
+                                    .fillMaxWidth()
                                     .padding(12.dp)
                                     .verticalScroll(rememberScrollState())
-                            )
+                            ) {
+                                MarkdownContent(
+                                    content = info.releaseNotes.ifBlank { "Performance improvements and UI updates." }
+                                )
+                            }
                         }
                     }
                 },

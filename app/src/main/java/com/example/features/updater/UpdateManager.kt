@@ -283,11 +283,29 @@ class UpdateManager(
             val isNewer = isRemoteVersionNewer(cleanRemoteVersion, cleanCurrentVersion)
 
             if (isNewer && targetRelease.downloadUrl.isNotBlank()) {
+                val tag = if (targetRelease.versionName.startsWith("v") || targetRelease.versionName.startsWith("V")) {
+                    targetRelease.versionName
+                } else {
+                    "v${targetRelease.versionName}"
+                }
+                val defaultNotes = """
+### Update Notes ($tag)
+- Fixed expense scanning and detection.
+- Improved dashboard accuracy and cash calculations.
+- Simplified update notifications.
+- Enabled reliable background update checks.
+                """.trimIndent()
+
+                val rawNotes = targetRelease.releaseNotes.trim()
+                val resolvedNotes = if (rawNotes.isBlank() || rawNotes.startsWith("New updates and stability") || rawNotes.startsWith("What's New in")) {
+                    defaultNotes
+                } else {
+                    rawNotes
+                }
+
                 val finalInfo = targetRelease.copy(
                     isNewer = true,
-                    releaseNotes = targetRelease.releaseNotes.ifBlank {
-                        "What's New in ${targetRelease.versionName}:\n• Automated update and release pipeline\n• Security & UI stability improvements\n• Bug fixes and performance enhancements"
-                    }
+                    releaseNotes = resolvedNotes
                 )
                 _uiState.value = UpdateUiState.UpdateAvailable(finalInfo)
                 showSystemUpdateNotification(finalInfo)
@@ -475,6 +493,11 @@ class UpdateManager(
                 }
             }
 
+            val prefs = com.example.utils.AppPreferences(context)
+            if (prefs.lastNotifiedUpdateVersion == info.versionName) {
+                return
+            }
+
             val channelId = "yosan_updates_channel"
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
 
@@ -503,15 +526,15 @@ class UpdateManager(
 
             val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle("You got an update!")
-                .setContentText("Yosan ${info.versionName} is available. Tap to review and install.")
-                .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText("Yosan ${info.versionName} is now available!\n${info.releaseTitle}\nTap to update now."))
+                .setContentTitle("You got an update")
+                .setContentText("You got an update")
                 .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
                 .build()
 
             notificationManager.notify(1001, notification)
+            prefs.lastNotifiedUpdateVersion = info.versionName
         } catch (e: Exception) {
             Log.e("UpdateManager", "showSystemUpdateNotification failed: ${e.message}", e)
         }
