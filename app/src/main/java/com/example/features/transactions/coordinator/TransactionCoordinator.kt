@@ -79,9 +79,11 @@ class TransactionCoordinator(
             val credit = if (finalType == TransactionType.INCOME || finalType == TransactionType.REFUND) amount else 0.0
 
             val cleanAdvanceId = advanceId?.trim()?.takeIf { it.isNotBlank() }
+            val cashAcc = database.accountDao().getAllAccountsList().firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
+            val resolvedAccountId = cashAcc?.id ?: if (accountId > 0L) accountId else 1L
 
             val tx = TransactionEntity(
-                accountId = accountId,
+                accountId = resolvedAccountId,
                 transactionDate = date,
                 description = description,
                 debitAmount = debit,
@@ -90,7 +92,7 @@ class TransactionCoordinator(
                 transactionType = finalType,
                 categoryId = finalCatId,
                 categoryName = finalCatName,
-                source = "MANUAL",
+                source = "MANUAL_CASH",
                 notes = notes,
                 advanceId = cleanAdvanceId,
                 isManual = true,
@@ -719,6 +721,13 @@ class TransactionCoordinator(
 
     fun addAccount(account: AccountEntity) {
         scope.launch {
+            if (account.accountType == AccountType.CASH) {
+                val existingCash = database.accountDao().getAllAccountsList().firstOrNull { it.accountType == AccountType.CASH }
+                if (existingCash != null) {
+                    showMessage("Cash account already exists")
+                    return@launch
+                }
+            }
             repository.insertAccount(account)
             recalculateAllAccountBalances()
             showMessage("Account '${account.accountName}' created")
@@ -727,6 +736,13 @@ class TransactionCoordinator(
 
     fun addAccount(name: String, bank: String, maskedNumber: String, type: AccountType, openingBalance: Double) {
         scope.launch {
+            if (type == AccountType.CASH) {
+                val existingCash = database.accountDao().getAllAccountsList().firstOrNull { it.accountType == AccountType.CASH }
+                if (existingCash != null) {
+                    showMessage("Cash account already exists")
+                    return@launch
+                }
+            }
             val acc = AccountEntity(
                 accountName = name,
                 bankName = bank,

@@ -86,7 +86,7 @@ fun MainContainerScreen(
     var preselectedLoanForRepay by remember { mutableStateOf<LoanEntity?>(null) }
     var selectedTransactionForDetail by remember { mutableStateOf<TransactionEntity?>(null) }
 
-    var showIntroNoteDialog by remember { mutableStateOf(!appPreferences.isIntroNoteDismissed && !appPreferences.isOnboardingCompleted) }
+    var showIntroNoteDialog by remember { mutableStateOf(!appPreferences.isIntroNoteDismissed) }
     var showUserWalkthroughDialog by remember { mutableStateOf(false) }
 
     val smartRulePrompt by viewModel.smartRulePrompt.collectAsState()

@@ -204,39 +204,6 @@ fun ImportStatementScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.AccountBalance,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
-                                    Text(
-                                        text = "Supported Banks: Indian Bank, State Bank, YES Bank & IndusInd Bank",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        text = "Optimized layout heuristics, header striping, and sequential balance auditing.",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -692,47 +659,6 @@ fun ImportStatementScreen(
 
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            // 4c. Bank Account Selector Card
-                            if (accounts.isNotEmpty()) {
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text(
-                                            text = "Assign Statement to Bank Account",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .horizontalScroll(rememberScrollState()),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            accounts.forEach { acc ->
-                                                val isSelected = (selectedAccountId ?: accounts.firstOrNull()?.id) == acc.id
-                                                FilterChip(
-                                                    selected = isSelected,
-                                                    onClick = { selectedAccountId = acc.id },
-                                                    leadingIcon = {
-                                                        if (isSelected) {
-                                                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                        }
-                                                    },
-                                                    label = { Text("${acc.bankName} (${acc.accountName})") }
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.fillMaxWidth()
@@ -749,7 +675,11 @@ fun ImportStatementScreen(
 
                             Button(
                                 onClick = {
-                                    val accountId = selectedAccountId ?: (accounts.firstOrNull()?.id ?: 1L)
+                                    val defaultBankAccountId = accounts.firstOrNull { it.isDefault && it.accountType != com.example.data.local.entity.AccountType.CASH }?.id
+                                        ?: accounts.firstOrNull { it.accountType != com.example.data.local.entity.AccountType.CASH }?.id
+                                        ?: accounts.firstOrNull()?.id
+                                        ?: 1L
+                                    val accountId = selectedAccountId ?: defaultBankAccountId
                                     viewModel.confirmImport(
                                         skipDuplicates = skipDuplicates,
                                         targetAccountId = accountId,

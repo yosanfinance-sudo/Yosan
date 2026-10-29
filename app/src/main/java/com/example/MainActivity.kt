@@ -326,9 +326,11 @@ class MainActivity : FragmentActivity() {
                     }
                                         // Priority 2: Authenticated Main Container (with Bank Selection onboarding if not completed)
                     else if (isAuthenticated) {
-                        val isUserOnboardingDone = appPreferences.isOnboardingCompletedForUser(currentEmail) ||
-                            (userProfile?.isOnboardingCompleted == true && userAccounts.isNotEmpty()) ||
-                            userAccounts.isNotEmpty()
+                        val hasBankAccount = userAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                        val isUserOnboardingDone = hasBankAccount && (
+                            appPreferences.isOnboardingCompletedForUser(currentEmail) ||
+                            userProfile?.isOnboardingCompleted == true
+                        )
 
                         if (!isUserOnboardingDone) {
                             key(activeUserKey) {

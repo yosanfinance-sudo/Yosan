@@ -3,6 +3,9 @@ package com.example.features.transactions
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
@@ -31,6 +34,26 @@ import kotlinx.coroutines.yield
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
+
+data class TransactionDraft(
+    val tab: AddTab = AddTab.EXPENSE,
+    val amountText: String = "",
+    val description: String = "",
+    val dateText: String = "",
+    val categoryId: Long? = null,
+    val selectedAccountId: Long? = null,
+    val targetAccountId: Long? = null,
+    val notes: String = "",
+    val advanceId: String = "",
+    val lendId: String = "",
+    val borrowId: String = "",
+    val personName: String = "",
+    val personPhone: String = "",
+    val expectedDate: String = "",
+    val companyName: String = "",
+    val companyCategory: String = "Travel",
+    val paymentMethod: String = "UPI"
+)
 
 data class UndoSnackbarData(
     val message: String,
@@ -113,7 +136,18 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val accList = database.accountDao().getAllAccountsList()
-                if (accList.none { it.accountType == com.example.data.local.entity.AccountType.CASH }) {
+                val cashAccounts = accList.filter { it.accountType == com.example.data.local.entity.AccountType.CASH }
+                if (cashAccounts.size > 1) {
+                    val primaryCash = cashAccounts.first()
+                    for (i in 1 until cashAccounts.size) {
+                        val dup = cashAccounts[i]
+                        val dupTxs = database.transactionDao().getTransactionsByAccountList(dup.id)
+                        dupTxs.forEach { tx ->
+                            database.transactionDao().updateTransaction(tx.copy(accountId = primaryCash.id))
+                        }
+                        database.accountDao().deleteAccount(dup.id)
+                    }
+                } else if (cashAccounts.isEmpty()) {
                     val cashAccount = com.example.data.local.entity.AccountEntity(
                         accountName = "Cash in Hand",
                         bankName = "Hand Cash",
@@ -511,10 +545,24 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val _selectedMonthFilter = MutableStateFlow<String?>(null)
     val selectedMonthFilter: StateFlow<String?> = _selectedMonthFilter.asStateFlow()
 
+    var addTransactionDraft by mutableStateOf(TransactionDraft())
+        private set
+
+    fun updateAddTransactionDraft(draft: TransactionDraft) {
+        addTransactionDraft = draft
+    }
+
+    fun clearAddTransactionDraft() {
+        addTransactionDraft = TransactionDraft()
+    }
+
     fun isCashTransaction(tx: TransactionEntity): Boolean {
         val cashAcc = accounts.value.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
         if (cashAcc != null && tx.accountId == cashAcc.id) return true
-        if (tx.source.equals("CASH", ignoreCase = true) || tx.source.equals("MANUAL_CASH", ignoreCase = true)) return true
+        if (tx.isManual) return true
+        if (tx.source.equals("CASH", ignoreCase = true) || 
+            tx.source.equals("MANUAL", ignoreCase = true) || 
+            tx.source.equals("MANUAL_CASH", ignoreCase = true)) return true
         return false
     }
 

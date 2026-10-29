@@ -115,9 +115,12 @@ fun OnboardingScreen(
                     userName = claims.name
                     emailInput = claims.email
                     financeViewModel.updateUserProfile(userName, currencySymbol)
-                    val isReturning = (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false ||
+                    val hasBankAccount = accounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                    val isReturning = hasBankAccount && (
+                        (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false ||
                         appPreferences.isOnboardingCompletedForUser(claims.email) ||
                         rememberedAccounts.any { it.email.equals(claims.email, ignoreCase = true) && it.bankName.isNotBlank() }
+                    )
                     if (isReturning) {
                         appPreferences.isLoggedOut = false
                         appPreferences.setLoggedOutForUser(claims.email, false)
@@ -641,14 +644,6 @@ fun OnboardingScreen(
                                                                 maxLines = 1,
                                                                 overflow = TextOverflow.Ellipsis
                                                             )
-                                                            if (acc.bankName.isNotBlank()) {
-                                                                Text(
-                                                                    text = "Bank: ${acc.bankName}",
-                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                    color = MaterialTheme.colorScheme.primary,
-                                                                    fontWeight = FontWeight.Medium
-                                                                )
-                                                            }
                                                         }
                                                         IconButton(
                                                             onClick = {
@@ -742,9 +737,12 @@ fun OnboardingScreen(
                                             userName = claims.name.ifBlank { claims.email.substringBefore("@") }
                                             emailInput = claims.email
                                             financeViewModel.updateUserProfile(userName, currencySymbol)
-                                            val isReturning = (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false ||
+                                            val hasBankAccount = accounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                                            val isReturning = hasBankAccount && (
+                                                (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false ||
                                                 appPreferences.isOnboardingCompletedForUser(claims.email) ||
                                                 rememberedAccounts.any { it.email.equals(claims.email, ignoreCase = true) && it.bankName.isNotBlank() }
+                                            )
                                             if (isReturning) {
                                                 appPreferences.isLoggedOut = false
                                                 appPreferences.setLoggedOutForUser(claims.email, false)
@@ -849,9 +847,7 @@ fun OnboardingScreen(
                                             }
                                         } else {
                                             com.example.data.local.AppDatabase.setActiveUserKey("guest")
-                                            if (userName.isBlank() || userName.equals("User", ignoreCase = true)) {
-                                                userName = ""
-                                            }
+                                            userName = ""
                                             step = 2
                                         }
                                     },
@@ -1360,21 +1356,6 @@ fun OnboardingScreen(
                                     } else {
                                         financeViewModel.updateAccount(existingAcc.copy(isDefault = true))
                                     }
-                                    // Seed default Cash in Hand account if missing
-                                    val existingCash = accounts.firstOrNull { it.accountType == AccountType.CASH }
-                                    if (existingCash == null) {
-                                        financeViewModel.addAccount(
-                                            AccountEntity(
-                                                accountName = "Cash in Hand",
-                                                bankName = "Hand Cash",
-                                                accountNumberMasked = "",
-                                                accountType = AccountType.CASH,
-                                                openingBalance = 0.0,
-                                                currentBalance = 0.0,
-                                                isDefault = false
-                                            )
-                                        )
-                                    }
                                     financeViewModel.completeOnboarding(
                                         themeMode = selectedThemeMode,
                                         privacyBlurEnabled = isPrivacyBlurEnabled,
@@ -1389,7 +1370,20 @@ fun OnboardingScreen(
                                     prefs.isLoggedOut = false
                                     prefs.isOnboardingCompleted = true
                                     prefs.lastBankName = bank
-                                    authViewModel.completeOnboarding()
+                                    if (isOfflineModeSelected) {
+                                        prefs.lastUserName = finalName
+                                        prefs.lastUserEmail = "guest"
+                                        val remembered = com.example.utils.RememberedAccount(
+                                            email = "guest",
+                                            name = finalName,
+                                            profilePicture = "",
+                                            googleSub = "guest",
+                                            bankName = bank,
+                                            lastUsedTimestamp = System.currentTimeMillis()
+                                        )
+                                        prefs.saveRememberedAccount(remembered)
+                                    }
+                                    authViewModel.completeOnboarding(finalName)
                                     onComplete()
                                 }
                             },
@@ -1526,13 +1520,6 @@ fun OnboardingScreen(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    if (acc.bankName.isNotBlank()) {
-                                        Text(
-                                            text = "Bank: ${acc.bankName}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
                                 }
                                 IconButton(
                                     onClick = {

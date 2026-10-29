@@ -344,8 +344,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                         // Update Room profile
                         val existing = authRepository.getProfileOnce()
-                        val isReturningUser = activeAccounts.isNotEmpty() ||
-                            (existing?.isOnboardingCompleted == true)
+                        val hasBankAccount = activeAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                        val isReturningUser = hasBankAccount && (
+                            (existing?.isOnboardingCompleted == true) ||
+                            prefs.isOnboardingCompletedForUser(email)
+                        )
 
                         val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
                             googleSub = sub,
@@ -592,7 +595,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 prefs.isLoggedOut = false
 
                 val existing = authRepository.getProfileOnce()
-                val isReturningUser = existingAccounts.isNotEmpty() || (existing?.isOnboardingCompleted == true)
+                val hasBankAccount = existingAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                val isReturningUser = hasBankAccount && (
+                    (existing?.isOnboardingCompleted == true) ||
+                    prefs.isOnboardingCompletedForUser(cleanEmail)
+                )
                 prefs.isOnboardingCompleted = isReturningUser
 
                 val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
@@ -702,9 +709,13 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         AppDatabase.setActiveUserKey(email)
 
                         val prefs = com.example.utils.AppPreferences(app)
+                        val existing = authRepository.getProfileOnce()
                         val existingAccounts = database.accountDao().getAllAccountsList()
-                        val isReturningUser = existingAccounts.isNotEmpty() ||
-                            (email.isNotBlank() && email.equals(prefs.lastUserEmail, ignoreCase = true))
+                        val hasBankAccount = existingAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                        val isReturningUser = hasBankAccount && (
+                            (existing?.isOnboardingCompleted == true) ||
+                            prefs.isOnboardingCompletedForUser(email)
+                        )
 
                         if (email.isNotBlank()) prefs.lastUserEmail = email
                         if (name.isNotBlank()) prefs.lastUserName = name
@@ -728,7 +739,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         )
                         prefs.saveRememberedAccount(remembered)
 
-                        val existing = authRepository.getProfileOnce()
                         val updated = (existing ?: UserProfileEntity(id = 1)).copy(
                             googleSub = uid.ifBlank { email.ifBlank { "google_user" } },
                             email = email,
@@ -1345,14 +1355,36 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun completeOnboarding() {
+    fun completeOnboarding(customName: String? = null) {
         _isNewUser.value = false
         _authState.value = AuthState.Authenticated(isNewUser = false)
         val prefs = com.example.utils.AppPreferences(getApplication())
         prefs.isOnboardingCompleted = true
         prefs.isLoggedOut = false
+        val email = prefs.lastUserEmail.ifBlank { "guest" }
+        prefs.setOnboardingCompletedForUser(email, true)
         viewModelScope.launch(Dispatchers.IO) {
-            database.userProfileDao().updateOnboardingCompleted(true)
+            val profile = database.userProfileDao().getUserProfileOnce()
+            if (profile != null) {
+                database.userProfileDao().insertOrUpdateProfile(
+                    profile.copy(
+                        name = customName ?: profile.name,
+                        isOnboardingCompleted = true
+                    )
+                )
+            } else {
+                database.userProfileDao().insertOrUpdateProfile(
+                    UserProfileEntity(
+                        id = 1,
+                        name = customName ?: "User",
+                        isOnboardingCompleted = true
+                    )
+                )
+            }
+            val active = database.userProfileDao().getUserProfileOnce()
+            if (active != null) {
+                _user.value = buildLocalUser(active)
+            }
         }
     }
 

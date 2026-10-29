@@ -622,20 +622,6 @@ fun TransactionsScreen(
                 )
             }
             item {
-                val isUncategorized = selectedCategory.equals("Uncategorized", ignoreCase = true)
-                FilterChip(
-                    selected = isUncategorized,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        if (isUncategorized) viewModel.setCategoryFilter(null) else viewModel.setCategoryFilter("Uncategorized")
-                    },
-                    label = { Text("Uncategorized") },
-                    leadingIcon = {
-                        if (isUncategorized) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    }
-                )
-            }
-            item {
                 FilterChip(
                     selected = selectedType == TransactionType.EXPENSE && selectedCategory == null,
                     onClick = {
@@ -658,6 +644,20 @@ fun TransactionsScreen(
                     label = { Text("Income") },
                     leadingIcon = {
                         if (selectedType == TransactionType.INCOME) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                )
+            }
+            item {
+                val isOfficial = selectedCategory.equals("Official Expense", ignoreCase = true)
+                FilterChip(
+                    selected = isOfficial,
+                    onClick = {
+                        HapticHelper.vibrateTick(context)
+                        if (isOfficial) viewModel.setCategoryFilter(null) else viewModel.setCategoryFilter("Official Expense")
+                    },
+                    label = { Text("Official") },
+                    leadingIcon = {
+                        if (isOfficial) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     }
                 )
             }
@@ -714,16 +714,16 @@ fun TransactionsScreen(
                 )
             }
             item {
-                val isOfficial = selectedCategory.equals("Official Expense", ignoreCase = true)
+                val isUncategorized = selectedCategory.equals("Uncategorized", ignoreCase = true)
                 FilterChip(
-                    selected = isOfficial,
+                    selected = isUncategorized,
                     onClick = {
                         HapticHelper.vibrateTick(context)
-                        if (isOfficial) viewModel.setCategoryFilter(null) else viewModel.setCategoryFilter("Official Expense")
+                        if (isUncategorized) viewModel.setCategoryFilter(null) else viewModel.setCategoryFilter("Uncategorized")
                     },
-                    label = { Text("Official") },
+                    label = { Text("Uncategorized") },
                     leadingIcon = {
-                        if (isOfficial) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        if (isUncategorized) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     }
                 )
             }

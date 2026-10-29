@@ -49,30 +49,98 @@ fun AddTransactionSheet(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var selectedTab by remember { mutableStateOf(initialTab) }
-    var investmentName by remember { mutableStateOf("") }
-
     val accounts by viewModel.accounts.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val loans by viewModel.loans.collectAsState()
     val advanceSummaries by viewModel.advanceSummaries.collectAsState()
     val activeLoans = remember(loans) { loans.filter { it.remainingAmount > 0 } }
 
-    var amountText by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var dateText by remember { mutableStateOf(DateUtils.getCurrentDate()) }
-    var selectedCategory by remember { mutableStateOf<CategoryEntity?>(null) }
-    var selectedAccountId by remember { mutableStateOf(accounts.firstOrNull()?.id ?: 1L) }
-    var targetAccountId by remember { mutableStateOf(accounts.getOrNull(1)?.id ?: accounts.firstOrNull()?.id ?: 1L) }
-    var notes by remember { mutableStateOf("") }
-    var advanceId by remember { mutableStateOf("") }
-    var lendId by remember { mutableStateOf("") }
-    var borrowId by remember { mutableStateOf("") }
+    val handCashAccount = remember(accounts) {
+        accounts.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
+            ?: accounts.firstOrNull()
+    }
 
-    LaunchedEffect(accounts) {
+    val draft = viewModel.addTransactionDraft
+    var isSaved by remember { mutableStateOf(false) }
+
+    var selectedTab by remember {
+        mutableStateOf(
+            if (preselectedLoan != null) AddTab.LEND_MONEY
+            else if (initialTab != AddTab.EXPENSE) initialTab
+            else if (draft.amountText.isNotBlank() || draft.description.isNotBlank()) draft.tab
+            else initialTab
+        )
+    }
+    var investmentName by remember { mutableStateOf("") }
+
+    var amountText by remember { mutableStateOf(draft.amountText) }
+    var description by remember { mutableStateOf(draft.description) }
+    var dateText by remember { mutableStateOf(draft.dateText.ifBlank { DateUtils.getCurrentDate() }) }
+    var selectedCategory by remember { mutableStateOf<CategoryEntity?>(null) }
+    LaunchedEffect(categories, draft.categoryId) {
+        if (selectedCategory == null && draft.categoryId != null) {
+            selectedCategory = categories.firstOrNull { it.id == draft.categoryId }
+        }
+    }
+    var selectedAccountId by remember { mutableStateOf(draft.selectedAccountId ?: handCashAccount?.id ?: 1L) }
+    var targetAccountId by remember { mutableStateOf(draft.targetAccountId ?: accounts.getOrNull(1)?.id ?: accounts.firstOrNull()?.id ?: 1L) }
+    var notes by remember { mutableStateOf(draft.notes) }
+    var advanceId by remember { mutableStateOf(draft.advanceId) }
+    var lendId by remember { mutableStateOf(draft.lendId) }
+    var borrowId by remember { mutableStateOf(draft.borrowId) }
+
+    // Lending / Borrowing fields
+    var personName by remember { mutableStateOf(draft.personName) }
+    var personPhone by remember { mutableStateOf(draft.personPhone) }
+    var expectedDate by remember { mutableStateOf(draft.expectedDate) }
+
+    // Repayment fields
+    var selectedLoanId by remember { mutableStateOf(preselectedLoan?.id ?: activeLoans.firstOrNull()?.id ?: 0L) }
+    var paymentMethod by remember { mutableStateOf(draft.paymentMethod.ifBlank { "UPI" }) }
+
+    // Company Expense fields
+    var companyName by remember { mutableStateOf(draft.companyName) }
+    var companyCategory by remember { mutableStateOf(draft.companyCategory.ifBlank { "Travel" }) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (!isSaved) {
+                viewModel.updateAddTransactionDraft(
+                    TransactionDraft(
+                        tab = selectedTab,
+                        amountText = amountText,
+                        description = description,
+                        dateText = dateText,
+                        categoryId = selectedCategory?.id,
+                        selectedAccountId = selectedAccountId,
+                        targetAccountId = targetAccountId,
+                        notes = notes,
+                        advanceId = advanceId,
+                        lendId = lendId,
+                        borrowId = borrowId,
+                        personName = personName,
+                        personPhone = personPhone,
+                        expectedDate = expectedDate,
+                        companyName = companyName,
+                        companyCategory = companyCategory,
+                        paymentMethod = paymentMethod
+                    )
+                )
+            } else {
+                viewModel.clearAddTransactionDraft()
+            }
+        }
+    }
+
+    LaunchedEffect(accounts, selectedTab) {
         if (accounts.isNotEmpty()) {
-            if (accounts.none { it.id == selectedAccountId }) {
-                selectedAccountId = accounts.first().id
+            val defaultAccId = if (selectedTab == AddTab.TRANSFER) {
+                accounts.firstOrNull { it.accountType != com.example.data.local.entity.AccountType.CASH }?.id ?: accounts.first().id
+            } else {
+                handCashAccount?.id ?: accounts.first().id
+            }
+            if (selectedTab != AddTab.TRANSFER || accounts.none { it.id == selectedAccountId }) {
+                selectedAccountId = defaultAccId
             }
             if (accounts.none { it.id == targetAccountId }) {
                 targetAccountId = accounts.getOrNull(1)?.id ?: accounts.first().id
@@ -92,19 +160,6 @@ fun AddTransactionSheet(
             advanceId = viewModel.generateNextAdvanceId()
         }
     }
-
-    // Lending / Borrowing fields
-    var personName by remember { mutableStateOf("") }
-    var personPhone by remember { mutableStateOf("") }
-    var expectedDate by remember { mutableStateOf("") }
-
-    // Repayment fields
-    var selectedLoanId by remember { mutableStateOf(preselectedLoan?.id ?: activeLoans.firstOrNull()?.id ?: 0L) }
-    var paymentMethod by remember { mutableStateOf("UPI") }
-
-    // Company Expense fields
-    var companyName by remember { mutableStateOf("") }
-    var companyCategory by remember { mutableStateOf("Travel") }
 
     // DatePicker states
     var showDatePicker by remember { mutableStateOf(false) }
@@ -763,45 +818,6 @@ fun AddTransactionSheet(
                 }
             }
 
-            // Account / Hand Cash Selector for all non-transfer transactions
-            if (accounts.isNotEmpty() && selectedTab != AddTab.TRANSFER) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = if (selectedTab == AddTab.INCOME || selectedTab == AddTab.BORROW_MONEY) "Deposit Account" else "Payment Method / Account",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(accounts) { acc ->
-                        val isSelected = selectedAccountId == acc.id
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                HapticHelper.vibrateTick(context)
-                                selectedAccountId = acc.id
-                            },
-                            label = { Text(acc.accountName.ifBlank { acc.bankName }) },
-                            leadingIcon = {
-                                val icon = when (acc.accountType) {
-                                    com.example.data.local.entity.AccountType.CASH -> Icons.Default.Payments
-                                    com.example.data.local.entity.AccountType.WALLET -> Icons.Default.AccountBalanceWallet
-                                    com.example.data.local.entity.AccountType.CREDIT_CARD -> Icons.Default.CreditCard
-                                    else -> Icons.Default.AccountBalance
-                                }
-                                Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
-                            }
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
             // Notes
             OutlinedTextField(
                 value = notes,
@@ -823,6 +839,7 @@ fun AddTransactionSheet(
                         HapticHelper.vibrateError(context)
                         return@Button
                     }
+                    val manualAccId = handCashAccount?.id ?: selectedAccountId
                     when (selectedTab) {
                         AddTab.EXPENSE -> {
                             val cat = selectedCategory ?: categories.firstOrNull { it.type == com.example.data.local.entity.CategoryType.EXPENSE }
@@ -838,7 +855,7 @@ fun AddTransactionSheet(
                                 type = TransactionType.EXPENSE,
                                 categoryId = cat.id,
                                 categoryName = cat.name,
-                                accountId = selectedAccountId,
+                                accountId = manualAccId,
                                 notes = notes,
                                 advanceId = advanceId.takeIf { it.isNotBlank() }
                             )
@@ -849,7 +866,7 @@ fun AddTransactionSheet(
                                     reason = if (description.isNotBlank()) description else cat.name,
                                     category = "Official Expense",
                                     company = "Corporate",
-                                    method = "Corporate Card / UPI",
+                                    method = "Hand Cash",
                                     notes = notes,
                                     advanceId = advanceId.takeIf { it.isNotBlank() }
                                 )
@@ -875,7 +892,7 @@ fun AddTransactionSheet(
                                 type = TransactionType.INCOME,
                                 categoryId = cat.id,
                                 categoryName = cat.name,
-                                accountId = selectedAccountId,
+                                accountId = manualAccId,
                                 notes = notes,
                                 advanceId = cleanAdvId
                             )
@@ -900,7 +917,7 @@ fun AddTransactionSheet(
                                 expectedDate = expectedDate.takeIf { it.isNotBlank() },
                                 notes = notes,
                                 lendId = cleanLendId,
-                                accountId = selectedAccountId
+                                accountId = manualAccId
                             )
                         }
                         AddTab.BORROW_MONEY -> {
@@ -921,7 +938,7 @@ fun AddTransactionSheet(
                                 amount = amt,
                                 borrowDate = dateText,
                                 expectedDate = expectedDate.takeIf { it.isNotBlank() },
-                                accountId = selectedAccountId,
+                                accountId = manualAccId,
                                 borrowId = cleanBorrowId,
                                 notes = notes
                             )
@@ -940,7 +957,7 @@ fun AddTransactionSheet(
                                 type = TransactionType.INVESTMENT,
                                 categoryId = investCat?.id,
                                 categoryName = investCat?.name ?: "Investments",
-                                accountId = selectedAccountId,
+                                accountId = manualAccId,
                                 notes = notes
                             )
                         }
@@ -950,10 +967,24 @@ fun AddTransactionSheet(
                                 viewModel.showMessage("Please enter the company/employer name")
                                 return@Button
                             }
+                            val officialReason = if (description.isNotBlank()) description.trim() else "Official Expense"
+                            val cat = categories.firstOrNull { it.name.equals("Official Expense", ignoreCase = true) }
+                                ?: categories.firstOrNull { it.type == CategoryType.EXPENSE }
+                            viewModel.addManualTransaction(
+                                date = dateText,
+                                description = "$officialReason ($companyName)",
+                                amount = amt,
+                                type = TransactionType.EXPENSE,
+                                categoryId = cat?.id,
+                                categoryName = "Official Expense",
+                                accountId = manualAccId,
+                                notes = notes,
+                                advanceId = advanceId.takeIf { it.isNotBlank() }
+                            )
                             viewModel.addCompanyExpense(
                                 date = dateText,
                                 amount = amt,
-                                reason = if (description.isNotBlank()) description.trim() else "Company Expense",
+                                reason = officialReason,
                                 category = companyCategory,
                                 company = companyName.trim(),
                                 method = paymentMethod,
@@ -976,6 +1007,8 @@ fun AddTransactionSheet(
                             )
                         }
                     }
+                    isSaved = true
+                    viewModel.clearAddTransactionDraft()
                     HapticHelper.vibrateSuccess(context)
                     onDismiss()
                 },

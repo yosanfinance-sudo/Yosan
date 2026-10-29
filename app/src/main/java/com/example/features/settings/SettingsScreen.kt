@@ -946,6 +946,20 @@ fun SettingsScreen(
                         iconColor = MaterialTheme.colorScheme.primary,
                         onClick = { showAccountsDialog = true }
                     )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                    )
+                    MoreMenuItem(
+                        title = "Switch / Add Account",
+                        subtitle = "Switch between user profiles or add another account on this device",
+                        icon = Icons.Default.SwitchAccount,
+                        iconColor = MaterialTheme.colorScheme.primary,
+                        onClick = {
+                            showSwitchAccountDialog = true
+                        }
+                    )
                 }
             }
         }
@@ -1164,20 +1178,6 @@ fun SettingsScreen(
                             resetWizardStep = 1
                             resetConfirmText = ""
                             showResetWizard = true
-                        }
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                    )
-                    MoreMenuItem(
-                        title = "Switch / Add Account",
-                        subtitle = "Switch between user profiles or add another account on this device",
-                        icon = Icons.Default.SwitchAccount,
-                        iconColor = MaterialTheme.colorScheme.primary,
-                        onClick = {
-                            showSwitchAccountDialog = true
                         }
                     )
                     HorizontalDivider(
@@ -1701,13 +1701,6 @@ fun SettingsScreen(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    if (acc.bankName.isNotBlank()) {
-                                        Text(
-                                            text = "Bank: ${acc.bankName}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
                                 }
                                 if (!isCurrent) {
                                     IconButton(
@@ -4454,45 +4447,6 @@ private fun DeveloperDetailsDialog(
                     Column(modifier = Modifier.padding(14.dp)) {
                         Text("Engineering Team", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         Text("Rooparaj & Gokulraj", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Architected with an offline-first, privacy-respecting methodology using Jetpack Compose, Room SQLite, Material 3 design system, and multi-threaded financial reconciliation.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                val currentSha1 = remember { GoogleAuthManager.getSigningCertificateSha1(context) }
-                val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
-                var shaCopied by remember { mutableStateOf(false) }
-
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text("Google Cloud Console Setup", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                        Text("Android OAuth Signing SHA-1", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Package: yosan.finance\nSHA-1: ${currentSha1.ifBlank { "FC:45:DA:2D:AD:7C:D7:79:3C:21:AF:FB:0A:B8:CE:F9:D1:52:CF:CE" }}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                val toCopy = currentSha1.ifBlank { "FC:45:DA:2D:AD:7C:D7:79:3C:21:AF:FB:0A:B8:CE:F9:D1:52:CF:CE" }
-                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(toCopy))
-                                shaCopied = true
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(if (shaCopied) "SHA-1 Copied!" else "Copy SHA-1 Fingerprint")
-                        }
                     }
                 }
 
