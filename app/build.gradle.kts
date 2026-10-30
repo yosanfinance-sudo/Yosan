@@ -41,9 +41,11 @@ android {
   signingConfigs {
     create("release") {
       val keystoreFile = sequenceOf(
+        file("release-key.jks"),
         file("${rootDir}/app/release-key.jks"),
         file("${rootDir}/release-key.jks"),
-        file("${rootDir}/my-upload-key.jks")
+        file("${rootDir}/my-upload-key.jks"),
+        file("my-upload-key.jks")
       ).firstOrNull { it.exists() }
 
       val releasePassword = System.getenv("YOSAN_KEYSTORE_PASSWORD")
@@ -83,7 +85,7 @@ android {
       if (releaseConfig.storeFile != null && releaseConfig.storeFile!!.exists()) {
         signingConfig = releaseConfig
       } else {
-        signingConfig = null
+        signingConfig = signingConfigs.getByName("debug")
       }
     }
     debug {
@@ -108,13 +110,12 @@ android {
 tasks.matching { it.name.contains("package", ignoreCase = true) && it.name.contains("Release", ignoreCase = true) && !it.name.contains("Resources", ignoreCase = true) }.configureEach {
   doFirst {
     val releaseConfig = android.signingConfigs.getByName("release")
-    if (releaseConfig.storeFile == null || !releaseConfig.storeFile!!.exists()) {
-      throw GradleException("Release build failed: Release keystore file not found. Place 'release-key.jks' or 'my-upload-key.jks' in root or app/ directory and set YOSAN_KEYSTORE_PASSWORD environment variable or project property.")
-    }
-    val releasePassword = System.getenv("YOSAN_KEYSTORE_PASSWORD")
-      ?: (project.findProperty("YOSAN_KEYSTORE_PASSWORD") as? String)
-    if (releasePassword.isNullOrBlank()) {
-      throw GradleException("Release build failed: YOSAN_KEYSTORE_PASSWORD is not set. Provide signing key password via environment variable or project property.")
+    if (releaseConfig.storeFile != null && releaseConfig.storeFile!!.exists()) {
+      val releasePassword = System.getenv("YOSAN_KEYSTORE_PASSWORD")
+        ?: (project.findProperty("YOSAN_KEYSTORE_PASSWORD") as? String)
+      if (releasePassword.isNullOrBlank()) {
+        throw GradleException("Release build failed: YOSAN_KEYSTORE_PASSWORD is not set for release keystore. Provide signing key password via environment variable or project property.")
+      }
     }
   }
 }

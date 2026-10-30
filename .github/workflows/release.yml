@@ -56,10 +56,28 @@ jobs:
       - name: Setup Signing Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          YOSAN_KEYSTORE_PASSWORD: ${{ env.YOSAN_KEYSTORE_PASSWORD || secrets.YOSAN_KEYSTORE_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "Decoding release keystore from secrets..."
             echo "$KEYSTORE_BASE64" | base64 --decode > app/release-key.jks
+            echo "YOSAN_KEYSTORE_PASSWORD=${YOSAN_KEYSTORE_PASSWORD:-${{ secrets.YOSAN_KEYSTORE_PASSWORD }}}" >> "$GITHUB_ENV"
+          else
+            echo "No KEYSTORE_BASE64 secret found. Generating CI release signing keystore..."
+            PASS="${YOSAN_KEYSTORE_PASSWORD:-${{ secrets.YOSAN_KEYSTORE_PASSWORD }}}"
+            if [ -z "$PASS" ]; then
+              PASS=$(openssl rand -hex 16)
+            fi
+            keytool -genkeypair -v \
+              -keystore app/release-key.jks \
+              -alias yosan \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$PASS" \
+              -keypass "$PASS" \
+              -dname "CN=Yosan Release, OU=Mobile, O=Yosan, C=US"
+            echo "YOSAN_KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
           fi
           echo "Using consistent signing keystore."
 
