@@ -90,8 +90,6 @@ fun ReportsScreen(
     var showCustomDateDialog by remember { mutableStateOf(false) }
     var selectedAccountId by remember { mutableStateOf<Long?>(null) }
     var selectedCategoryName by remember { mutableStateOf<String?>(null) }
-    var selectedTab by remember { mutableIntStateOf(0) } // 0 = PDF Document Preview, 1 = Data Records
-
     var lastRefreshedTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var isRefreshing by remember { mutableStateOf(false) }
 
@@ -117,8 +115,12 @@ fun ReportsScreen(
     }
 
     // Filtered Records based on user criteria
-    val filteredTransactions = remember(allTransactions, selectedDateRange, customStartDate, customEndDate, selectedAccountId, selectedCategoryName) {
+    val filteredTransactions = remember(allTransactions, selectedReportType, selectedDateRange, customStartDate, customEndDate, selectedAccountId, selectedCategoryName) {
         allTransactions.filter { tx ->
+            val matchesCash = if (selectedReportType == ReportType.HAND_CASH) {
+                viewModel.isCashTransaction(tx)
+            } else true
+            matchesCash &&
             ExportService.matchesDateRange(tx.transactionDate, selectedDateRange, customStartDate, customEndDate) &&
                     (selectedAccountId == null || tx.accountId == selectedAccountId) &&
                     (selectedCategoryName == null || tx.categoryName.equals(selectedCategoryName, ignoreCase = true))
@@ -290,61 +292,7 @@ fun ReportsScreen(
             .fillMaxSize()
             .testTag("reports_screen")
     ) {
-        // 1. Live Sync & Refresh Bar
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Sync,
-                        contentDescription = null,
-                        tint = IncomeGreen,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Column {
-                        Text(
-                            text = "Live Sync: Device Records Active",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Refreshed: ${DateUtils.formatDateTime(lastRefreshedTime)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                IconButton(
-                    onClick = {
-                        HapticHelper.vibrateClick(context)
-                        isRefreshing = true
-                        lastRefreshedTime = System.currentTimeMillis()
-                        viewModel.showMessage("Reports synced with latest financial records.")
-                        isRefreshing = false
-                    },
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Sync Data",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-        }
-
-        // 2. Report Type Selector Chips
+        // 1. Report Type Selector Chips
         Text(
             text = "Report Type",
             style = MaterialTheme.typography.labelMedium,
@@ -473,46 +421,13 @@ fun ReportsScreen(
             }
         }
 
-        // 5. Segmented Tabs: [ PDF Document Preview ] vs [ Data Records ]
-        val recordCount = when (selectedReportType) {
-            ReportType.PERSONAL_EXPENSE -> filteredTransactions.count { it.transactionType == TransactionType.EXPENSE }
-            ReportType.COMPANY_EXPENSE -> filteredCompanyExpenses.size
-            ReportType.INCOME -> filteredTransactions.count { it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND }
-            ReportType.CATEGORY_SPENDING -> categoryBreakdown.size
-            ReportType.BORROWING -> ExportService.computeBorrowSummaries(filteredTransactions).size
-            ReportType.LENDING -> filteredLoans.size
-            ReportType.INVESTMENT -> filteredTransactions.count { it.transactionType == TransactionType.INVESTMENT }
-            ReportType.TRANSFERS -> filteredTransactions.count { it.transactionType == TransactionType.TRANSFER }
-            ReportType.OVERALL_SUMMARY -> filteredTransactions.size
-        }
-
-        TabRow(
-            selectedTabIndex = selectedTab,
-            modifier = Modifier.fillMaxWidth()
+        // 5. In-App PDF Document Preview
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(16.dp)
         ) {
-            Tab(
-                selected = selectedTab == 0,
-                onClick = { selectedTab = 0 },
-                text = { Text("PDF Preview") },
-                icon = { Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp)) }
-            )
-            Tab(
-                selected = selectedTab == 1,
-                onClick = { selectedTab = 1 },
-                text = { Text("Records ($recordCount)") },
-                icon = { Icon(Icons.Default.ListAlt, contentDescription = null, modifier = Modifier.size(16.dp)) }
-            )
-        }
-
-        // 6. Tab Content
-        if (selectedTab == 0) {
-            // Tab 0: In-App PDF Document Preview
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentPadding = PaddingValues(16.dp)
-            ) {
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -679,244 +594,6 @@ fun ReportsScreen(
                                     }
                                 }
                             }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Tab 1: On-Screen Data Records List
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Summary Metric Card
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Text(
-                                text = selectedReportType.displayName,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Period: $periodLabel • $recordCount entries",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            when (selectedReportType) {
-                                ReportType.PERSONAL_EXPENSE -> {
-                                    val total = filteredTransactions.filter { it.transactionType == TransactionType.EXPENSE }
-                                        .sumOf { if (it.debitAmount > 0) it.debitAmount else it.amount }
-                                    Text(
-                                        text = "Total Expenses: ${CurrencyFormatter.formatInr(total)}",
-                                        fontWeight = FontWeight.Bold,
-                                        color = ExpenseRed
-                                    )
-                                }
-                                ReportType.COMPANY_EXPENSE -> {
-                                    val total = filteredCompanyExpenses.sumOf { it.amount }
-                                    val rem = filteredCompanyExpenses.filter { it.isReimbursed }.sumOf { it.amount }
-                                    Text(text = "Total Claimed: ${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
-                                    Text(text = "Reimbursed: ${CurrencyFormatter.formatInr(rem)}", color = IncomeGreen, fontWeight = FontWeight.SemiBold)
-                                }
-                                ReportType.INCOME -> {
-                                    val total = filteredTransactions.filter { it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND }
-                                        .sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
-                                    Text(
-                                        text = "Total Income: ${CurrencyFormatter.formatInr(total)}",
-                                        fontWeight = FontWeight.Bold,
-                                        color = IncomeGreen
-                                    )
-                                }
-                                ReportType.LENDING -> {
-                                    val total = filteredLoans.sumOf { it.amount }
-                                    val due = filteredLoans.sumOf { it.remainingAmount }
-                                    Text(text = "Total Lent: ${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
-                                    Text(text = "Outstanding Due: ${CurrencyFormatter.formatInr(due)}", color = ExpenseRed, fontWeight = FontWeight.SemiBold)
-                                }
-                                ReportType.BORROWING -> {
-                                    val borrows = ExportService.computeBorrowSummaries(filteredTransactions)
-                                    val total = borrows.sumOf { it.totalBorrowed }
-                                    val due = borrows.sumOf { it.remainingDebt }
-                                    Text(text = "Total Borrowed: ${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
-                                    Text(text = "Outstanding Debt: ${CurrencyFormatter.formatInr(due)}", color = ExpenseRed, fontWeight = FontWeight.SemiBold)
-                                }
-                                else -> {
-                                    Text(
-                                        text = "Net Balance: ${CurrencyFormatter.formatInr(filteredSummary.currentBalance)}",
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        text = "Total Income: ${CurrencyFormatter.formatInr(filteredSummary.totalIncome)}",
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = IncomeGreen
-                                    )
-                                    Text(
-                                        text = "Total Expenses: ${CurrencyFormatter.formatInr(filteredSummary.totalExpense)}",
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = ExpenseRed
-                                    )
-                                    Text(
-                                        text = "Total Money Lent: ${CurrencyFormatter.formatInr(filteredSummary.moneyLent)}",
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "Total Money Borrowed: ${CurrencyFormatter.formatInr(filteredSummary.borrowingMetrics.totalBorrowed)}",
-                                        fontWeight = FontWeight.Bold,
-                                        color = OutstandingAmber
-                                    )
-                                    if (filteredSummary.borrowingMetrics.outstandingBorrowing > 0) {
-                                        Text(
-                                            text = "Outstanding Debt: ${CurrencyFormatter.formatInr(filteredSummary.borrowingMetrics.outstandingBorrowing)}",
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = ExpenseRed
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Render list items
-                if (recordCount == 0) {
-                    item {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 24.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FilterListOff,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.outline,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Text(
-                                    text = "No records found",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "No entries match the selected report type and filters for $periodLabel.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    when (selectedReportType) {
-                        ReportType.COMPANY_EXPENSE -> {
-                            items(filteredCompanyExpenses, key = { it.id }) { exp ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(text = exp.companyName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(text = "${exp.date} • ${exp.category}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        Column(horizontalAlignment = Alignment.End) {
-                                            Text(text = CurrencyFormatter.formatInr(exp.amount), fontWeight = FontWeight.Bold)
-                                            Text(
-                                                text = if (exp.isReimbursed) "Reimbursed" else "Pending",
-                                                color = if (exp.isReimbursed) IncomeGreen else ExpenseRed,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        ReportType.LENDING -> {
-                            items(filteredLoans, key = { it.id }) { loan ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(text = loan.personName.ifBlank { "Contact / Borrower" }, fontWeight = FontWeight.Bold)
-                                            Text(text = "Lent: ${loan.lentDate} • Status: ${loan.status}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        Column(horizontalAlignment = Alignment.End) {
-                                            Text(text = "Due: ${CurrencyFormatter.formatInr(loan.remainingAmount)}", color = ExpenseRed, fontWeight = FontWeight.Bold)
-                                            Text(text = "Lent: ${CurrencyFormatter.formatInr(loan.amount)}", style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        else -> {
-                            val txList = when (selectedReportType) {
-                                ReportType.PERSONAL_EXPENSE -> filteredTransactions.filter { it.transactionType == TransactionType.EXPENSE }
-                                ReportType.INCOME -> filteredTransactions.filter { it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND }
-                                ReportType.INVESTMENT -> filteredTransactions.filter { it.transactionType == TransactionType.INVESTMENT }
-                                ReportType.TRANSFERS -> filteredTransactions.filter { it.transactionType == TransactionType.TRANSFER }
-                                else -> filteredTransactions
-                            }
-                            items(txList, key = { it.id }) { tx ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(text = tx.description, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(text = "${tx.transactionDate} • ${tx.categoryName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        val isIncome = tx.transactionType == TransactionType.INCOME || tx.creditAmount > 0
-                                        Text(
-                                            text = "${if (isIncome) "+" else "-"}${CurrencyFormatter.formatInr(tx.amount)}",
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isIncome) IncomeGreen else ExpenseRed
-                                        )
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
             }

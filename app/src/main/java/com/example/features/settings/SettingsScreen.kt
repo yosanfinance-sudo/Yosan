@@ -1229,7 +1229,7 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "YOSAN FINANCE MANAGER",
+                            text = "YOSAN",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
@@ -1258,12 +1258,6 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Tap for developer info, repository & architecture details",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -2448,27 +2442,6 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = IncomeGreen,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "Google Drive Connected",
-                                        fontWeight = FontWeight.Bold,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = IncomeGreen
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "Account: $connectedDriveEmail",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                                 val currentVer = driveStatus?.currentBackupVersion ?: 1
                                 Text(
                                     text = "Current Version: v${String.format(Locale.getDefault(), "%04d", currentVer)} (detailsaboutbackup.json)",
@@ -2476,6 +2449,7 @@ fun SettingsScreen(
                                     fontWeight = FontWeight.SemiBold,
                                     color = IncomeGreen
                                 )
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Folder: Yosan-Backup/ • Snapshots: Yosan-Backup/versions/",
                                     style = MaterialTheme.typography.labelSmall,
@@ -2483,7 +2457,7 @@ fun SettingsScreen(
                                 )
                                 driveStatus?.lastBackupAt?.let { lastAt ->
                                     val formattedDate = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(lastAt))
-                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = "Last synced: $formattedDate",
                                         style = MaterialTheme.typography.bodySmall,
@@ -2493,12 +2467,6 @@ fun SettingsScreen(
                                 }
                             }
                         }
-
-                        Text(
-                            text = "Backups are stored as detailsaboutbackup.json in your private Yosan-Backup folder with historical recovery snapshots in versions/.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
 
                         // 1. Sync & Back Up Now
                         Button(

@@ -98,6 +98,7 @@ private data class FilterParams(
     val accFilter: Long?
 )
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 class FinanceViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = AppDatabase.getDatabase(application, viewModelScope)
@@ -398,6 +399,33 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         showMessage = ::showMessage
     )
 
+    private var autoBackupJob: Job? = null
+    fun triggerAutoBackup() {
+        autoBackupJob?.cancel()
+        autoBackupJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(3500L)
+            try {
+                if (com.example.features.sync.SyncManager.isRestoring ||
+                    System.currentTimeMillis() - com.example.features.sync.SyncManager.lastRestoredTimeMs < 10000L
+                ) {
+                    return@launch
+                }
+                val tokenManager = com.example.utils.SecureTokenManager(getApplication())
+                val isDriveConnected = !tokenManager.getDriveAccessToken().isNullOrBlank()
+                val isLiveSync = tokenManager.isLiveSyncEnabled()
+                if (isDriveConnected && isLiveSync) {
+                    val syncManager = com.example.features.sync.SyncManager(getApplication(), database, tokenManager)
+                    if (syncManager.isOnline()) {
+                        android.util.Log.d("FinanceViewModel", "Live Sync: auto-backing up to Google Drive...")
+                        syncManager.triggerSync()
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("FinanceViewModel", "Auto-backup failed: ${e.message}")
+            }
+        }
+    }
+
     private val statementImportCoordinator: StatementImportCoordinator = StatementImportCoordinator(
         database = database,
         repository = repository,
@@ -407,6 +435,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         showMessage = ::showMessage,
         onImportSuccess = {
             companyExpenseCoordinator.scanForCompanyExpenses()
+            triggerAutoBackup()
         }
     )
 
@@ -419,7 +448,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         allTransactionsFlow = allTransactions,
         accountsFlow = accounts,
         showMessage = ::showMessage,
-        onTransactionMutated = { companyExpenseCoordinator.scanForCompanyExpenses() },
+        onTransactionMutated = {
+            companyExpenseCoordinator.scanForCompanyExpenses()
+            triggerAutoBackup()
+        },
         onSmartRuleSuggested = { prompt -> categoryRuleCoordinator.setSmartRulePrompt(prompt) },
         onAllDataCleared = { onComplete ->
             statementImportCoordinator.clearImportPreview()
@@ -427,6 +459,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             companyExpenseCoordinator.clearPrompts()
             categoryRuleCoordinator.dismissSmartRule()
             clearFilters()
+            triggerAutoBackup()
             onComplete?.invoke()
         }
     )
@@ -436,7 +469,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         transactionRepository = transactionRepository,
         scope = viewModelScope,
         showMessage = ::showMessage,
-        onSyncFinished = { companyExpenseCoordinator.scanForCompanyExpenses() }
+        onSyncFinished = {
+            companyExpenseCoordinator.scanForCompanyExpenses()
+            triggerAutoBackup()
+        }
     )
 
     // Exposed Flows from Coordinators
@@ -617,39 +653,28 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
                 excelSyncCoordinator.loadSyncMetadata()
 
+                // Clean up all predefined system categories as requested
+                database.categoryDao().deleteSystemCategories()
+
                 val existingCats = database.categoryDao().getAllCategoriesList()
-                if (existingCats.isEmpty()) {
-                    database.categoryDao().insertCategories(CategoryEntity.DEFAULT_CATEGORIES)
-                } else {
-                    val seenCats = mutableMapOf<String, CategoryEntity>()
-                    val allTxs = database.transactionDao().getAllTransactionsList()
-                    for (cat in existingCats) {
-                        val key = "${cat.name.trim().lowercase()}_${cat.type}"
-                        val surviving = seenCats[key]
-                        if (surviving != null) {
-                            // Relink any transaction referencing the duplicate category to the surviving one
-                            allTxs.filter { it.categoryId == cat.id }.forEach { tx ->
-                                database.transactionDao().updateTransactionCategory(
-                                    tx.id,
-                                    surviving.id,
-                                    surviving.name,
-                                    tx.transactionType
-                                )
-                            }
-                            database.categoryDao().deleteCategory(cat.id)
-                        } else {
-                            seenCats[key] = cat
+                val seenCats = mutableMapOf<String, CategoryEntity>()
+                val allTxs = database.transactionDao().getAllTransactionsList()
+                for (cat in existingCats) {
+                    val key = "${cat.name.trim().lowercase()}_${cat.type}"
+                    val surviving = seenCats[key]
+                    if (surviving != null) {
+                        // Relink any transaction referencing the duplicate category to the surviving one
+                        allTxs.filter { it.categoryId == cat.id }.forEach { tx ->
+                            database.transactionDao().updateTransactionCategory(
+                                tx.id,
+                                surviving.id,
+                                surviving.name,
+                                tx.transactionType
+                            )
                         }
-                    }
-                    if (database.categoryDao().getCategoryByName("EMI") == null) {
-                        database.categoryDao().insertCategory(
-                            CategoryEntity(name = "EMI", type = CategoryType.EXPENSE, colorHex = "#E11D48", iconName = "receipt_long", isSystem = true)
-                        )
-                    }
-                    if (database.categoryDao().getCategoryByName("Advance") == null) {
-                        database.categoryDao().insertCategory(
-                            CategoryEntity(name = "Advance", type = CategoryType.INCOME, colorHex = "#0284C7", iconName = "account_balance_wallet", isSystem = true)
-                        )
+                        database.categoryDao().deleteCategory(cat.id)
+                    } else {
+                        seenCats[key] = cat
                     }
                 }
 
@@ -665,6 +690,20 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             } catch (_: Exception) {}
 
             companyExpenseCoordinator.scanForCompanyExpenses()
+        }
+
+        // Live Sync reactive auto-backup on database changes across devices
+        viewModelScope.launch(Dispatchers.IO) {
+            _isDataLoaded.first { it }
+            delay(3000L)
+            combine(allTransactions, accounts, loans, companyExpenses) { txs, accs, lns, exps ->
+                listOf(txs.size, accs.size, lns.size, exps.size)
+            }
+            .drop(1)
+            .debounce(4000L)
+            .collect {
+                triggerAutoBackup()
+            }
         }
     }
 

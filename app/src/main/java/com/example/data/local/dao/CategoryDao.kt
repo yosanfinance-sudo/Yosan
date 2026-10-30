@@ -39,4 +39,7 @@ interface CategoryDao {
 
     @Query("SELECT * FROM categories ORDER BY name ASC")
     suspend fun getAllCategoriesList(): List<CategoryEntity>
+
+    @Query("DELETE FROM categories WHERE isSystem = 1")
+    suspend fun deleteSystemCategories()
 }

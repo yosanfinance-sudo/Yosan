@@ -1161,6 +1161,13 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun syncWithDriveIfNewer(onResult: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch {
+            val restored = syncManager.syncWithDriveIfNewer(tokenManager.getUserEmail())
+            onResult?.invoke(restored)
+        }
+    }
+
     // ─── Email OTP Authentication & Verification ──────────────────────────────
 
     fun sendOtp(email: String, purpose: String = "LOGIN", onResult: ((Boolean, String?) -> Unit)? = null) {
@@ -1816,7 +1823,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     database.syncDao().clearAllDeletedTransactions()
                     database.syncDao().deleteAllMetadata()
                     database.categoryDao().deleteAllCategories()
-                    database.categoryDao().insertCategories(com.example.data.local.entity.CategoryEntity.DEFAULT_CATEGORIES)
                     database.clearAllTables()
                 } catch (_: Exception) {}
             }

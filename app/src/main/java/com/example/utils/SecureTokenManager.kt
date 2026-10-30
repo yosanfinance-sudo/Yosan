@@ -360,6 +360,20 @@ class SecureTokenManager(context: Context) {
         }
     }
 
+    fun isLiveSyncEnabled(): Boolean {
+        if (sharedPreferences.contains("is_live_sync_enabled")) {
+            return sharedPreferences.getBoolean("is_live_sync_enabled", true)
+        }
+        return getStoragePreference() != "LOCAL" || !getDriveAccessToken().isNullOrBlank()
+    }
+
+    fun setLiveSyncEnabled(enabled: Boolean) {
+        sharedPreferences.edit().putBoolean("is_live_sync_enabled", enabled).apply()
+        if (enabled && getStoragePreference() == "LOCAL") {
+            setStoragePreference("DRIVE")
+        }
+    }
+
     fun isLoggedIn(): Boolean {
         return !getUserEmail().isNullOrBlank() && !getGoogleSub().isNullOrBlank()
     }

@@ -51,7 +51,14 @@ class SyncManager(
     private val database: AppDatabase,
     private val tokenManager: SecureTokenManager
 ) {
-    private val TAG = "SyncManager"
+    companion object {
+        private const val TAG = "SyncManager"
+        @Volatile
+        var isRestoring: Boolean = false
+        @Volatile
+        var lastRestoredTimeMs: Long = 0L
+    }
+
     private val driveService = GoogleDriveService(context, tokenManager)
 
     private val _storageMode = MutableStateFlow(StorageMode.fromKey(tokenManager.getStoragePreference()))
@@ -220,5 +227,64 @@ class SyncManager(
             onResult?.invoke(false, errMsg)
             false
         }
+    }
+
+    /**
+     * Checks if Google Drive has a newer backup than local database (e.g. uploaded from another device).
+     * If newer, automatically restores it so both devices stay synchronized seamlessly.
+     */
+    suspend fun syncWithDriveIfNewer(userEmail: String? = null): Boolean = withContext(Dispatchers.IO) {
+        if (!isOnline()) return@withContext false
+        val driveToken = tokenManager.getDriveAccessToken()
+        if (driveToken.isNullOrBlank() || !driveService.isConnected()) return@withContext false
+        if (!tokenManager.isLiveSyncEnabled()) return@withContext false
+
+        try {
+            val targetEmail = userEmail ?: tokenManager.getUserEmail()
+            val latestJson = driveService.getLatestBackupContent(driveToken, targetEmail) ?: return@withContext false
+            val root = org.json.JSONObject(latestJson)
+            val remoteVersion = root.optInt("version", root.optInt("backup_version", 0))
+            val remoteCreatedAt = root.optLong("createdAt", 0L)
+
+            val localVersion = database.syncDao().getMetadataValue("current_backup_version")?.toIntOrNull() ?: 0
+            val localTimestamp = database.syncDao().getMetadataValue("last_backup_timestamp")?.toLongOrNull() ?: 0L
+
+            val isRemoteNewer = when {
+                remoteCreatedAt > 0L && localTimestamp > 0L -> remoteCreatedAt > (localTimestamp + 2000L)
+                remoteVersion > localVersion -> true
+                localTimestamp == 0L && (remoteCreatedAt > 0L || remoteVersion > 0) -> true
+                else -> false
+            }
+
+            if (isRemoteNewer) {
+                Log.i(TAG, "Newer Google Drive backup found (remote v$remoteVersion, time $remoteCreatedAt vs local v$localVersion, time $localTimestamp). Auto-restoring for two-device sync...")
+                isRestoring = true
+                val restoreResult = try {
+                    BackupService.restoreBackupJson(latestJson, database, clearExisting = true)
+                } finally {
+                    isRestoring = false
+                }
+                if (restoreResult.success) {
+                    val finalTimestamp = if (remoteCreatedAt > 0L) remoteCreatedAt else System.currentTimeMillis()
+                    lastRestoredTimeMs = System.currentTimeMillis()
+                    database.syncDao().setMetadata(SyncMetadataEntity("current_backup_version", remoteVersion.toString()))
+                    database.syncDao().setMetadata(SyncMetadataEntity("last_backup_timestamp", finalTimestamp.toString()))
+                    database.syncDao().setMetadata(SyncMetadataEntity("sync_status", "SYNCED"))
+                    _syncStatus.value = SyncStatusInfo(
+                        state = SyncState.SYNCED,
+                        lastSyncTimeMs = finalTimestamp,
+                        currentVersion = remoteVersion,
+                        errorMessage = null
+                    )
+                    Log.i(TAG, "Multi-device auto-sync successfully updated local database to version $remoteVersion.")
+                    return@withContext true
+                } else {
+                    Log.w(TAG, "Auto-restore failed: ${restoreResult.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "syncWithDriveIfNewer check failed: ${e.message}")
+        }
+        false
     }
 }

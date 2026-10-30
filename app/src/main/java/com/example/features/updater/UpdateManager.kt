@@ -527,7 +527,7 @@ class UpdateManager(
             val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("You got an update")
-                .setContentText("You got an update")
+                .setContentText("Tap to view details and update")
                 .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)

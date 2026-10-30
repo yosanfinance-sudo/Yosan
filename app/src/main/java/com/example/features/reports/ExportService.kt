@@ -16,6 +16,7 @@ import java.io.FileOutputStream
 
 enum class ReportType(val displayName: String, val description: String) {
     OVERALL_SUMMARY("Overall Financial Summary", "Consolidated income, expense, cash flow, debt, and claims performance."),
+    HAND_CASH("Hand Cash Statement", "Statement of physical hand cash transactions, inflows, and balance."),
     PERSONAL_EXPENSE("Personal Expense Report", "Detailed breakdown of all personal living expenses and outflows."),
     COMPANY_EXPENSE("Official Company Expenses", "Audit log of official expenses, claim submissions, and reimbursements."),
     INCOME("Income Report", "All income streams, salary deposits, freelance credits, and refunds."),
@@ -231,7 +232,11 @@ object ExportService {
         sb.append("Total Repayments Received:  ${CurrencyFormatter.formatInr(summary.totalRepaid)}\n")
         sb.append("Total Outstanding Loans:    ${CurrencyFormatter.formatInr(summary.totalOutstanding)}\n")
         sb.append("Total Money Borrowed:       ${CurrencyFormatter.formatInr(summary.borrowingMetrics.totalBorrowed)}\n")
-        sb.append("Outstanding Borrowed Debt:  ${CurrencyFormatter.formatInr(summary.borrowingMetrics.outstandingBorrowing)}\n\n")
+        sb.append("Outstanding Borrowed Debt:  ${CurrencyFormatter.formatInr(summary.borrowingMetrics.outstandingBorrowing)}\n")
+        val cashTxs = allTransactions.filter { it.isManual || it.source.contains("CASH", ignoreCase = true) || it.source.contains("MANUAL", ignoreCase = true) }
+        val cashInflow = cashTxs.filter { it.transactionType == TransactionType.INCOME || it.creditAmount > 0 }.sumOf { if (it.creditAmount > 0.0) it.creditAmount else it.amount }
+        val cashOutflow = cashTxs.filter { it.transactionType == TransactionType.EXPENSE || it.debitAmount > 0 }.sumOf { if (it.debitAmount > 0.0) it.debitAmount else it.amount }
+        sb.append("In-Hand Cash Balance:       ${CurrencyFormatter.formatInr(cashInflow - cashOutflow)}\n\n")
 
         if (monthlyTrends.isNotEmpty()) {
             sb.append("--- 2. MONTHLY CASH FLOW BREAKDOWN ---\n")
@@ -405,6 +410,7 @@ object ExportService {
 
             val reportHeaderTitle = when (reportType) {
                 ReportType.OVERALL_SUMMARY -> "YOSAN FINANCIAL SUMMARY REPORT"
+                ReportType.HAND_CASH -> "YOSAN HAND CASH STATEMENT"
                 ReportType.PERSONAL_EXPENSE -> "YOSAN PERSONAL EXPENSE REPORT"
                 ReportType.COMPANY_EXPENSE -> "YOSAN OFFICIAL COMPANY EXPENSES"
                 ReportType.INCOME -> "YOSAN INCOME & EARNINGS REPORT"
@@ -450,13 +456,19 @@ object ExportService {
                     var canvas = startNewPage("Financial Overview & Monthly Breakdown")
 
                     // 1. Overview Summary Card
+                    val cashTxs = allTransactions.filter { it.isManual || it.source.contains("CASH", ignoreCase = true) || it.source.contains("MANUAL", ignoreCase = true) }
+                    val cashInflow = cashTxs.filter { it.transactionType == TransactionType.INCOME || it.creditAmount > 0 }.sumOf { if (it.creditAmount > 0.0) it.creditAmount else it.amount }
+                    val cashOutflow = cashTxs.filter { it.transactionType == TransactionType.EXPENSE || it.debitAmount > 0 }.sumOf { if (it.debitAmount > 0.0) it.debitAmount else it.amount }
+                    val inHandCashBalance = cashInflow - cashOutflow
+
                     canvas.drawText("Overview Summary", 30f, currentY, sectionTitlePaint)
-                    canvas.drawRoundRect(30f, currentY + 8f, 565f, currentY + 244f, 10f, 10f, cardBgPaint)
-                    canvas.drawRoundRect(30f, currentY + 8f, 565f, currentY + 244f, 10f, 10f, cardBorderPaint)
+                    canvas.drawRoundRect(30f, currentY + 8f, 565f, currentY + 266f, 10f, 10f, cardBgPaint)
+                    canvas.drawRoundRect(30f, currentY + 8f, 565f, currentY + 266f, 10f, 10f, cardBorderPaint)
 
                     var y = currentY + 28f
                     val overviewMetrics = listOf(
                         "Current Net Balance" to summary.currentBalance,
+                        "In-Hand Cash Balance" to inHandCashBalance,
                         "Total Income Recorded" to summary.totalIncome,
                         "Total Personal Expenses" to summary.totalExpense,
                         "Official Company Expenses" to summary.companyExpense,
@@ -477,7 +489,7 @@ object ExportService {
                         y += 22f
                     }
 
-                    currentY = currentY + 264f
+                    currentY = currentY + 286f
 
                     // 2. Monthly Trends Table
                     if (monthlyTrends.isNotEmpty()) {
@@ -1211,6 +1223,81 @@ object ExportService {
                             canvas.drawText(tx.referenceNumber.ifBlank { "N/A" }.take(16), 350f, rowY, textPaint)
                             textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
                             canvas.drawText(formatInr(tx.amount), 550f - textPaint.measureText(formatInr(tx.amount)), rowY, textPaint)
+                            rowY += 20f
+                        }
+                    }
+                }
+
+                ReportType.HAND_CASH -> {
+                    val cashTxs = allTransactions.filter {
+                        it.isManual || it.source.contains("CASH", ignoreCase = true) || it.source.contains("MANUAL", ignoreCase = true)
+                    }
+                    var canvas = startNewPage("Physical Hand Cash & Wallet Balance Flow")
+
+                    canvas.drawText("Hand Cash Overview", 30f, currentY, sectionTitlePaint)
+                    val cardBottom = currentY + 110f
+                    canvas.drawRoundRect(30f, currentY + 8f, 565f, cardBottom, 10f, 10f, cardBgPaint)
+                    canvas.drawRoundRect(30f, currentY + 8f, 565f, cardBottom, 10f, 10f, cardBorderPaint)
+
+                    var y = currentY + 30f
+                    val cashInflow = cashTxs.filter { it.transactionType == TransactionType.INCOME || it.creditAmount > 0 }
+                        .sumOf { if (it.creditAmount > 0.0) it.creditAmount else it.amount }
+                    val cashOutflow = cashTxs.filter { it.transactionType == TransactionType.EXPENSE || it.debitAmount > 0 }
+                        .sumOf { if (it.debitAmount > 0.0) it.debitAmount else it.amount }
+                    val cashBalance = cashInflow - cashOutflow
+
+                    textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                    canvas.drawText("Total Hand Cash Inflow:", 45f, y, textPaint)
+                    textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                    canvas.drawText(formatInr(cashInflow), 550f - textPaint.measureText(formatInr(cashInflow)), y, positivePaint)
+
+                    y += 22f
+                    textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                    canvas.drawText("Total Hand Cash Outflow:", 45f, y, textPaint)
+                    textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                    canvas.drawText(formatInr(cashOutflow), 550f - textPaint.measureText(formatInr(cashOutflow)), y, negativePaint)
+
+                    y += 22f
+                    textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                    canvas.drawText("Net Hand Cash Balance:", 45f, y, textPaint)
+                    val netPaint = if (cashBalance >= 0) positivePaint else negativePaint
+                    canvas.drawText(formatInr(cashBalance), 550f - textPaint.measureText(formatInr(cashBalance)), y, netPaint)
+
+                    y += 22f
+                    textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                    canvas.drawText("Total Cash Transactions:", 45f, y, textPaint)
+                    textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                    canvas.drawText("${cashTxs.size}", 550f - textPaint.measureText("${cashTxs.size}"), y, textPaint)
+
+                    currentY = cardBottom + 20f
+
+                    if (cashTxs.isEmpty()) {
+                        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                        canvas.drawText("No physical hand cash records found for this period.", 45f, currentY + 20f, textPaint)
+                    } else {
+                        val tableH = (cashTxs.size * 20f + 36f).coerceAtLeast(60f)
+                        val tableB = currentY + 8f + tableH
+                        canvas.drawRoundRect(30f, currentY + 8f, 565f, tableB, 10f, 10f, cardBgPaint)
+                        canvas.drawRoundRect(30f, currentY + 8f, 565f, tableB, 10f, 10f, cardBorderPaint)
+
+                        val hdrY = currentY + 26f
+                        textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                        canvas.drawText("Date", 45f, hdrY, textPaint)
+                        canvas.drawText("Description", 135f, hdrY, textPaint)
+                        canvas.drawText("Category", 330f, hdrY, textPaint)
+                        canvas.drawText("Amount", 480f, hdrY, textPaint)
+                        canvas.drawLine(40f, hdrY + 5f, 555f, hdrY + 5f, linePaint)
+
+                        var rowY = hdrY + 18f
+                        cashTxs.forEach { tx ->
+                            val isIncome = tx.transactionType == TransactionType.INCOME || tx.creditAmount > 0
+                            textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                            canvas.drawText(tx.transactionDate, 45f, rowY, textPaint)
+                            canvas.drawText(tx.description.take(24), 135f, rowY, textPaint)
+                            canvas.drawText(tx.categoryName.take(16), 330f, rowY, textPaint)
+                            val amtPaint = if (isIncome) positivePaint else negativePaint
+                            val amtStr = "${if (isIncome) "+" else "-"}${formatInr(tx.amount)}"
+                            canvas.drawText(amtStr, 550f - amtPaint.measureText(amtStr), rowY, amtPaint)
                             rowY += 20f
                         }
                     }

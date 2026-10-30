@@ -44,11 +44,5 @@ object DatabaseInitializer {
                 )
             )
         }
-
-        // 2. Ensure Essential Default Categories exist
-        val existingCats = categoryDao.getAllCategoriesList()
-        if (existingCats.isEmpty()) {
-            categoryDao.insertCategories(CategoryEntity.DEFAULT_CATEGORIES)
-        }
     }
 }

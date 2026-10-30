@@ -72,24 +72,26 @@ class SettingsAndPreferencesTest {
     @Test
     fun testCategorySystemProtectionAndValidation() {
         val defaultCategories = CategoryEntity.DEFAULT_CATEGORIES
+        assertTrue(defaultCategories.isEmpty())
 
-        // All system categories must have isSystem == true
-        val systemCount = defaultCategories.count { it.isSystem }
-        assertEquals(defaultCategories.size, systemCount)
+        val sampleCategories = listOf(
+            CategoryEntity(id = 1, name = "Food & Dining", type = CategoryType.EXPENSE, isSystem = true),
+            CategoryEntity(id = 2, name = "Groceries & Mart", type = CategoryType.EXPENSE, isSystem = true)
+        )
 
         // Duplicate name detection logic
         val isDuplicate = { newName: String, existing: List<CategoryEntity> ->
             existing.any { it.name.trim().equals(newName.trim(), ignoreCase = true) }
         }
 
-        assertTrue(isDuplicate("Food & Dining", defaultCategories))
-        assertTrue(isDuplicate("food & dining", defaultCategories))
-        assertTrue(isDuplicate("  GROCERIES & MART  ", defaultCategories))
-        assertFalse(isDuplicate("New Custom Category", defaultCategories))
+        assertTrue(isDuplicate("Food & Dining", sampleCategories))
+        assertTrue(isDuplicate("food & dining", sampleCategories))
+        assertTrue(isDuplicate("  GROCERIES & MART  ", sampleCategories))
+        assertFalse(isDuplicate("New Custom Category", sampleCategories))
 
         // Safe deletion guard
         val canDelete = { cat: CategoryEntity -> !cat.isSystem }
-        val systemCat = defaultCategories.first()
+        val systemCat = sampleCategories.first()
         assertFalse("System category must not be deletable", canDelete(systemCat))
 
         val customCat = CategoryEntity(id = 999, name = "Custom Category", type = CategoryType.EXPENSE, isSystem = false)

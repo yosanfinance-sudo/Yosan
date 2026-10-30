@@ -275,6 +275,10 @@ class MainActivity : FragmentActivity() {
                                     }
                                 }
                             }
+                            // Multi-device sync: check if newer backup exists on Google Drive (Telegram-style sync)
+                            if (isAuthenticated) {
+                                authViewModel.syncWithDriveIfNewer()
+                            }
                         }
                         else -> {}
                     }
@@ -282,6 +286,16 @@ class MainActivity : FragmentActivity() {
                 lifecycleOwner.lifecycle.addObserver(observer)
                 onDispose {
                     lifecycleOwner.lifecycle.removeObserver(observer)
+                }
+            }
+
+            // Periodic live sync check while app is active in foreground
+            LaunchedEffect(isAuthenticated, activeUserKey) {
+                if (isAuthenticated) {
+                    while (true) {
+                        kotlinx.coroutines.delay(30_000L)
+                        authViewModel.syncWithDriveIfNewer()
+                    }
                 }
             }
 

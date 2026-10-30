@@ -680,7 +680,6 @@ class TransactionCoordinator(
                 database.syncDao().deleteAllMetadata()
 
                 database.categoryDao().deleteAllCategories()
-                database.categoryDao().insertCategories(CategoryEntity.DEFAULT_CATEGORIES)
 
                 val resetProfile = UserProfileEntity(
                     id = 1,
