@@ -121,12 +121,12 @@ jobs:
           APP_VERSION_CODE: ${{ steps.release_info.outputs.version_code }}
           BACKEND_URL: ${{ secrets.BACKEND_URL || 'https://yosan-xgsd.onrender.com/' }}
           YOSAN_KEYSTORE_PASSWORD: ${{ secrets.YOSAN_KEYSTORE_PASSWORD }}
-        run: ./gradlew assembleRelease --stacktrace
+        run: ./gradlew assembleGithubRelease --stacktrace
 
       - name: Locate Generated APK
         id: find_apk
         run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          APK_PATH=$(find app/build/outputs/apk -name "*release*.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
             echo "Error: No APK found!"
             exit 1

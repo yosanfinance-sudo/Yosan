@@ -120,6 +120,10 @@ tasks.matching { it.name.contains("package", ignoreCase = true) && it.name.conta
 }
 
 
+tasks.register("testDebugUnitTest") {
+  dependsOn("testGithubDebugUnitTest")
+}
+
 java {
   toolchain {
     languageVersion = JavaLanguageVersion.of(21)
