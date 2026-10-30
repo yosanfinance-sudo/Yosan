@@ -530,7 +530,7 @@ class TransactionCoordinator(
                     if (currentTx.syncId.isNotBlank()) {
                         try {
                             database.syncDao().insertDeletedTransaction(DeletedTransactionEntity(currentTx.syncId))
-                        } catch (_: Exception) {}
+                        } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
                     }
                     val txAmt = if (currentTx.amount > 0) currentTx.amount else maxOf(currentTx.debitAmount, currentTx.creditAmount)
                     if (currentTx.advanceId != null || currentTx.categoryName.equals("Official Expense", ignoreCase = true)) {
@@ -596,7 +596,7 @@ class TransactionCoordinator(
                 if (tx.syncId.isNotBlank()) {
                     try {
                         database.syncDao().insertDeletedTransaction(DeletedTransactionEntity(tx.syncId))
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
                 }
                 val txAmt = if (tx.amount > 0) tx.amount else maxOf(tx.debitAmount, tx.creditAmount)
                 if (tx.advanceId != null || tx.categoryName.equals("Official Expense", ignoreCase = true)) {
@@ -714,7 +714,7 @@ class TransactionCoordinator(
                 accList.forEach { acc ->
                     transactionRepository.recalculateAccountBalance(acc.id)
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }
     }
 

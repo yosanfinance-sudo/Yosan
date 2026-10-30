@@ -345,10 +345,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         // Update Room profile
                         val existing = authRepository.getProfileOnce()
                         val hasBankAccount = activeAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                        val isReturningUser = hasBankAccount && (
-                            (existing?.isOnboardingCompleted == true) ||
-                            prefs.isOnboardingCompletedForUser(email)
-                        )
+                        val isReturningUser = (existing?.isOnboardingCompleted == true) ||
+                            prefs.isOnboardingCompletedForUser(email) ||
+                            hasBankAccount
 
                         val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
                             googleSub = sub,
@@ -362,6 +361,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         authRepository.updateProfile(updatedProfile)
 
                         prefs.isOnboardingCompleted = isReturningUser
+                        prefs.setOnboardingCompletedForUser(email, isReturningUser)
                         if (isReturningUser) {
                             withContext(Dispatchers.IO) {
                                 database.userProfileDao().updateOnboardingCompleted(true)
@@ -385,13 +385,18 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     is GoogleAuthResult.Cancelled -> {
                         Log.d(TAG, "Google Sign-In was cancelled by user")
+                        _errorMessage.value = null
                     }
                     is GoogleAuthResult.Error -> {
                         Log.e(TAG, "Google Sign-In error: ${result.message}")
                         _errorMessage.value = result.message
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d(TAG, "signInWithGoogle coroutine cancelled")
+                throw e
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "Sign-in exception: ${e.message}", e)
                 _errorMessage.value = "Sign-in error: ${e.localizedMessage ?: e.message}"
             } finally {
@@ -596,11 +601,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 val existing = authRepository.getProfileOnce()
                 val hasBankAccount = existingAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                val isReturningUser = hasBankAccount && (
-                    (existing?.isOnboardingCompleted == true) ||
-                    prefs.isOnboardingCompletedForUser(cleanEmail)
-                )
+                val isReturningUser = (existing?.isOnboardingCompleted == true) ||
+                    prefs.isOnboardingCompletedForUser(cleanEmail) ||
+                    hasBankAccount
                 prefs.isOnboardingCompleted = isReturningUser
+                prefs.setOnboardingCompletedForUser(cleanEmail, isReturningUser)
 
                 val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
                     googleSub = sub,
@@ -628,7 +633,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     picture = ""
                 )
                 onComplete?.invoke(claims)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d(TAG, "signInWithGoogleAccount coroutine cancelled")
+                throw e
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "signInWithGoogleAccount error: ${e.message}", e)
                 _errorMessage.value = "Sign in failed: ${e.localizedMessage ?: e.message}"
             } finally {
@@ -1437,7 +1446,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     val authApi = ApiClient.getAuthApi(app)
                     authApi.logout(LogoutRequest(refreshToken))
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    android.util.Log.w("YosanDB", "Remote logout API failure", e)
+                }
             }
 
             // Close active user's isolated database cleanly and switch active partition to guest
@@ -1504,11 +1515,15 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         ?: guestAccounts.firstOrNull()?.bankName
                         ?: prefs.lastBankName.ifBlank { "Indian Bank" }
 
+                    val isGuestConfigured = prefs.isOnboardingCompletedForUser("guest") ||
+                        guestProfile?.isOnboardingCompleted == true ||
+                        guestAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
+
                     val activeProfile = (guestProfile ?: UserProfileEntity(id = 1)).copy(
                         email = "",
                         name = resolvedName,
                         profilePictureUrl = "",
-                        isOnboardingCompleted = guestAccounts.isNotEmpty() || guestProfile?.isOnboardingCompleted == true,
+                        isOnboardingCompleted = isGuestConfigured,
                         updatedAt = System.currentTimeMillis()
                     )
                     guestDb.userProfileDao().insertOrUpdateProfile(activeProfile)
@@ -1579,13 +1594,18 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val resolvedPic = tokenManager.getProfilePic()
                     ?: targetProfile?.profilePictureUrl ?: ""
 
+                val isTargetConfigured = prefs.isOnboardingCompletedForUser(cleanEmail) ||
+                    targetProfile?.isOnboardingCompleted == true ||
+                    targetAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH } ||
+                    rememberedAccounts.value.any { it.email.equals(cleanEmail, ignoreCase = true) && it.bankName.isNotBlank() }
+
                 val activeProfile = (targetProfile ?: UserProfileEntity(id = 1)).copy(
                     email = cleanEmail,
                     name = resolvedName,
                     profilePictureUrl = resolvedPic,
                     googleSub = tokenManager.getGoogleSub() ?: targetProfile?.googleSub ?: "",
                     emailVerified = tokenManager.isEmailVerified() || targetProfile?.emailVerified == true,
-                    isOnboardingCompleted = targetAccounts.isNotEmpty() || targetProfile?.isOnboardingCompleted == true,
+                    isOnboardingCompleted = isTargetConfigured,
                     updatedAt = System.currentTimeMillis()
                 )
                 userDb.userProfileDao().insertOrUpdateProfile(activeProfile)
@@ -1626,7 +1646,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 completed = true
                 onComplete?.invoke()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d(TAG, "switchAccount coroutine cancelled")
+                throw e
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "switchAccount error: ${e.message}", e)
                 _errorMessage.value = "Failed to switch account: ${e.localizedMessage ?: e.message}"
             } finally {
@@ -1810,6 +1834,17 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             _isLoading.value = true
             val app = getApplication<Application>()
             val currentEmail = _user.value?.email?.trim()?.lowercase() ?: ""
+
+            // Asynchronously notify backend before local deletion
+            withContext(Dispatchers.IO) {
+                try {
+                    val authApi = ApiClient.getAuthApi(app)
+                    authApi.deleteAccount()
+                } catch (e: Exception) {
+                    android.util.Log.w("YosanDB", "Remote deleteAccount API call failed (offline or network error)", e)
+                }
+            }
+
             withContext(Dispatchers.IO) {
                 try {
                     database.statementImportDao().deleteAllImports()
@@ -1824,7 +1859,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     database.syncDao().deleteAllMetadata()
                     database.categoryDao().deleteAllCategories()
                     database.clearAllTables()
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    android.util.Log.w("YosanDB", "Local database cleanup non-fatal failure", e)
+                }
             }
             val prefs = com.example.utils.AppPreferences(app)
             if (currentEmail.isNotBlank()) {
@@ -1845,7 +1882,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     val dbFile = AppDatabase.getDatabaseFileName(app, targetPartition)
                     app.deleteDatabase(dbFile)
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    android.util.Log.w("YosanDB", "Failed to delete database file", e)
+                }
             }
 
             refreshRememberedAccounts()

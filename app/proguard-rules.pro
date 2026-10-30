@@ -13,6 +13,8 @@
 -keep class com.example.data.local.entity.** { *; }
 -keep class com.example.data.local.dao.** { *; }
 -keep class com.example.data.local.AppDatabase** { *; }
+-keep class com.example.data.remote.** { *; }
+-keep class com.example.repository.** { *; }
 -keep class com.example.features.dashboard.** { *; }
 -keep class com.example.features.reports.** { *; }
 -keep class com.example.utils.** { *; }
@@ -49,4 +51,3 @@
 # AndroidX Compose & Lifecycle
 -keep class androidx.compose.** { *; }
 -dontwarn androidx.compose.**
-

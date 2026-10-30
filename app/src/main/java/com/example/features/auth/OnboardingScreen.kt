@@ -116,11 +116,10 @@ fun OnboardingScreen(
                     emailInput = claims.email
                     financeViewModel.updateUserProfile(userName, currencySymbol)
                     val hasBankAccount = accounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                    val isReturning = hasBankAccount && (
-                        (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false ||
-                        appPreferences.isOnboardingCompletedForUser(claims.email) ||
-                        rememberedAccounts.any { it.email.equals(claims.email, ignoreCase = true) && it.bankName.isNotBlank() }
-                    )
+                    val isReturning = appPreferences.isOnboardingCompletedForUser(claims.email) ||
+                        rememberedAccounts.any { it.email.equals(claims.email, ignoreCase = true) && it.bankName.isNotBlank() } ||
+                        hasBankAccount ||
+                        (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false
                     if (isReturning) {
                         appPreferences.isLoggedOut = false
                         appPreferences.setLoggedOutForUser(claims.email, false)
@@ -738,11 +737,10 @@ fun OnboardingScreen(
                                             emailInput = claims.email
                                             financeViewModel.updateUserProfile(userName, currencySymbol)
                                             val hasBankAccount = accounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                                            val isReturning = hasBankAccount && (
-                                                (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false ||
-                                                appPreferences.isOnboardingCompletedForUser(claims.email) ||
-                                                rememberedAccounts.any { it.email.equals(claims.email, ignoreCase = true) && it.bankName.isNotBlank() }
-                                            )
+                                            val isReturning = appPreferences.isOnboardingCompletedForUser(claims.email) ||
+                                                rememberedAccounts.any { it.email.equals(claims.email, ignoreCase = true) && it.bankName.isNotBlank() } ||
+                                                hasBankAccount ||
+                                                (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false
                                             if (isReturning) {
                                                 appPreferences.isLoggedOut = false
                                                 appPreferences.setLoggedOutForUser(claims.email, false)
@@ -1366,9 +1364,12 @@ fun OnboardingScreen(
                                         if (isOfflineModeSelected) com.example.features.sync.StorageMode.LOCAL_ONLY else selectedStorageMode
                                     )
                                     val prefs = com.example.utils.AppPreferences(context)
+                                    val targetEmail = authViewModel.user.value?.email?.takeIf { it.isNotBlank() }
+                                        ?: if (isOfflineModeSelected) "guest" else prefs.lastUserEmail
                                     prefs.isOfflineMode = isOfflineModeSelected
                                     prefs.isLoggedOut = false
                                     prefs.isOnboardingCompleted = true
+                                    prefs.setOnboardingCompletedForUser(targetEmail, true)
                                     prefs.lastBankName = bank
                                     if (isOfflineModeSelected) {
                                         prefs.lastUserName = finalName

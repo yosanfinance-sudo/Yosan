@@ -56,7 +56,7 @@ class ExcelSyncCoordinator(
                 _selectedExcelFileName.value = database.syncDao().getMetadataValue("selected_excel_filename")
                 val lastTs = database.syncDao().getMetadataValue("last_sync_timestamp")?.toLongOrNull()
                 _lastSyncTime.value = lastTs
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }
     }
 
@@ -67,7 +67,7 @@ class ExcelSyncCoordinator(
             try {
                 database.syncDao().setMetadata(SyncMetadataEntity("selected_excel_uri", uriString))
                 database.syncDao().setMetadata(SyncMetadataEntity("selected_excel_filename", fileName))
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }
     }
 

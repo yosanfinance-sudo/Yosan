@@ -39,6 +39,38 @@ data class UserSession(
 
 class SecureTokenManager(context: Context) {
 
+    private var isUsingFallback = false
+    private val fallbackSeed: String by lazy {
+        try {
+            android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+                ?: "yosan_token_secure_seed"
+        } catch (_: Throwable) {
+            "yosan_token_secure_seed"
+        }
+    }
+
+    private fun encryptIfFallback(value: String?): String? {
+        if (value.isNullOrBlank() || !isUsingFallback) return value
+        return try {
+            BackupEncryptionUtil.encrypt(value, fallbackSeed)
+        } catch (_: Throwable) {
+            value
+        }
+    }
+
+    private fun decryptIfFallback(value: String?): String? {
+        if (value.isNullOrBlank() || !isUsingFallback) return value
+        return try {
+            if (BackupEncryptionUtil.isEncrypted(value)) {
+                BackupEncryptionUtil.decrypt(value, fallbackSeed)
+            } else {
+                value
+            }
+        } catch (_: Throwable) {
+            value
+        }
+    }
+
     private val sharedPreferences: SharedPreferences = run {
         try {
             val masterKey = MasterKey.Builder(context)
@@ -78,8 +110,8 @@ class SecureTokenManager(context: Context) {
         // Update active sharedPreferences if target is the active user or if no user is active yet
         if (currentActive.isNullOrBlank() || targetEmail == null || targetEmail == currentActive) {
             val editor = sharedPreferences.edit()
-                .putString(KEY_ACCESS_TOKEN, accessToken)
-                .putString(KEY_REFRESH_TOKEN, refreshToken)
+                .putString(KEY_ACCESS_TOKEN, encryptIfFallback(accessToken))
+                .putString(KEY_REFRESH_TOKEN, encryptIfFallback(refreshToken))
             if (expiresInSeconds != null && expiresInSeconds > 0) {
                 editor.putLong(KEY_EXPIRES_AT, expiresAtMs)
             }
@@ -102,9 +134,9 @@ class SecureTokenManager(context: Context) {
         }
     }
 
-    fun getAccessToken(): String? = sharedPreferences.getString(KEY_ACCESS_TOKEN, null)
+    fun getAccessToken(): String? = decryptIfFallback(sharedPreferences.getString(KEY_ACCESS_TOKEN, null))
 
-    fun getRefreshToken(): String? = sharedPreferences.getString(KEY_REFRESH_TOKEN, null)
+    fun getRefreshToken(): String? = decryptIfFallback(sharedPreferences.getString(KEY_REFRESH_TOKEN, null))
 
     fun getExpiresAt(): Long = sharedPreferences.getLong(KEY_EXPIRES_AT, 0L)
 
@@ -263,7 +295,7 @@ class SecureTokenManager(context: Context) {
         val editor = sharedPreferences.edit()
             .putString(KEY_DRIVE_ACCESS_TOKEN, accessToken)
         if (!refreshToken.isNullOrBlank()) {
-            editor.putString(KEY_DRIVE_REFRESH_TOKEN, refreshToken)
+            editor.putString(KEY_DRIVE_REFRESH_TOKEN, encryptIfFallback(refreshToken))
         }
         if (expiresInSeconds != null && expiresInSeconds > 0) {
             editor.putLong(KEY_DRIVE_TOKEN_EXPIRES_AT, expiresAtMs)
@@ -295,7 +327,7 @@ class SecureTokenManager(context: Context) {
         if (!activeEmail.isNullOrBlank()) {
             return getUserSession(activeEmail)?.driveAccessToken
         }
-        return sharedPreferences.getString(KEY_DRIVE_ACCESS_TOKEN, null)
+        return decryptIfFallback(sharedPreferences.getString(KEY_DRIVE_ACCESS_TOKEN, null))
     }
 
     fun getDriveRefreshToken(): String? {
@@ -303,7 +335,7 @@ class SecureTokenManager(context: Context) {
         if (!activeEmail.isNullOrBlank()) {
             return getUserSession(activeEmail)?.driveRefreshToken
         }
-        return sharedPreferences.getString(KEY_DRIVE_REFRESH_TOKEN, null)
+        return decryptIfFallback(sharedPreferences.getString(KEY_DRIVE_REFRESH_TOKEN, null))
     }
 
     fun getDriveTokenExpiresAt(): Long {
@@ -474,7 +506,8 @@ class SecureTokenManager(context: Context) {
         val cleanEmail = email.trim().lowercase()
         if (cleanEmail.isBlank()) return null
         val sanitized = sanitizeKey(cleanEmail)
-        val json = sharedPreferences.getString(KEY_SESSION_PREFIX + sanitized, null) ?: return null
+        val rawJson = sharedPreferences.getString(KEY_SESSION_PREFIX + sanitized, null) ?: return null
+        val json = decryptIfFallback(rawJson) ?: return null
         return try {
             val obj = JSONObject(json)
             UserSession(
@@ -565,7 +598,7 @@ class SecureTokenManager(context: Context) {
         }.toString()
 
         sharedPreferences.edit()
-            .putString(KEY_SESSION_PREFIX + sanitized, json)
+            .putString(KEY_SESSION_PREFIX + sanitized, encryptIfFallback(json))
             .apply()
     }
 

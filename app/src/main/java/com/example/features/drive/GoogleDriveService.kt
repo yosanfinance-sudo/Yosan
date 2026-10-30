@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.example.data.local.AppDatabase
 import com.example.data.remote.*
+import com.example.utils.BackupEncryptionUtil
 import com.example.utils.BackupService
 import com.example.utils.RestoreResult
 import com.example.utils.SecureTokenManager
@@ -309,6 +310,23 @@ class GoogleDriveService(
         }
 
         try {
+            val lastBackupTimestamp = database.syncDao().getMetadataValue("last_backup_timestamp")?.toLongOrNull() ?: 0L
+            val lastDataChange = database.syncDao().getMetadataValue("last_data_change_timestamp")?.toLongOrNull() ?: 0L
+            if (lastBackupTimestamp > 0L && lastDataChange > 0L && lastBackupTimestamp >= lastDataChange) {
+                Log.d(TAG, "No local changes since last backup. Skipping redundant snapshot upload.")
+                val manifestName = getBackupManifestFileName()
+                val dto = DriveBackupVersionDto(
+                    version = nextVersion,
+                    fileName = manifestName,
+                    fileId = "",
+                    isCurrent = true,
+                    createdTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
+                        timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    }.format(java.util.Date())
+                )
+                return@withContext DriveOperationResult.Success(dto, "Local database unchanged. Backup skipped.")
+            }
+
             val rootFolderId = getOrCreateRootFolder(driveToken)
                 ?: return@withContext DriveOperationResult.Error("Could not access 'Yosan-Backup' folder on Google Drive.")
 
@@ -316,9 +334,13 @@ class GoogleDriveService(
                 ?: return@withContext DriveOperationResult.Error("Could not access 'versions' directory on Google Drive.")
 
             val backupJson = BackupService.generateBackupJsonObject(database, nextVersion)
-            val jsonStr = backupJson.toString(2)
+            val rawJsonStr = backupJson.toString(2)
 
-            val email = tokenManager.getUserEmail()
+            val email = tokenManager.getUserEmail() ?: ""
+            val session = if (email.isNotBlank()) tokenManager.getUserSession(email) else null
+            val encryptionKey = session?.googleSub?.takeIf { it.isNotBlank() } ?: email.ifBlank { "yosan_secure_drive_backup" }
+            val jsonStr = BackupEncryptionUtil.encrypt(rawJsonStr, encryptionKey)
+
             val userKey = AppDatabase.sanitizeUserKey(email)
             val snapshotName = if (userKey.isBlank() || userKey == "guest") {
                 "backup-v%04d.json".format(java.util.Locale.US, nextVersion)
@@ -326,6 +348,9 @@ class GoogleDriveService(
                 "backup-$userKey-v%04d.json".format(java.util.Locale.US, nextVersion)
             }
             uploadJsonFile(driveToken, versionsFolderId, snapshotName, jsonStr)
+
+            // Non-blocking prune of old version files (retaining up to 15 snapshots)
+            pruneOldVersions(driveToken, versionsFolderId, 15)
 
             // 2. Update current backup file
             val manifestName = getBackupManifestFileName()
@@ -352,6 +377,35 @@ class GoogleDriveService(
     /**
      * Downloads and restores the latest backup from Google Drive.
      */
+    private suspend fun pruneOldVersions(driveToken: String, versionsFolderId: String, keepCount: Int = 15) {
+        try {
+            val query = "'$versionsFolderId' in parents and mimeType = 'application/json' and trashed = false"
+            val response = driveApi.listFiles(
+                bearerToken = "Bearer $driveToken",
+                query = query,
+                fields = "files(id, name, createdTime)",
+                pageSize = 100
+            )
+            if (response.isSuccessful) {
+                val files = response.body()?.files ?: emptyList()
+                if (files.size > keepCount) {
+                    val sorted = files.sortedByDescending { it.createdTime ?: "" }
+                    val toDelete = sorted.drop(keepCount)
+                    for (file in toDelete) {
+                        try {
+                            driveApi.deleteFile("Bearer $driveToken", file.id)
+                            Log.d(TAG, "Pruned old Drive backup version: ${file.name} (${file.id})")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to delete old version file ${file.id}: ${e.message}")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to prune old versions: ${e.message}")
+        }
+    }
+
     suspend fun restoreLatestFromDrive(
         database: AppDatabase,
         userEmail: String? = null
@@ -368,7 +422,10 @@ class GoogleDriveService(
             val jsonContent = getLatestBackupContent(driveToken, userEmail)
                 ?: return@withContext DriveOperationResult.Error("No backup found in your Google Drive 'Yosan-Backup' folder.")
 
-            val restoreResult = BackupService.restoreBackupJson(jsonContent, database, clearExisting = true)
+            val email = userEmail ?: tokenManager.getUserEmail() ?: ""
+            val session = if (email.isNotBlank()) tokenManager.getUserSession(email) else null
+            val encryptionKey = session?.googleSub?.takeIf { it.isNotBlank() } ?: email.ifBlank { "yosan_secure_drive_backup" }
+            val restoreResult = BackupService.restoreBackupJson(jsonContent, database, passphrase = encryptionKey, clearExisting = true)
             if (restoreResult.success) {
                 DriveOperationResult.Success(restoreResult, "Google Drive backup restored successfully!")
             } else {

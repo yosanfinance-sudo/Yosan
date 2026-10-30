@@ -74,7 +74,7 @@ class CategoryRuleCoordinator(
                     }
                 }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         return Pair(prevList, newList)
     }
 
@@ -192,7 +192,7 @@ class CategoryRuleCoordinator(
                         ruleSnapshot = rule
                     )
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
             showMessage("Rule deleted")
         }
     }
@@ -211,7 +211,7 @@ class CategoryRuleCoordinator(
                     relatedRuleId = rule.id,
                     ruleSnapshot = oldRule ?: rule
                 )
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
             showMessage("Rule updated")
         }
     }
@@ -260,7 +260,7 @@ class CategoryRuleCoordinator(
                     }
                     showMessage("Category deleted")
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }
     }
 
@@ -295,7 +295,7 @@ class CategoryRuleCoordinator(
                     }
                     showMessage("Category deleted ($reassignedCount transactions moved to $fallbackCategoryName)")
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }
     }
 
@@ -339,7 +339,7 @@ class CategoryRuleCoordinator(
                         repository.updateRule(updatedRule)
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
             showMessage("Category updated")
         }
     }

@@ -223,6 +223,7 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
+            var lastResumeSyncTimestamp by remember { mutableLongStateOf(0L) }
             // Background Auto-lock Watcher with grace period & external intent immunity
             val lifecycleOwner = LocalLifecycleOwner.current
             DisposableEffect(lifecycleOwner, isBiometricEnabled, isAuthenticated, currentEmail) {
@@ -275,9 +276,13 @@ class MainActivity : FragmentActivity() {
                                     }
                                 }
                             }
-                            // Multi-device sync: check if newer backup exists on Google Drive (Telegram-style sync)
+                            // Multi-device sync: check if newer backup exists on Google Drive with 5-minute cooldown
                             if (isAuthenticated) {
-                                authViewModel.syncWithDriveIfNewer()
+                                val now = System.currentTimeMillis()
+                                if (now - lastResumeSyncTimestamp >= 5 * 60 * 1000L) {
+                                    lastResumeSyncTimestamp = now
+                                    authViewModel.syncWithDriveIfNewer()
+                                }
                             }
                         }
                         else -> {}
@@ -289,15 +294,7 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
-            // Periodic live sync check while app is active in foreground
-            LaunchedEffect(isAuthenticated, activeUserKey) {
-                if (isAuthenticated) {
-                    while (true) {
-                        kotlinx.coroutines.delay(30_000L)
-                        authViewModel.syncWithDriveIfNewer()
-                    }
-                }
-            }
+// 30-second continuous polling loop removed to prevent battery drain and API quota throttling
 
             val currentThemeMode by financeViewModel.themeMode.collectAsState()
             val systemInDark = isSystemInDarkTheme()
@@ -340,24 +337,35 @@ class MainActivity : FragmentActivity() {
                     }
                                         // Priority 2: Authenticated Main Container (with Bank Selection onboarding if not completed)
                     else if (isAuthenticated) {
+                        val isDataLoaded by financeViewModel.isDataLoaded.collectAsState()
                         val hasBankAccount = userAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                        val isUserOnboardingDone = hasBankAccount && (
-                            appPreferences.isOnboardingCompletedForUser(currentEmail) ||
-                            userProfile?.isOnboardingCompleted == true
-                        )
+                        val isUserOnboardingDone = appPreferences.isOnboardingCompletedForUser(currentEmail) ||
+                            userProfile?.isOnboardingCompleted == true ||
+                            hasBankAccount
 
                         if (!isUserOnboardingDone) {
-                            key(activeUserKey) {
-                                OnboardingScreen(
-                                    authViewModel = authViewModel,
-                                    financeViewModel = financeViewModel,
-                                    initialStep = 2,
-                                    onComplete = {
-                                        appPreferences.setOnboardingCompletedForUser(currentEmail, true)
-                                        appPreferences.setLoggedOutForUser(currentEmail, false)
-                                        authViewModel.completeOnboarding()
-                                    }
-                                )
+                            if (!isDataLoaded && userProfile == null) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = androidx.compose.ui.Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            } else {
+                                key(activeUserKey) {
+                                    OnboardingScreen(
+                                        authViewModel = authViewModel,
+                                        financeViewModel = financeViewModel,
+                                        initialStep = 2,
+                                        onComplete = {
+                                            appPreferences.setOnboardingCompletedForUser(currentEmail, true)
+                                            appPreferences.setLoggedOutForUser(currentEmail, false)
+                                            authViewModel.completeOnboarding()
+                                        }
+                                    )
+                                }
                             }
                         } else {
                             key(activeUserKey) {

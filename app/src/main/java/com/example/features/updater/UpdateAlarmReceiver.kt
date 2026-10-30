@@ -10,8 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
- * Handles device boot, app package updates, and periodic background wakeups
- * to ensure update checks run reliably even when the app is swiped away from recents.
+ * Internal unexported broadcast receiver for periodic background update checks
+ * triggered by AlarmManager.
  */
 class UpdateAlarmReceiver : BroadcastReceiver() {
 
@@ -25,12 +25,6 @@ class UpdateAlarmReceiver : BroadcastReceiver() {
             return
         }
 
-        // Reschedule JobScheduler jobs if triggered after a device reboot or app upgrade
-        if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            UpdateCheckJobService.schedulePeriodicCheck(appContext)
-            UpdateCheckJobService.scheduleAlarmCheck(appContext)
-        }
-
         // Perform asynchronous background update check with wakeful async lock
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
@@ -38,7 +32,7 @@ class UpdateAlarmReceiver : BroadcastReceiver() {
                 val updater = UpdateManager(appContext)
                 updater.checkForUpdates()
             } catch (e: Exception) {
-                Log.w(TAG, "Background check failed in receiver: ${e.message}")
+                Log.w(TAG, "Background check failed in alarm receiver: ${e.message}")
             } finally {
                 pendingResult.finish()
             }
@@ -47,5 +41,6 @@ class UpdateAlarmReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "UpdateAlarmReceiver"
+        const val ACTION_CHECK_UPDATES_ALARM = "com.example.ACTION_CHECK_UPDATES_ALARM"
     }
 }

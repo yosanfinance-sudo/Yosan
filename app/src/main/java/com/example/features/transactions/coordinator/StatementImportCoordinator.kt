@@ -275,7 +275,7 @@ class StatementImportCoordinator(
                                 )
                             }
                         }
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
                 }
 
                 val finalPreview = preview ?: localPreview

@@ -95,7 +95,7 @@ class CompanyExpenseCoordinator(
                 if (unlogged.isNotEmpty()) {
                     _companyExpensePrompt.value = unlogged.first()
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }
     }
 
@@ -128,7 +128,7 @@ class CompanyExpenseCoordinator(
                 if (loggedCount > 0) {
                     showMessage("$loggedCount official expenses logged successfully")
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }
     }
 
@@ -169,7 +169,7 @@ class CompanyExpenseCoordinator(
                 } else {
                     scanForCompanyExpenses()
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }
     }
 
@@ -188,7 +188,7 @@ class CompanyExpenseCoordinator(
                         scanForCompanyExpenses()
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }
     }
 

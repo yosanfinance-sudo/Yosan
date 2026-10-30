@@ -124,6 +124,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
 
     val accounts: StateFlow<List<AccountEntity>> = getAccountsUseCase()
+        .onEach { _isDataLoaded.value = true }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     private val _isDataLoaded = MutableStateFlow(false)
@@ -160,7 +161,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     )
                     database.accountDao().insertAccount(cashAccount)
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }
     }
 
@@ -687,7 +688,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                         database.transactionDao().updateTransactionCategory(tx.id, result.categoryId, result.categoryName, result.transactionType)
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
 
             companyExpenseCoordinator.scanForCompanyExpenses()
         }

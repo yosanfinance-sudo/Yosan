@@ -27,7 +27,6 @@ secrets.properties
 *.keystore
 my-upload-key.jks
 debug.keystore
-!app/debug.keystore
 *.p12
 *.pem
 *.key
@@ -94,5 +93,3 @@ metadata.json
 .cursor/
 AGENT.md
 CLAUDE.md
-
-

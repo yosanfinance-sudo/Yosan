@@ -208,15 +208,23 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         private fun buildDatabase(context: Context, scope: CoroutineScope, dbName: String): AppDatabase {
-            return Room.databaseBuilder(
+            val builder = Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 dbName
             )
                 .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
-                .fallbackToDestructiveMigration(true)
                 .addCallback(AppDatabaseCallback(context.applicationContext, scope, dbName))
-                .build()
+
+            // Only allow destructive migration in debug builds; release builds preserve data and trigger emergency backup
+            if (com.example.BuildConfig.DEBUG) {
+                builder.fallbackToDestructiveMigration(true)
+            }
+            return builder.build()
+        }
+
+        fun getDatabaseForUser(context: Context, userKey: String): AppDatabase {
+            return getDatabaseForUser(context, CoroutineScope(Dispatchers.IO), userKey)
         }
 
         fun getDatabaseForUser(context: Context, scope: CoroutineScope, userKey: String): AppDatabase {
@@ -237,8 +245,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        fun getActiveDatabase(context: Context): AppDatabase {
+            return getActiveDatabase(context, CoroutineScope(Dispatchers.IO))
+        }
+
         fun getActiveDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return getDatabaseForUser(context, scope, currentActiveUserKey)
+        }
+
+        fun getDatabase(context: Context): AppDatabase {
+            return getActiveDatabase(context)
         }
 
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
@@ -257,17 +273,21 @@ abstract class AppDatabase : RoomDatabase() {
                 instances.remove(dbName)?.let { db ->
                     try {
                         if (db.isOpen) db.close()
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        android.util.Log.w("YosanDB", "Failed to close database $dbName", e)
+                    }
                 }
             }
         }
 
         fun closeAllDatabases() {
             synchronized(lock) {
-                instances.forEach { (_, db) ->
+                instances.forEach { (name, db) ->
                     try {
                         if (db.isOpen) db.close()
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        android.util.Log.w("YosanDB", "Failed to close database $name during closeAll", e)
+                    }
                 }
                 instances.clear()
             }
@@ -283,6 +303,21 @@ abstract class AppDatabase : RoomDatabase() {
                 scope.launch(Dispatchers.IO) {
                     val database = synchronized(lock) { instances[dbName] }
                     database?.let { DatabaseInitializer.seedInitialData(it) }
+                }
+            }
+
+            override fun onDestructiveMigration(db: SupportSQLiteDatabase) {
+                super.onDestructiveMigration(db)
+                try {
+                    val dbFile = context.getDatabasePath(dbName)
+                    if (dbFile.exists()) {
+                        val timestamp = System.currentTimeMillis()
+                        val backupFile = java.io.File(context.filesDir, "emergency_backup_${dbName}_$timestamp.db")
+                        dbFile.copyTo(backupFile, overwrite = true)
+                        android.util.Log.w("YosanDB", "Emergency database backup created before destructive migration at: ${backupFile.absolutePath}")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("YosanDB", "Failed to create emergency backup before destructive migration", e)
                 }
             }
         }

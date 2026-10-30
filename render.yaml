@@ -13,10 +13,12 @@ services:
         value: 3000
       - key: DB_PATH
         value: /app/data/finance_manager.db
+      - key: DATABASE_URL
+        sync: false
       - key: JWT_SECRET
-        generateValue: true
+        sync: false
       - key: JWT_REFRESH_SECRET
-        generateValue: true
+        sync: false
       - key: GOOGLE_WEB_CLIENT_ID
         sync: false
       - key: SMTP_SERVICE

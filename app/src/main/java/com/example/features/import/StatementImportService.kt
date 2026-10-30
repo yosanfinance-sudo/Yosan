@@ -1,6 +1,7 @@
 package com.example.features.import
 
 import android.content.Context
+import android.net.Uri
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -88,6 +89,77 @@ object StatementImportService {
             }
         }
         return index - 1
+    }
+
+    fun parseStatementStream(
+        context: Context,
+        uri: Uri,
+        fileName: String,
+        rules: List<CategorizationRuleEntity>,
+        existingTransactions: List<TransactionEntity>,
+        bankOverride: SupportedBank? = null,
+        password: String? = null
+    ): ImportPreviewResult {
+        val lowerName = fileName.lowercase()
+        val textContent = if (lowerName.endsWith(".pdf")) {
+            extractPdfTextFromUri(context, uri, password)
+        } else {
+            val bytes = try {
+                context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+            } catch (e: Exception) {
+                android.util.Log.w("YosanDB", "Failed to read statement stream", e)
+                ByteArray(0)
+            }
+            extractTextFromStatementBytes(context, bytes, fileName, password)
+        }
+        return parseStatementText(textContent, rules, existingTransactions, fileName, bankOverride)
+    }
+
+    private fun extractPdfTextFromUri(context: Context, uri: Uri, password: String? = null): String {
+        try {
+            if (!PDFBoxResourceLoader.isReady()) {
+                PDFBoxResourceLoader.init(context.applicationContext)
+            }
+        } catch (_: Throwable) {}
+
+        val tempFile = java.io.File(context.cacheDir, "temp_stream_import_" + System.currentTimeMillis() + ".pdf")
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return ""
+
+            val document = if (!password.isNullOrBlank()) {
+                PDDocument.load(tempFile, password)
+            } else {
+                PDDocument.load(tempFile)
+            }
+
+            document.use { doc ->
+                if (doc.isEncrypted) {
+                    try { doc.setAllSecurityToBeRemoved(true) } catch (_: Throwable) {}
+                }
+                val stripper = PDFTextStripper()
+                stripper.sortByPosition = true
+                val sb = java.lang.StringBuilder()
+                val totalPages = doc.numberOfPages
+                for (page in 1..totalPages) {
+                    stripper.startPage = page
+                    stripper.endPage = page
+                    sb.append(stripper.getText(doc)).append("\n")
+                }
+                return sb.toString()
+            }
+        } catch (e: Throwable) {
+            val msg = e.message?.lowercase() ?: ""
+            if (msg.contains("password") || msg.contains("encrypted") || e.javaClass.simpleName.contains("Password", ignoreCase = true)) {
+                throw SecurityException("PDF_PASSWORD_REQUIRED")
+            }
+            throw e
+        } finally {
+            try { tempFile.delete() } catch (_: Throwable) {}
+        }
     }
 
     fun parseStatementBytes(

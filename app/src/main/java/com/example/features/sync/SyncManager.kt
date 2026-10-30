@@ -259,8 +259,10 @@ class SyncManager(
             if (isRemoteNewer) {
                 Log.i(TAG, "Newer Google Drive backup found (remote v$remoteVersion, time $remoteCreatedAt vs local v$localVersion, time $localTimestamp). Auto-restoring for two-device sync...")
                 isRestoring = true
+                val session = if (!targetEmail.isNullOrBlank()) tokenManager.getUserSession(targetEmail) else null
+                val encryptionKey = session?.googleSub?.takeIf { it.isNotBlank() } ?: targetEmail?.takeIf { it.isNotBlank() } ?: "yosan_secure_drive_backup"
                 val restoreResult = try {
-                    BackupService.restoreBackupJson(latestJson, database, clearExisting = true)
+                    BackupService.restoreBackupJson(latestJson, database, passphrase = encryptionKey, clearExisting = false)
                 } finally {
                     isRestoring = false
                 }

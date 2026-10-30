@@ -120,6 +120,7 @@ jobs:
           APP_VERSION_NAME: ${{ steps.release_info.outputs.version_name }}
           APP_VERSION_CODE: ${{ steps.release_info.outputs.version_code }}
           BACKEND_URL: ${{ secrets.BACKEND_URL || 'https://yosan-xgsd.onrender.com/' }}
+          YOSAN_KEYSTORE_PASSWORD: ${{ secrets.YOSAN_KEYSTORE_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
       - name: Locate Generated APK

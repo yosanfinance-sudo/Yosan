@@ -127,6 +127,9 @@ class GoogleAuthManager(private val context: Context) {
                     "INVALID_TOKEN"
                 )
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d(TAG, "getGoogleIdToken coroutine was cancelled")
+            throw e
         } catch (e: GetCredentialCancellationException) {
             Log.d(TAG, "GetCredentialCancellationException: user dismissed or cancelled Google Sign-In")
             GoogleAuthResult.Cancelled
@@ -152,6 +155,7 @@ class GoogleAuthManager(private val context: Context) {
                 GoogleAuthResult.Error(rawMsg, e.type)
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e(TAG, "Unexpected auth error: ${e.message}", e)
             if (isDeveloperConsoleError(e)) {
                 val currentSha1 = getSigningCertificateSha1(targetContext)

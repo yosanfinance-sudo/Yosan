@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
@@ -12,9 +13,14 @@ function resolveDbPath() {
   return path.resolve(__dirname, '../', cleanPath);
 }
 
+// Generate cryptographically secure transient secrets for non-production runs when not configured
+const transientJwtSecret = crypto.randomBytes(32).toString('hex');
+const transientRefreshSecret = crypto.randomBytes(32).toString('hex');
+
 module.exports = {
   PORT: process.env.PORT || 3000,
   NODE_ENV: process.env.NODE_ENV || 'development',
+  DATABASE_URL: process.env.DATABASE_URL || '',
   GOOGLE_WEB_CLIENT_ID: process.env.GOOGLE_WEB_CLIENT_ID || '1090000000000-example.apps.googleusercontent.com',
   GOOGLE_ANDROID_CLIENT_ID: process.env.GOOGLE_ANDROID_CLIENT_ID || '',
   GOOGLE_IOS_CLIENT_ID: process.env.GOOGLE_IOS_CLIENT_ID || '',
@@ -24,7 +30,7 @@ module.exports = {
       if ((process.env.NODE_ENV || 'development') === 'production') {
         throw new Error('JWT_SECRET environment variable must be set in production');
       }
-      return 'dev_jwt_secret_key_finance_manager_secure_2026';
+      return transientJwtSecret;
     }
     return process.env.JWT_SECRET;
   })(),
@@ -33,7 +39,7 @@ module.exports = {
       if ((process.env.NODE_ENV || 'development') === 'production') {
         throw new Error('JWT_REFRESH_SECRET environment variable must be set in production');
       }
-      return 'dev_jwt_refresh_secret_key_finance_manager_secure_2026';
+      return transientRefreshSecret;
     }
     return process.env.JWT_REFRESH_SECRET;
   })(),
@@ -41,4 +47,3 @@ module.exports = {
   JWT_REFRESH_EXPIRES_IN: '30d',
   DB_PATH: resolveDbPath()
 };
-
