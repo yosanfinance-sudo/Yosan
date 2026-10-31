@@ -50,9 +50,9 @@ android {
 
       val releasePassword = System.getenv("YOSAN_KEYSTORE_PASSWORD")
         ?: (project.findProperty("YOSAN_KEYSTORE_PASSWORD") as? String)
-        ?: ""
+        ?: "android"
 
-      val releaseAlias = System.getenv("YOSAN_KEY_ALIAS") ?: (project.findProperty("YOSAN_KEY_ALIAS") as? String) ?: if (keystoreFile?.name?.contains("debug") == true) "androiddebugkey" else if (keystoreFile?.name?.contains("release-key") == true) "yosan" else "upload"
+      val releaseAlias = System.getenv("YOSAN_KEY_ALIAS") ?: (project.findProperty("YOSAN_KEY_ALIAS") as? String) ?: "androiddebugkey"
       val releaseKeyPassword = System.getenv("YOSAN_KEY_PASSWORD") ?: (project.findProperty("YOSAN_KEY_PASSWORD") as? String) ?: releasePassword
 
       if (keystoreFile != null && releasePassword.isNotBlank()) {

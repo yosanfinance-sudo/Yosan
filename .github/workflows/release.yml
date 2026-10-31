@@ -73,23 +73,12 @@ jobs:
               echo "YOSAN_KEY_PASSWORD=$YOSAN_KEY_PASSWORD" >> "$GITHUB_ENV"
             fi
           else
-            echo "No KEYSTORE_BASE64 secret found. Generating CI release signing keystore..."
-            PASS="${YOSAN_KEYSTORE_PASSWORD:-${{ secrets.YOSAN_KEYSTORE_PASSWORD }}}"
-            if [ -z "$PASS" ]; then
-              PASS=$(openssl rand -hex 16)
-            fi
-            keytool -genkeypair -v \
-              -keystore app/release-key.jks \
-              -alias yosan \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storepass "$PASS" \
-              -keypass "$PASS" \
-              -dname "CN=Yosan Release, OU=Mobile, O=Yosan, C=US"
-            echo "YOSAN_KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
-            echo "YOSAN_KEY_ALIAS=yosan" >> "$GITHUB_ENV"
-            echo "YOSAN_KEY_PASSWORD=$PASS" >> "$GITHUB_ENV"
+            echo "No KEYSTORE_BASE64 secret found. Using persistent signing keystore..."
+            echo "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" | base64 --decode > app/release-key.jks
+            echo "YOSAN_KEYSTORE_PASSWORD=android" >> "$GITHUB_ENV"
+            echo "YOSAN_KEY_ALIAS=androiddebugkey" >> "$GITHUB_ENV"
+            echo "YOSAN_KEY_PASSWORD=android" >> "$GITHUB_ENV"
+            PASS="android"
           fi
           echo "Signing Keystore SHA-1 fingerprint:"
           KEY_PASS="${YOSAN_KEYSTORE_PASSWORD:-$PASS}"
