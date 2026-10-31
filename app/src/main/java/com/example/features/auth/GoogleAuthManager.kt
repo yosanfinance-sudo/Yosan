@@ -13,6 +13,7 @@ import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.example.BuildConfig
 import android.content.Intent
 import android.net.Uri
@@ -90,6 +91,15 @@ class GoogleAuthManager(private val context: Context) {
                     googleEmail = googleIdTokenCredential.id
                     googleDisplayName = googleIdTokenCredential.displayName
                     googlePhotoUrl = googleIdTokenCredential.profilePictureUri?.toString()
+
+                    if (!idToken.isNullOrBlank() && (googleDisplayName.isNullOrBlank() || googleDisplayName.contains("@"))) {
+                        try {
+                            val claims = AuthViewModel.decodeGoogleIdTokenLocally(idToken)
+                            if (!claims?.name.isNullOrBlank() && !claims.name.contains("@")) {
+                                googleDisplayName = claims.name
+                            }
+                        } catch (_: Exception) {}
+                    }
                 } catch (pe: Exception) {
                     Log.w(TAG, "createFrom parse note (${pe.message}), inspecting data bundle")
                 }
@@ -108,6 +118,9 @@ class GoogleAuthManager(private val context: Context) {
                         googleDisplayName = credential.data.getString("com.google.android.libraries.identity.googleid.BUNDLE_KEY_DISPLAY_NAME")
                             ?: credential.data.getString("displayName")
                             ?: credential.data.getString("name")
+                    if (googleDisplayName.isNullOrBlank() || googleDisplayName.contains("@")) {
+                        googleDisplayName = resolveDisplayName(targetContext, googleEmail)
+                    }
                     }
                 }
             }
@@ -267,6 +280,63 @@ class GoogleAuthManager(private val context: Context) {
 
     companion object {
         const val DEFAULT_CLIENT_ID = "649210682299-k4cl29pr14o0pkblsodq208iajj2ivad.apps.googleusercontent.com"
+
+        fun resolveDisplayName(ctx: Context, email: String? = null): String? {
+            try {
+                val lastSignedIn = GoogleSignIn.getLastSignedInAccount(ctx)
+                if (lastSignedIn != null) {
+                    val targetEmail = email?.trim()?.lowercase()
+                    val accountEmail = lastSignedIn.email?.trim()?.lowercase()
+                    if (targetEmail.isNullOrBlank() || accountEmail == targetEmail) {
+                        val gDisplayName = lastSignedIn.displayName?.trim()?.takeIf { it.isNotBlank() && !it.contains("@") }
+                        val gFullName = listOfNotNull(lastSignedIn.givenName, lastSignedIn.familyName).joinToString(" ").trim().takeIf { it.isNotBlank() && !it.contains("@") }
+                        val resolved = gDisplayName ?: gFullName
+                        if (!resolved.isNullOrBlank()) {
+                            return resolved
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+
+            try {
+                val cursor = ctx.contentResolver.query(
+                    android.provider.ContactsContract.Profile.CONTENT_URI,
+                    arrayOf(android.provider.ContactsContract.Profile.DISPLAY_NAME),
+                    null, null, null
+                )
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val idx = it.getColumnIndex(android.provider.ContactsContract.Profile.DISPLAY_NAME)
+                        if (idx >= 0) {
+                            val deviceName = it.getString(idx)?.trim()
+                            if (!deviceName.isNullOrBlank() && !deviceName.contains("@")) {
+                                return deviceName
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+
+            if (!email.isNullOrBlank()) {
+                val formatted = formatEmailAsReadableName(email)
+                if (formatted.isNotBlank()) {
+                    return formatted
+                }
+            }
+            return null
+        }
+
+        fun formatEmailAsReadableName(email: String): String {
+            val prefix = email.trim().lowercase().substringBefore("@")
+            val words = prefix.replace(Regex("[._\\-\\d]+"), " ")
+                .split(" ")
+                .filter { it.isNotBlank() && it.length > 1 }
+            return if (words.isNotEmpty()) {
+                words.joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+            } else {
+                prefix.replaceFirstChar { c -> c.uppercase() }
+            }
+        }
 
         fun getSigningCertificateSha1(ctx: Context): String {
             return try {

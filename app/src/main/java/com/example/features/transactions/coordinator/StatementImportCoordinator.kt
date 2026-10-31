@@ -58,11 +58,12 @@ class StatementImportCoordinator(
     }
 
     fun parseStatementUri(context: Context, uri: Uri, fileName: String = "statement.csv") {
-        scope.launch(Dispatchers.IO) {
+        val appContext = context.applicationContext
+        scope.launch(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
             try {
                 _isImporting.value = true
                 val maxFileSize = 25 * 1024 * 1024
-                val bytes = context.contentResolver.openInputStream(uri)?.use { stream ->
+                val bytes = appContext.contentResolver.openInputStream(uri)?.use { stream ->
                     val buffer = java.io.ByteArrayOutputStream()
                     val chunk = ByteArray(8192)
                     var totalRead = 0
@@ -181,6 +182,7 @@ class StatementImportCoordinator(
                 }
                 _importPreview.value = finalPreview
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) return@launch
                 if (BuildConfig.DEBUG) {
                     android.util.Log.e("FinanceViewModel", "Statement import failed", e)
                 }
@@ -194,7 +196,8 @@ class StatementImportCoordinator(
     fun submitStatementPassword(context: Context, password: String) {
         val bytes = pendingBytes ?: return
         val resolvedFileName = pendingFileName ?: "statement.pdf"
-        scope.launch(Dispatchers.IO) {
+        val appContext = context.applicationContext
+        scope.launch(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
             try {
                 _isImporting.value = true
                 val rawText = try {
@@ -275,7 +278,10 @@ class StatementImportCoordinator(
                                 )
                             }
                         }
-                    } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) return@launch
+                        android.util.Log.w("YosanDB", "Operation non-fatal failure", e)
+                    }
                 }
 
                 val finalPreview = preview ?: localPreview
@@ -285,6 +291,7 @@ class StatementImportCoordinator(
                 }
                 _importPreview.value = finalPreview
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) return@launch
                 showMessage("Could not parse statement: ${e.localizedMessage ?: "Invalid password or corrupted format"}")
             } finally {
                 _isImporting.value = false
@@ -301,7 +308,7 @@ class StatementImportCoordinator(
 
     fun confirmImport(skipDuplicates: Boolean = false, targetAccountId: Long = 1, onComplete: (() -> Unit)? = null) {
         val preview = _importPreview.value ?: return
-        scope.launch(Dispatchers.IO) {
+        scope.launch(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
             try {
                 _isImporting.value = true
                 val rowsToImport = if (skipDuplicates) preview.validRows.filterNot { it.isDuplicate } else preview.validRows
@@ -385,6 +392,7 @@ class StatementImportCoordinator(
                     onComplete?.invoke()
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) return@launch
                 if (BuildConfig.DEBUG) {
                     android.util.Log.e("FinanceViewModel", "Confirm import failed", e)
                 }
@@ -396,7 +404,7 @@ class StatementImportCoordinator(
     }
 
     fun deleteStatementImport(importId: Long, accountId: Long? = null, onComplete: (() -> Unit)? = null) {
-        scope.launch(Dispatchers.IO) {
+        scope.launch(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
             try {
                 _isImporting.value = true
                 val affectedAccountIds = if (accountId != null) {
@@ -414,6 +422,7 @@ class StatementImportCoordinator(
                     onComplete?.invoke()
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) return@launch
                 if (BuildConfig.DEBUG) {
                     android.util.Log.e("FinanceViewModel", "Delete import failed", e)
                 }

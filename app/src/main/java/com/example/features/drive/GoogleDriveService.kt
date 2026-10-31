@@ -40,7 +40,9 @@ class GoogleDriveService(
     }
 
     suspend fun getValidDriveToken(): String? = withContext(Dispatchers.IO) {
-        val driveEmail = tokenManager.getDriveEmail()
+        val candidateEmail = tokenManager.getDriveEmail()?.takeIf { it.isNotBlank() }
+            ?: tokenManager.getUserEmail()?.takeIf { it.isNotBlank() }
+        val driveEmail = candidateEmail
         val currentToken = tokenManager.getDriveAccessToken()
         if (!driveEmail.isNullOrBlank()) {
             try {
@@ -281,7 +283,11 @@ class GoogleDriveService(
             }
 
             if (listRes.isSuccessful && listRes.body()?.files?.isNotEmpty() == true) {
-                val file = listRes.body()!!.files.first()
+                val files = listRes.body()!!.files
+                val file = files.sortedWith(
+                    compareByDescending<GoogleDriveFileDto> { it.name.startsWith("detailsaboutbackup") }
+                        .thenByDescending { it.createdTime ?: it.modifiedTime ?: "" }
+                ).firstOrNull() ?: files.first()
                 return@withContext downloadJsonFile(driveToken, file.id)
             }
         } catch (e: Exception) {

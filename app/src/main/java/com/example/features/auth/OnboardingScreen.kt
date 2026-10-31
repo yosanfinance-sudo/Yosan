@@ -1,5 +1,9 @@
 package com.example.features.auth
 
+import android.content.Intent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -43,6 +47,7 @@ import kotlinx.coroutines.launch
 val POPULAR_INDIAN_BANKS = listOf(
     "Indian Bank",
     "State Bank",
+    "Canara Bank",
     "YES Bank",
     "IndusInd Bank"
 )
@@ -93,6 +98,30 @@ fun OnboardingScreen(
     var isRestoringFromBackup by remember { mutableStateOf(false) }
     var restoreStatusMessage by remember { mutableStateOf<String?>(null) }
 
+    val driveConsentLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { res ->
+        val email = emailInput.ifBlank { authViewModel.user.value?.email ?: "" }
+        if (res.resultCode == android.app.Activity.RESULT_OK && email.isNotBlank()) {
+            isCheckingBackup = true
+            authViewModel.checkDriveOrCloudBackup(
+                email = email,
+                onNeedsConsent = null
+            ) { hasBackup, backupResp ->
+                isCheckingBackup = false
+                if (hasBackup && backupResp != null) {
+                    foundBackupInfo = backupResp
+                    showBackupFoundDialog = true
+                } else {
+                    step = 2
+                }
+            }
+        } else {
+            isCheckingBackup = false
+            step = 2
+        }
+    }
+
     val accountPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -103,24 +132,26 @@ fun OnboardingScreen(
                 val currentBank = appPreferences.lastBankName.ifBlank {
                     accounts.firstOrNull()?.bankName ?: "Indian Bank"
                 }
-                val autoName = cleanEmail.substringBefore("@").replace(".", " ")
-                    .split(" ")
-                    .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+                val realName = GoogleAuthManager.resolveDisplayName(context, cleanEmail)?.takeIf { it.isNotBlank() }
+                    ?: rememberedAccounts.firstOrNull { it.email.equals(cleanEmail, ignoreCase = true) }?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
+                    ?: GoogleAuthManager.formatEmailAsReadableName(cleanEmail).ifBlank { "User" }
+                val autoName = realName
+
+
 
                 authViewModel.signInWithGoogleAccount(
                     email = cleanEmail,
                     name = autoName,
                     bankName = currentBank
                 ) { claims ->
-                    userName = claims.name
+                    val resolvedName = claims.name.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) && !it.equals(claims.email.substringBefore("@"), ignoreCase = true) }
+                        ?: GoogleAuthManager.resolveDisplayName(context, claims.email)?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals(claims.email.substringBefore("@"), ignoreCase = true) }
+                        ?: GoogleAuthManager.formatEmailAsReadableName(claims.email).ifBlank { "User" }
+                    userName = resolvedName
                     emailInput = claims.email
                     financeViewModel.updateUserProfile(userName, currencySymbol)
                     val hasBankAccount = accounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                    val isReturning = appPreferences.isOnboardingCompletedForUser(claims.email) ||
-                        rememberedAccounts.any { it.email.equals(claims.email, ignoreCase = true) && it.bankName.isNotBlank() } ||
-                        hasBankAccount ||
-                        (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false
-                    if (isReturning) {
+                    if (hasBankAccount) {
                         appPreferences.isLoggedOut = false
                         appPreferences.setLoggedOutForUser(claims.email, false)
                         appPreferences.setOnboardingCompletedForUser(claims.email, true)
@@ -129,7 +160,13 @@ fun OnboardingScreen(
                         onComplete()
                     } else {
                         isCheckingBackup = true
-                        authViewModel.checkDriveOrCloudBackup(claims.email) { hasBackup, backupResp ->
+                        authViewModel.checkDriveOrCloudBackup(
+                            email = claims.email,
+                            onNeedsConsent = { intent ->
+                                isCheckingBackup = false
+                                driveConsentLauncher.launch(intent)
+                            }
+                        ) { hasBackup, backupResp ->
                             isCheckingBackup = false
                             if (hasBackup && backupResp != null) {
                                 foundBackupInfo = backupResp
@@ -733,15 +770,14 @@ fun OnboardingScreen(
                                                 }
                                             }
                                         ) { claims ->
-                                            userName = claims.name.ifBlank { claims.email.substringBefore("@") }
+                                            val resolvedName = claims.name.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) && !it.equals(claims.email.substringBefore("@"), ignoreCase = true) }
+                                                ?: GoogleAuthManager.resolveDisplayName(context, claims.email)?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals(claims.email.substringBefore("@"), ignoreCase = true) }
+                                                ?: GoogleAuthManager.formatEmailAsReadableName(claims.email).ifBlank { "User" }
+                                            userName = resolvedName
                                             emailInput = claims.email
                                             financeViewModel.updateUserProfile(userName, currencySymbol)
                                             val hasBankAccount = accounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                                            val isReturning = appPreferences.isOnboardingCompletedForUser(claims.email) ||
-                                                rememberedAccounts.any { it.email.equals(claims.email, ignoreCase = true) && it.bankName.isNotBlank() } ||
-                                                hasBankAccount ||
-                                                (authViewModel.authState.value as? AuthState.Authenticated)?.isNewUser == false
-                                            if (isReturning) {
+                                            if (hasBankAccount) {
                                                 appPreferences.isLoggedOut = false
                                                 appPreferences.setLoggedOutForUser(claims.email, false)
                                                 appPreferences.setOnboardingCompletedForUser(claims.email, true)
@@ -750,7 +786,13 @@ fun OnboardingScreen(
                                                 onComplete()
                                             } else {
                                                 isCheckingBackup = true
-                                                authViewModel.checkDriveOrCloudBackup(claims.email) { hasBackup, backupResp ->
+                                                authViewModel.checkDriveOrCloudBackup(
+                                                    email = claims.email,
+                                                    onNeedsConsent = { intent ->
+                                                        isCheckingBackup = false
+                                                        driveConsentLauncher.launch(intent)
+                                                    }
+                                                ) { hasBackup, backupResp ->
                                                     isCheckingBackup = false
                                                     if (hasBackup && backupResp != null) {
                                                         foundBackupInfo = backupResp
@@ -1699,8 +1741,21 @@ fun OnboardingScreen(
                                 isRestoringFromBackup = false
                                 if (success) {
                                     showBackupFoundDialog = false
-                                    authViewModel.completeOnboarding()
-                                    onComplete()
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        val currentAccs = accounts
+                                        val primaryBank = currentAccs.firstOrNull { it.isDefault }?.bankName
+                                            ?: currentAccs.firstOrNull()?.bankName ?: ""
+                                        if (primaryBank.isNotBlank()) appPreferences.lastBankName = primaryBank
+                                        if (userName.isNotBlank() && userName != "User") appPreferences.lastUserName = userName
+                                        appPreferences.isLoggedOut = false
+                                        appPreferences.setLoggedOutForUser(emailInput, false)
+                                        appPreferences.isOnboardingCompleted = true
+                                        appPreferences.setOnboardingCompletedForUser(emailInput, true)
+                                        withContext(Dispatchers.Main) {
+                                            authViewModel.completeOnboarding()
+                                            onComplete()
+                                        }
+                                    }
                                 } else {
                                     restoreStatusMessage = "Failed to restore backup. You can continue manually."
                                 }

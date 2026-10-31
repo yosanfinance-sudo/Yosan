@@ -383,7 +383,25 @@ object BackupService {
         return try {
             val decryptedJson = try {
                 if (BackupEncryptionUtil.isEncrypted(jsonString)) {
-                    BackupEncryptionUtil.decrypt(jsonString, passphrase)
+                    val candidateKeys = listOfNotNull(
+                        passphrase?.takeIf { it.isNotBlank() },
+                        "yosan_secure_drive_backup",
+                        "yosan_secure_backup"
+                    ).distinct()
+                    var decrypted: String? = null
+                    var lastErr: Exception? = null
+                    for (key in candidateKeys) {
+                        try {
+                            val res = BackupEncryptionUtil.decrypt(jsonString, key)
+                            if (res.isNotBlank() && (res.contains("\"transactions\"") || res.contains("\"accounts\"") || res.contains("\"application\""))) {
+                                decrypted = res
+                                break
+                            }
+                        } catch (e: Exception) {
+                            lastErr = e
+                        }
+                    }
+                    decrypted ?: throw (lastErr ?: IllegalArgumentException("Failed to decrypt backup"))
                 } else {
                     jsonString
                 }

@@ -34,7 +34,7 @@ class UserRepository {
     return db.prepare(`
       INSERT INTO users (google_sub, email, name, profile_picture_url, email_verified, created_at, updated_at, last_login_at, is_active)
       VALUES (?, ?, ?, '', 1, ?, ?, ?, 1)
-    `).run(emailSub, email, name || email.split('@')[0], now, now, now);
+    `).run(emailSub, email, name || (email ? email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'User'), now, now, now);
   }
 
   updateLastLogin(userId, now) {

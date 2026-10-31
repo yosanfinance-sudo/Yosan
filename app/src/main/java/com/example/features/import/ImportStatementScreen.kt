@@ -95,12 +95,12 @@ fun ImportStatementScreen(
                 try {
                     context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                         PdfRenderer(pfd).use { renderer ->
-                            val count = renderer.pageCount.coerceAtMost(30)
+                            val count = renderer.pageCount.coerceAtMost(3)
                             for (i in 0 until count) {
                                 renderer.openPage(i).use { page ->
-                                    val width = (page.width * 1.4f).toInt()
-                                    val height = (page.height * 1.4f).toInt()
-                                    val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                                    val width = page.width
+                                    val height = page.height
+                                    val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
                                     val canvas = Canvas(bmp)
                                     canvas.drawColor(android.graphics.Color.WHITE)
                                     page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
@@ -545,6 +545,7 @@ fun ImportStatementScreen(
                                         listOf(
                                             SupportedBank.INDIAN_BANK to "Indian Bank",
                                             SupportedBank.STATE_BANK to "State Bank",
+                                            SupportedBank.CANARA_BANK to "Canara Bank",
                                             SupportedBank.YES_BANK to "YES Bank",
                                             SupportedBank.INDUSIND_BANK to "IndusInd Bank"
                                         ).forEach { (bankEnum, bankLabel) ->
@@ -765,7 +766,7 @@ fun ImportStatementScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Statements imported from Indian Bank, State Bank, YES Bank, or IndusInd Bank will appear here along with mathematical audit logs.",
+                                    text = "Statements imported from Indian Bank, State Bank, Canara Bank, YES Bank, or IndusInd Bank will appear here along with mathematical audit logs.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center

@@ -13,7 +13,7 @@ class FinanceService {
 
   async createAccount(userId, data) {
     const { accountName, bankName, accountNumberMasked, accountType, openingBalance, isDefault } = data;
-    const ALLOWED_BANKS = ['Indian Bank', 'Yes Bank'];
+    const ALLOWED_BANKS = ['Indian Bank', 'Yes Bank', 'Canara Bank', 'State Bank', 'IndusInd Bank'];
     const resolvedAccountType = accountType || 'BANK';
     let resolvedBankName = bankName || '';
     if (resolvedBankName && resolvedAccountType !== 'CASH' && !ALLOWED_BANKS.includes(resolvedBankName)) {
@@ -22,7 +22,7 @@ class FinanceService {
       if (matched) {
         resolvedBankName = matched;
       } else {
-        throw Object.assign(new Error(`Bank '${resolvedBankName}' is not supported. Only Indian Bank and Yes Bank are supported.`), { status: 400 });
+        throw Object.assign(new Error(`Bank '${resolvedBankName}' is not supported. Supported banks include Indian Bank, State Bank, Canara Bank, Yes Bank, and IndusInd Bank.`), { status: 400 });
       }
     }
     const now = Date.now();

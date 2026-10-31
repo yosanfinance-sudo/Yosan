@@ -1,5 +1,7 @@
 package com.example.features.auth
 
+import android.content.Intent
+
 import android.app.Application
 import android.content.Context
 import android.net.Uri
@@ -257,7 +259,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                         val localClaims = decodeGoogleIdTokenLocally(idToken)
                         val email = (result.email ?: localClaims?.email ?: "").trim().lowercase()
-                        val name = result.displayName ?: localClaims?.name ?: email.substringBefore("@").ifBlank { "User" }
+                        var name = result.displayName?.takeIf { it.isNotBlank() && !it.contains("@") }
+                            ?: localClaims?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
+                            ?: GoogleAuthManager.resolveDisplayName(app, email)?.takeIf { it.isNotBlank() }
+                            ?: GoogleAuthManager.formatEmailAsReadableName(email).ifBlank { "User" }
                         val photoUrl = result.photoUrl ?: localClaims?.picture ?: ""
                         val sub = localClaims?.sub ?: email.ifBlank { "google_user" }
 
@@ -274,6 +279,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                                 val body = serverRes.body()!!
                                 accessToken = body.accessToken
                                 refreshToken = body.refreshToken
+                                val serverName = body.user.name.trim()
+                                if (serverName.isNotBlank() && !serverName.contains("@") && !serverName.equals("User", ignoreCase = true)) {
+                                    name = serverName
+                                }
                                 Log.i(TAG, "Backend Server OAuth authentication successful")
                             } else {
                                 Log.w(TAG, "Backend server auth returned ${serverRes.code()}: ${serverRes.message()}")
@@ -549,16 +558,13 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 // Switch database partition for this Google account
                 AppDatabase.setActiveUserKey(cleanEmail)
-                val resolvedName = name?.trim()?.ifBlank { null }
-                    ?: cleanEmail.substringBefore("@").replace(".", " ")
-                        .split(" ")
-                        .filter { it.isNotBlank() }
-                        .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
-                        .ifBlank { "User" }
-                val sub = "google_${cleanEmail.replace("@", "_").replace(".", "_")}"
-
                 val app = getApplication<Application>()
                 val prefs = com.example.utils.AppPreferences(app)
+                val resolvedName = name?.trim()?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) }
+                    ?: GoogleAuthManager.resolveDisplayName(app, cleanEmail)?.takeIf { it.isNotBlank() }
+                    ?: prefs.getRememberedAccounts().firstOrNull { it.email.equals(cleanEmail, ignoreCase = true) }?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
+                    ?: GoogleAuthManager.formatEmailAsReadableName(cleanEmail).ifBlank { "User" }
+                val sub = "google_${cleanEmail.replace("@", "_").replace(".", "_")}"
                 val existingAccounts = database.accountDao().getAllAccountsList()
                 val primaryBank = bankName?.ifBlank { null }
                     ?: existingAccounts.firstOrNull { it.isDefault }?.bankName
@@ -784,11 +790,17 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             val user = body.user
                             val sessionToken = SecureTokenManager.generateSessionToken(user.email)
                             tokenManager.saveTokens(body.accessToken, body.refreshToken, null, email = user.email)
+                            val serverName = body.user.name.trim()
+                            val resolvedName = if (serverName.isNotBlank() && !serverName.contains("@") && !serverName.equals("User", ignoreCase = true)) {
+                                serverName
+                            } else {
+                                user.name
+                            }
                             tokenManager.saveUserSession(
                                 userId = user.id,
                                 googleSub = user.googleSub,
                                 email = user.email,
-                                name = user.name,
+                                name = resolvedName,
                                 profilePicture = user.profilePictureUrl ?: "",
                                 emailVerified = user.emailVerified,
                                 sessionToken = sessionToken,
@@ -1063,14 +1075,18 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             _isLoading.value = true
             try {
                 // 1. Try direct Drive download if Drive token is active
-                if (driveService.isConnected() && !tokenManager.getDriveAccessToken().isNullOrBlank()) {
-                    val driveRes = driveService.restoreLatestFromDrive(database, tokenManager.getUserEmail())
+                var directError: String? = null
+                val driveToken = driveService.getValidDriveToken()
+                if (!driveToken.isNullOrBlank()) {
+                    val targetEmail = tokenManager.getDriveEmail() ?: tokenManager.getUserEmail() ?: _user.value?.email
+                    val driveRes = driveService.restoreLatestFromDrive(database, targetEmail)
                     when (driveRes) {
                         is DriveOperationResult.Success -> {
                             onResult?.invoke(true, driveRes.message)
                             return@launch
                         }
                         is DriveOperationResult.Error -> {
+                            directError = driveRes.message
                             Log.w(TAG, "Direct restore note: ${driveRes.message}")
                         }
                     }
@@ -1090,7 +1106,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         onResult?.invoke(false, restoreResult.message)
                     }
                 } else {
-                    onResult?.invoke(false, "No backup found in your Google Drive.")
+                    onResult?.invoke(false, directError ?: "No backup found in your Google Drive.")
                 }
             } catch (e: Exception) {
                 onResult?.invoke(false, e.localizedMessage ?: "Failed to restore backup")
@@ -1112,34 +1128,41 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun checkDriveOrCloudBackup(email: String, onResult: (Boolean, LatestBackupResponse?) -> Unit) {
+    fun checkDriveOrCloudBackup(
+        email: String,
+        onNeedsConsent: ((Intent) -> Unit)? = null,
+        onResult: (Boolean, LatestBackupResponse?) -> Unit
+    ) {
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
                 val driveAuth = GoogleDriveAuthManager(app)
-                val driveToken = when (val res = driveAuth.fetchAccessTokenForEmail(email)) {
+                when (val res = driveAuth.fetchAccessTokenForEmail(email)) {
                     is DriveAuthTokenResult.Success -> {
                         tokenManager.saveDriveTokens(res.token, driveEmail = email)
-                        res.token
+                        val json = driveService.getLatestBackupContent(res.token, email)
+                        if (!json.isNullOrBlank()) {
+                            val jsonObj = org.json.JSONObject(json)
+                            val accountsCount = jsonObj.optJSONArray("accounts")?.length() ?: 0
+                            val txCount = jsonObj.optJSONArray("transactions")?.length() ?: 0
+                            val dateStr = jsonObj.optString("created_at", "Recent")
+                            onResult(true, LatestBackupResponse(
+                                hasBackup = true,
+                                backupDate = dateStr,
+                                accountsCount = accountsCount,
+                                transactionsCount = txCount,
+                                backupJson = json
+                            ))
+                            return@launch
+                        }
                     }
-                    else -> null
-                }
-                if (!driveToken.isNullOrBlank()) {
-                    val json = driveService.getLatestBackupContent(driveToken, email)
-                    if (!json.isNullOrBlank()) {
-                        val jsonObj = org.json.JSONObject(json)
-                        val accountsCount = jsonObj.optJSONArray("accounts")?.length() ?: 0
-                        val txCount = jsonObj.optJSONArray("transactions")?.length() ?: 0
-                        val dateStr = jsonObj.optString("created_at", "Recent")
-                        onResult(true, LatestBackupResponse(
-                            hasBackup = true,
-                            backupDate = dateStr,
-                            accountsCount = accountsCount,
-                            transactionsCount = txCount,
-                            backupJson = json
-                        ))
-                        return@launch
+                    is DriveAuthTokenResult.NeedsUserConsent -> {
+                        if (onNeedsConsent != null && res.consentIntent != null) {
+                            onNeedsConsent.invoke(res.consentIntent)
+                            return@launch
+                        }
                     }
+                    else -> {}
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "checkDriveOrCloudBackup direct check failed: ${e.message}")
@@ -1968,7 +1991,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 GoogleClaims(
                     sub = json.optString("sub", ""),
                     email = json.optString("email", ""),
-                    name = json.optString("name", ""),
+                    name = json.optString("name", "").trim().takeIf { it.isNotBlank() && !it.contains("@") }
+                        ?: "${json.optString("given_name", "")} ${json.optString("family_name", "")}".trim().takeIf { it.isNotBlank() }
+                        ?: json.optString("preferred_username", "").takeIf { it.isNotBlank() }
+                        ?: json.optString("nickname", "").takeIf { it.isNotBlank() }
+                        ?: "",
                     picture = json.optString("picture", "")
                 )
             } catch (_: Exception) { null }

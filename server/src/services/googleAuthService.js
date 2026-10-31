@@ -46,7 +46,7 @@ async function verifyGoogleToken(idToken) {
     return {
       sub: payload.sub,
       email: payload.email || '',
-      name: payload.name || payload.email || 'User',
+      name: payload.name || [payload.given_name, payload.family_name].filter(Boolean).join(' ') || payload.preferred_username || (payload.email ? payload.email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'User'),
       picture: payload.picture || '',
       emailVerified: payload.email_verified ?? true
     };
@@ -83,6 +83,9 @@ async function handleGoogleAuth(idToken) {
   if (user) {
     // Update existing user last_login_at
     userRepository.updateLastLogin(user.id, now);
+    if (claims.name && claims.name !== 'User' && !claims.name.includes('@') && (!user.name || user.name === 'User' || user.name.includes('@') || user.name.toLowerCase() === user.email.split('@')[0].toLowerCase())) {
+      db.prepare('UPDATE users SET name = ?, updated_at = ? WHERE id = ?').run(claims.name, now, user.id);
+    }
     user = userRepository.getUserById(user.id);
   } else {
     // Create new user

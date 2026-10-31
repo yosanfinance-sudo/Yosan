@@ -148,7 +148,7 @@ function localHeuristicStatementParser(text, fileName = '') {
     if (upiParts) {
       const merchant = upiParts[1].replace(/[0-9]{1,3}(?:,[0-9]{2,3})*\.[0-9]{2}/g, '').trim();
       let extra = upiParts[2] ? upiParts[2].replace(/[0-9]{1,3}(?:,[0-9]{2,3})*\.[0-9]{2}/g, '').trim() : '';
-      cleanDesc = extra && !extra.toLowerCase().startsWith('hdfc') && !extra.toLowerCase().startsWith('sbin') && !extra.toLowerCase().startsWith('icic')
+      cleanDesc = extra && !extra.toLowerCase().startsWith('hdfc') && !extra.toLowerCase().startsWith('sbin') && !extra.toLowerCase().startsWith('icic') && !extra.toLowerCase().startsWith('cnrb')
         ? `${merchant} - ${extra}`
         : merchant;
     } else {

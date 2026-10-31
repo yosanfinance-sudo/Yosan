@@ -273,7 +273,11 @@ fun SettingsScreen(
         } catch (e: ApiException) {
             isDriveConnecting = false
             if (e.statusCode != 12501 && e.statusCode != 4) {
-                driveMismatchError = "Google Play Services error: ${e.localizedMessage ?: e.message} (code ${e.statusCode})"
+                driveMismatchError = if (e.statusCode == 10) {
+                    "Google Play Services configuration error (code 10). Please verify Google Play Services on your device."
+                } else {
+                    "Google Play Services error: ${e.localizedMessage ?: e.message} (code ${e.statusCode})"
+                }
             }
         } catch (e: Exception) {
             isDriveConnecting = false
@@ -1229,7 +1233,7 @@ fun SettingsScreen(
                             contentDescription = "Yosan Logo",
                             modifier = Modifier.size(44.dp)
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+
                         Text(
                             text = "YOSAN",
                             style = MaterialTheme.typography.labelMedium,
@@ -1908,7 +1912,7 @@ fun SettingsScreen(
                                         tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
                                         modifier = Modifier.size(40.dp)
                                     )
-                                    Spacer(modifier = Modifier.height(8.dp))
+            
                                     Text(
                                         text = "No Accounts Added",
                                         style = MaterialTheme.typography.titleMedium,
@@ -2135,6 +2139,7 @@ fun SettingsScreen(
                         val indianBanks = listOf(
                             "Indian Bank",
                             "State Bank",
+                            "Canara Bank",
                             "YES Bank",
                             "IndusInd Bank"
                         )
@@ -2643,6 +2648,9 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Connect Google Drive", fontWeight = FontWeight.Bold)
                         }
+
+
+
                     }
 
                     driveMismatchError?.let { err ->
@@ -2993,7 +3001,7 @@ fun SettingsScreen(
                                             )
                                         }
 
-                                        Spacer(modifier = Modifier.height(8.dp))
+                
                                         Button(
                                             onClick = {
                                                 targetRestoreVersion = item.version
