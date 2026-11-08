@@ -1,3 +1,4 @@
+process.env.ALLOW_TEST_OTP_RESPONSE = 'true';
 const assert = require('assert');
 const test = require('node:test');
 const db = require('../src/db');

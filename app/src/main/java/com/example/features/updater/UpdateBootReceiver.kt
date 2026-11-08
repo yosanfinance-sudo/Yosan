@@ -25,10 +25,13 @@ class UpdateBootReceiver : BroadcastReceiver() {
             return
         }
 
-        if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            UpdateCheckJobService.schedulePeriodicCheck(appContext)
-            UpdateCheckJobService.scheduleAlarmCheck(appContext)
+        if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) {
+            Log.w(TAG, "Ignoring untrusted or unsupported intent action: $action")
+            return
         }
+
+        UpdateCheckJobService.schedulePeriodicCheck(appContext)
+        UpdateCheckJobService.scheduleAlarmCheck(appContext)
 
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {

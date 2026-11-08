@@ -15,7 +15,7 @@ android {
 
   val vCode = (System.getenv("APP_VERSION_CODE") ?: project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 53
   val vName = System.getenv("APP_VERSION_NAME") ?: (project.findProperty("versionName") as? String) ?: "1.1.53"
-  val backendUrl = (System.getenv("BACKEND_URL")?.takeIf { it.isNotBlank() } ?: project.findProperty("backendUrl") as? String)?.takeIf { it.isNotBlank() } ?: "https://yosan-xgsd.onrender.com/"
+  val backendUrl = (System.getenv("BACKEND_URL")?.takeIf { it.isNotBlank() } ?: project.findProperty("backendUrl") as? String)?.takeIf { it.isNotBlank() } ?: "https://api.yosan.finance/"
 
   defaultConfig {
     applicationId = "yosan.finance"
@@ -48,14 +48,18 @@ android {
         file("my-upload-key.jks")
       ).firstOrNull { it.exists() }
 
+      // Section 14: Release signing credentials must be provided explicitly via environment or properties
       val releasePassword = System.getenv("YOSAN_KEYSTORE_PASSWORD")
         ?: (project.findProperty("YOSAN_KEYSTORE_PASSWORD") as? String)
-        ?: "android"
 
-      val releaseAlias = System.getenv("YOSAN_KEY_ALIAS") ?: (project.findProperty("YOSAN_KEY_ALIAS") as? String) ?: "androiddebugkey"
-      val releaseKeyPassword = System.getenv("YOSAN_KEY_PASSWORD") ?: (project.findProperty("YOSAN_KEY_PASSWORD") as? String) ?: releasePassword
+      val releaseAlias = System.getenv("YOSAN_KEY_ALIAS")
+        ?: (project.findProperty("YOSAN_KEY_ALIAS") as? String)
 
-      if (keystoreFile != null && releasePassword.isNotBlank()) {
+      val releaseKeyPassword = System.getenv("YOSAN_KEY_PASSWORD")
+        ?: (project.findProperty("YOSAN_KEY_PASSWORD") as? String)
+        ?: releasePassword
+
+      if (keystoreFile != null && !releasePassword.isNullOrBlank() && !releaseAlias.isNullOrBlank()) {
         storeFile = keystoreFile
         storePassword = releasePassword
         keyAlias = releaseAlias
@@ -85,10 +89,11 @@ android {
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       val releaseConfig = signingConfigs.getByName("release")
-      if (releaseConfig.storeFile != null && releaseConfig.storeFile!!.exists()) {
+      if (releaseConfig.storeFile != null && releaseConfig.storeFile!!.exists() && !releaseConfig.storePassword.isNullOrBlank()) {
         signingConfig = releaseConfig
       } else {
-        signingConfig = signingConfigs.getByName("debug")
+        // Section 15: Do not silently sign release builds with debug keys
+        signingConfig = null
       }
     }
     debug {
@@ -105,8 +110,10 @@ android {
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
   lint {
-    checkReleaseBuilds = false
-    abortOnError = false
+    // Section 16: Enable release lint checks
+    checkReleaseBuilds = true
+    abortOnError = true
+    warningsAsErrors = false
   }
   dependenciesInfo {
     includeInApk = false
@@ -121,8 +128,7 @@ tasks.matching { it.name.contains("package", ignoreCase = true) && it.name.conta
       val releasePassword = System.getenv("YOSAN_KEYSTORE_PASSWORD")
         ?: (project.findProperty("YOSAN_KEYSTORE_PASSWORD") as? String)
       if (releasePassword.isNullOrBlank()) {
-        logger.warn("Warning: YOSAN_KEYSTORE_PASSWORD is not set for release keystore. Falling back to debug signing.")
-        android.buildTypes.getByName("release").signingConfig = android.signingConfigs.getByName("debug")
+        throw org.gradle.api.GradleException("Security validation failed: Release keystore file exists but YOSAN_KEYSTORE_PASSWORD is not provided. Refusing to package with insecure signing.")
       }
     }
   }

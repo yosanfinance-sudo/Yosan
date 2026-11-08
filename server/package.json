@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "cross-env NODE_ENV=test node --test --test-concurrency=1 test/*.test.js"
+    "test": "cross-env NODE_ENV=test ALLOW_MOCK_AUTH=true ALLOW_TEST_OTP_RESPONSE=true node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",

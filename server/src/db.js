@@ -3,9 +3,20 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config');
 
-fs.mkdirSync(path.dirname(config.DB_PATH), { recursive: true });
+const dbDir = path.dirname(config.DB_PATH);
+fs.mkdirSync(dbDir, { recursive: true, mode: 0o700 });
+try {
+  fs.chmodSync(dbDir, 0o700);
+} catch (_) {}
 
 const db = new Database(config.DB_PATH);
+
+// Ensure restrictive file permissions on database file (Section 19: security at rest)
+try {
+  if (fs.existsSync(config.DB_PATH)) {
+    fs.chmodSync(config.DB_PATH, 0o600);
+  }
+} catch (_) {}
 
 
 // Enable foreign key constraints

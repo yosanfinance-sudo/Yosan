@@ -116,7 +116,7 @@ class EmailService {
           body: JSON.stringify({
             sender: { name: 'Yosan Finance', email: process.env.SMTP_USER || 'yosanfinance@gmail.com' },
             to: [{ email: toEmail }],
-            subject: `${otp} is your ${title} verification code`,
+            subject: `Your ${title} verification code`,
             htmlContent: htmlContent
           })
         });
@@ -140,7 +140,7 @@ class EmailService {
           this.transporter.sendMail({
             from: fromAddress,
             to: toEmail,
-            subject: `${otp} is your ${title} verification code`,
+            subject: `Your ${title} verification code`,
             text: `${title}\n\n${description}\n\nVerification Code: ${otp}\n\nValid for 10 minutes.`,
             html: htmlContent
           }),
@@ -155,8 +155,8 @@ class EmailService {
       }
     }
 
-    // Fallback: log to console in dev/test/simulated mode
-    console.log(`[EMAIL_SERVICE] [FALLBACK/CONSOLE] OTP for ${toEmail} (${purpose}): [${otp}]`);
+    // Fallback: log notification without leaking raw OTP (Section 18)
+    console.log(`[EMAIL_SERVICE] [FALLBACK/CONSOLE] OTP dispatched for ${toEmail} (${purpose})`);
     return { success: true, delivered: false, simulated: true };
   }
 }

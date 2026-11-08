@@ -8,7 +8,8 @@ const EXPIRES_IN_MS = 10 * 60 * 1000; // 10 minutes expiry
 const MAX_ATTEMPTS = 5;
 
 function hashOtp(otp) {
-  const secret = config.JWT_SECRET || 'dev_secret_finance_manager_2026';
+  // Dedicated persistent OTP secret (Section 5)
+  const secret = config.OTP_SECRET;
   return crypto.createHash('sha256').update(otp + secret).digest('hex');
 }
 
@@ -65,7 +66,7 @@ class OtpService {
       message: `Verification code sent to ${cleanEmail}`,
       cooldownSeconds: 60,
       expiresInSeconds: 600,
-      ...(config.NODE_ENV === 'test' ? { devOtp: otp } : {})
+      ...(config.NODE_ENV === 'test' && config.ALLOW_TEST_OTP_RESPONSE ? { devOtp: otp } : {})
     };
   }
 

@@ -6,8 +6,8 @@ const config = require('../config');
 const crypto = require('crypto');
 const driveRepository = require('../repositories/driveRepository');
 
-// Utility for encryption/decryption at rest (Section 21)
-const ENCRYPTION_KEY = crypto.createHash('sha256').update(config.JWT_SECRET).digest();
+// Utility for encryption/decryption at rest using dedicated persistent encryption key (Section 20)
+const ENCRYPTION_KEY = crypto.createHash('sha256').update(config.TOKEN_ENCRYPTION_KEY).digest();
 const IV_LENGTH = 16;
 
 function encryptToken(text) {

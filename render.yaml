@@ -5,7 +5,7 @@ services:
     dockerfilePath: Dockerfile
     dockerContext: .
     plan: free
-    healthCheckPath: /api/drive/status
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
@@ -18,6 +18,10 @@ services:
       - key: JWT_SECRET
         sync: false
       - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: OTP_SECRET
+        sync: false
+      - key: TOKEN_ENCRYPTION_KEY
         sync: false
       - key: GOOGLE_WEB_CLIENT_ID
         sync: false

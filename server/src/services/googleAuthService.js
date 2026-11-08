@@ -11,10 +11,10 @@ async function verifyGoogleToken(idToken) {
     throw new Error('ID_TOKEN_REQUIRED');
   }
 
-  // Handle local mock/dev testing tokens if explicitly formatted
+  // Only allow mock tokens during isolated unit tests with explicit test-flag enabled (Section 1)
   if (idToken.startsWith('mock_id_token_')) {
-    if (config.NODE_ENV === 'production') {
-      throw new Error('MOCK_TOKENS_DISABLED_IN_PRODUCTION');
+    if (config.NODE_ENV !== 'test' || !config.ALLOW_MOCK_AUTH) {
+      throw new Error('MOCK_TOKENS_DISABLED: Mock authentication tokens are not permitted in this environment.');
     }
     const parts = idToken.split('_');
     const sub = parts[parts.length - 2] || '109123456789012345678';

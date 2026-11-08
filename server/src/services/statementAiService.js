@@ -304,11 +304,15 @@ JSON:`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 18000);
 
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+      // Gemini API Key securely transmitted via header, never in URL query parameter
+      const apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
       const res = await fetch(apiUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
         body: JSON.stringify({
           system_instruction: {
             parts: [{ text: systemInstruction }]

@@ -6,7 +6,7 @@ services:
     buildCommand: npm install
     startCommand: npm start
     plan: free
-    healthCheckPath: /api/drive/status
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
@@ -17,6 +17,10 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: OTP_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
         generateValue: true
       - key: GOOGLE_WEB_CLIENT_ID
         sync: false

@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
 
@@ -12,15 +13,41 @@ const statementRoutes = require('./routes/statementRoutes');
 
 const app = express();
 
-// Security & Parsing Middleware
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+// Security Headers (Section 8: Helmet.js)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "https://generativelanguage.googleapis.com", "https://oauth2.googleapis.com"]
+    }
+  },
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+
+// CORS Configuration (Section 22: Dynamic and Mobile-friendly)
+const configuredOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : ['http://localhost:3000', 'http://localhost:8080'];
-app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+  : (config.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:8080']);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Mobile apps, server-to-server or curl requests have no origin header
+    if (!origin) return callback(null, true);
+    if (configuredOrigins.length === 0 || configuredOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS policy: Not allowed by origin'));
+  },
+  credentials: true
+}));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting (Section 30)
+// Rate limiting (Section 21: Global API limiter)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 300, // limit each IP to 300 requests per window
@@ -29,6 +56,16 @@ const limiter = rateLimit({
   message: { error: 'TOO_MANY_REQUESTS', message: 'Rate limit exceeded, please try again later.' }
 });
 app.use('/api/', limiter);
+
+// Dedicated stricter rate limiter for Authentication endpoints (Section 21)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: config.NODE_ENV === 'test' ? 1000 : 30, // 30 requests per 15 min per IP for auth in production
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'TOO_MANY_AUTH_REQUESTS', message: 'Too many authentication attempts, please try again later.' }
+});
+app.use('/api/auth', authLimiter);
 
 // Root status check
 app.get('/', (req, res) => {
@@ -40,9 +77,9 @@ app.get('/', (req, res) => {
   });
 });
 
-// Health check
+// Health check (Section 9: Do not disclose NODE_ENV in health endpoint)
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), env: config.NODE_ENV });
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Mount API routes

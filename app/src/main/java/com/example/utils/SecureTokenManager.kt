@@ -42,10 +42,14 @@ class SecureTokenManager(context: Context) {
     private var isUsingFallback = false
     private val fallbackSeed: String by lazy {
         try {
-            android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
-                ?: "yosan_token_secure_seed"
+            val androidId = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+            val pkg = context.packageName
+            val combined = (androidId ?: "yosan_token_secure_seed") + "_" + pkg
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(combined.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
         } catch (_: Throwable) {
-            "yosan_token_secure_seed"
+            "yosan_token_secure_seed_fallback_v1"
         }
     }
 
@@ -84,7 +88,8 @@ class SecureTokenManager(context: Context) {
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         } catch (t: Throwable) {
-            // Fallback for JVM/Robolectric unit tests or devices where KeyStore is unavailable/corrupt
+            // Fallback for JVM/Robolectric unit tests or devices where KeyStore is unavailable/corrupt (Section 13)
+            isUsingFallback = true
             context.getSharedPreferences("secure_auth_prefs_fallback", Context.MODE_PRIVATE)
         }
     }
@@ -226,19 +231,19 @@ class SecureTokenManager(context: Context) {
             .putString(KEY_SESSION_TOKEN, effectiveSessionToken)
 
         if (effectiveAccessToken.isNotBlank()) {
-            editor.putString(KEY_ACCESS_TOKEN, effectiveAccessToken)
+            editor.putString(KEY_ACCESS_TOKEN, encryptIfFallback(effectiveAccessToken))
         }
         if (effectiveRefreshToken.isNotBlank()) {
-            editor.putString(KEY_REFRESH_TOKEN, effectiveRefreshToken)
+            editor.putString(KEY_REFRESH_TOKEN, encryptIfFallback(effectiveRefreshToken))
         }
         if (expiresAtMs > 0L) {
             editor.putLong(KEY_EXPIRES_AT, expiresAtMs)
         }
         if (!currentDriveAccess.isNullOrBlank()) {
-            editor.putString(KEY_DRIVE_ACCESS_TOKEN, currentDriveAccess)
+            editor.putString(KEY_DRIVE_ACCESS_TOKEN, encryptIfFallback(currentDriveAccess))
         }
         if (!currentDriveRefresh.isNullOrBlank()) {
-            editor.putString(KEY_DRIVE_REFRESH_TOKEN, currentDriveRefresh)
+            editor.putString(KEY_DRIVE_REFRESH_TOKEN, encryptIfFallback(currentDriveRefresh))
         }
         if (currentDriveExpiresAt > 0L) {
             editor.putLong(KEY_DRIVE_TOKEN_EXPIRES_AT, currentDriveExpiresAt)
@@ -293,7 +298,7 @@ class SecureTokenManager(context: Context) {
         }
 
         val editor = sharedPreferences.edit()
-            .putString(KEY_DRIVE_ACCESS_TOKEN, accessToken)
+            .putString(KEY_DRIVE_ACCESS_TOKEN, encryptIfFallback(accessToken))
         if (!refreshToken.isNullOrBlank()) {
             editor.putString(KEY_DRIVE_REFRESH_TOKEN, encryptIfFallback(refreshToken))
         }
@@ -422,8 +427,8 @@ class SecureTokenManager(context: Context) {
 
         val editor = sharedPreferences.edit()
         editor.putString(KEY_ACTIVE_USER_EMAIL, cleanEmail)
-        editor.putString(KEY_ACCESS_TOKEN, updated.accessToken)
-        editor.putString(KEY_REFRESH_TOKEN, updated.refreshToken)
+        editor.putString(KEY_ACCESS_TOKEN, encryptIfFallback(updated.accessToken))
+        editor.putString(KEY_REFRESH_TOKEN, encryptIfFallback(updated.refreshToken))
         editor.putLong(KEY_EXPIRES_AT, updated.expiresAt)
         editor.putLong(KEY_USER_ID, updated.userId)
         editor.putString(KEY_GOOGLE_SUB, updated.googleSub)
@@ -435,12 +440,12 @@ class SecureTokenManager(context: Context) {
         editor.putString(KEY_SESSION_TOKEN, updated.sessionToken)
 
         if (!updated.driveAccessToken.isNullOrBlank()) {
-            editor.putString(KEY_DRIVE_ACCESS_TOKEN, updated.driveAccessToken)
+            editor.putString(KEY_DRIVE_ACCESS_TOKEN, encryptIfFallback(updated.driveAccessToken))
         } else {
             editor.remove(KEY_DRIVE_ACCESS_TOKEN)
         }
         if (!updated.driveRefreshToken.isNullOrBlank()) {
-            editor.putString(KEY_DRIVE_REFRESH_TOKEN, updated.driveRefreshToken)
+            editor.putString(KEY_DRIVE_REFRESH_TOKEN, encryptIfFallback(updated.driveRefreshToken))
         } else {
             editor.remove(KEY_DRIVE_REFRESH_TOKEN)
         }

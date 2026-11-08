@@ -1,5 +1,6 @@
 const financeRepository = require('../repositories/financeRepository');
 const userRepository = require('../repositories/userRepository');
+const config = require('../config');
 
 /**
  * Masks Personally Identifiable Information (PII) like full bank account numbers,
@@ -406,8 +407,8 @@ class AiChatService {
 
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // If GEMINI_API_KEY is not configured or in dev fallback mode, use intelligent local analyzer
-    if (!apiKey || apiKey.trim() === '' || apiKey === 'YOUR_GEMINI_API_KEY') {
+    // Section 3: Privacy preservation - if external AI is disabled or key not provided, use intelligent local analyzer
+    if (!config.ENABLE_EXTERNAL_AI || !apiKey || apiKey.trim() === '' || apiKey === 'YOUR_GEMINI_API_KEY') {
       return {
         reply: generateLocalStructuredResponse(ctx, userMessage),
         source: 'local_analyzer'
@@ -415,6 +416,21 @@ class AiChatService {
     }
 
     try {
+      // Anonymize context: never send actual user names or unmasked descriptions (Section 3)
+      const sanitizedAccounts = (ctx.accountsSummary || []).map(a => ({
+        type: a.type,
+        balance: a.balance,
+        maskedNumber: a.maskedNumber
+      }));
+
+      const sanitizedTxs = (ctx.recentTransactions || []).map(tx => ({
+        date: tx.transaction_date,
+        amount: tx.amount,
+        type: tx.type,
+        category: tx.category,
+        note: maskPii(tx.note)
+      }));
+
       const systemInstruction = `You are Yosan Financial Assistant, an intelligent, empathetic, and analytical AI personal finance advisor.
 Your mission is to provide clear, actionable financial advice, summaries, breakdowns, and answers to the user's questions based on their real financial context provided below.
 
@@ -432,17 +448,16 @@ CRITICAL INSTRUCTIONS:
 5. Mask any sensitive numbers (like account digits or UPI IDs) as provided in context.
 
 Real Financial Context:
-- User Name: ${ctx.userName}
 - Currency: ${ctx.currencySymbol}
 - Total Net Balance: ${ctx.currencySymbol}${ctx.totalBalance.toFixed(2)}
-- Accounts: ${JSON.stringify(ctx.accountsSummary)}
+- Accounts: ${JSON.stringify(sanitizedAccounts)}
 - Monthly Income: ${ctx.currencySymbol}${ctx.monthlyIncome.toFixed(2)}
 - Monthly Expenses: ${ctx.currencySymbol}${ctx.monthlyExpense.toFixed(2)}
 - Monthly Net Savings: ${ctx.currencySymbol}${ctx.monthlySavings.toFixed(2)}
 - Category Distribution: ${JSON.stringify(ctx.categoryDistribution)}
 - Top 5 Highest Expenses: ${JSON.stringify(ctx.highestExpenses)}
 - Active Loans & Debts: ${JSON.stringify(ctx.loansSummary)}
-- Recent Transactions: ${JSON.stringify(ctx.recentTransactions)}
+- Recent Transactions: ${JSON.stringify(sanitizedTxs)}
 `;
 
       const contents = [];
@@ -468,11 +483,15 @@ Real Financial Context:
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+      // Section 2: Gemini API Key securely transmitted via header, never in URL query parameter
+      const apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
       const res = await fetch(apiUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
         body: JSON.stringify({
           system_instruction: {
             parts: [{ text: systemInstruction }]

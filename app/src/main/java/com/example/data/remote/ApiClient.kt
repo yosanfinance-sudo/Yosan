@@ -26,20 +26,18 @@ object ApiClient {
             val custom = prefs.getString(KEY_CUSTOM_URL, null)
             if (!custom.isNullOrBlank()) {
                 val clean = custom.trim()
-                if (clean.startsWith("http://") || clean.startsWith("https://")) {
+                // Section 12: Enforce HTTPS for remote internet URLs; permit cleartext only on local loopback / LAN developer testing IPs
+                val isPrivateOrLocal = clean.startsWith("http://localhost") ||
+                        clean.startsWith("http://127.") ||
+                        clean.startsWith("http://10.") ||
+                        clean.startsWith("http://192.168.") ||
+                        clean.matches(Regex("^http://172\\.(1[6-9]|2[0-9]|3[0-1])\\..*"))
+
+                if (clean.startsWith("https://") || isPrivateOrLocal) {
                     return if (clean.endsWith("/")) clean else "$clean/"
                 }
             }
         }
-
-        val isEmulator = (Build.FINGERPRINT.startsWith("generic")
-                || Build.FINGERPRINT.startsWith("unknown")
-                || Build.MODEL.contains("google_sdk")
-                || Build.MODEL.contains("Emulator")
-                || Build.MODEL.contains("Android SDK built for x86")
-                || Build.MANUFACTURER.contains("Genymotion")
-                || (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic"))
-                || "google_sdk" == Build.PRODUCT)
 
         val defaultOnlineUrl = try {
             com.example.BuildConfig.DEFAULT_BACKEND_URL.trim()
@@ -47,9 +45,10 @@ object ApiClient {
             ""
         }
 
+        // Section 11: Avoid hardcoded third-party production URL
         return when {
             defaultOnlineUrl.isNotBlank() -> if (defaultOnlineUrl.endsWith("/")) defaultOnlineUrl else "$defaultOnlineUrl/"
-            else -> "https://yosan-xgsd.onrender.com/"
+            else -> "https://api.yosan.finance/"
         }
     }
 
@@ -72,8 +71,12 @@ object ApiClient {
         if (retrofit == null) {
             val tokenManager = SecureTokenManager(context)
 
+            // Section 10: Redact sensitive tokens and headers in debug logging
             val logging = HttpLoggingInterceptor().apply {
-                level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY else HttpLoggingInterceptor.Level.NONE
+                level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.HEADERS else HttpLoggingInterceptor.Level.NONE
+                redactHeader("Authorization")
+                redactHeader("X-Session-Token")
+                redactHeader("X-User-Email")
             }
 
             val authInterceptor = Interceptor { chain ->
