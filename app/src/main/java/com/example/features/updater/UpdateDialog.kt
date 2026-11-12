@@ -8,15 +8,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.MarkdownContent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 
@@ -25,8 +29,106 @@ fun UpdateDialog(
     state: UpdateUiState,
     onDismiss: () -> Unit,
     onStartDownload: (UpdateInfo) -> Unit,
-    onInstallApk: (File) -> Unit
+    onInstallApk: (File) -> Unit,
+    onTakeBackup: ((onDone: (Boolean) -> Unit) -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var showBackupPrompt by remember { mutableStateOf(false) }
+    var pendingUpdateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    var isBackingUp by remember { mutableStateOf(false) }
+
+    if (showBackupPrompt && pendingUpdateInfo != null) {
+        val targetInfo = pendingUpdateInfo!!
+        AlertDialog(
+            onDismissRequest = {
+                if (!isBackingUp) {
+                    showBackupPrompt = false
+                }
+            },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Security,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Back Up Data Before Updating?",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text("To ensure your transactions, accounts, and categories remain 100% safe, we recommend creating a quick backup to your device before applying this update.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isBackingUp = true
+                        if (onTakeBackup != null) {
+                            onTakeBackup { success ->
+                                isBackingUp = false
+                                showBackupPrompt = false
+                                onStartDownload(targetInfo)
+                            }
+                        } else {
+                            coroutineScope.launch(Dispatchers.IO) {
+                                val database = com.example.data.local.AppDatabase.getActiveDatabase(context)
+                                val path = com.example.utils.BackupService.saveBackupToDownloads(context, database)
+                                withContext(Dispatchers.Main) {
+                                    isBackingUp = false
+                                    showBackupPrompt = false
+                                    if (path != null) {
+                                        android.widget.Toast.makeText(context, "Backup saved to: $path", android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                    onStartDownload(targetInfo)
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isBackingUp,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    if (isBackingUp) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text(if (isBackingUp) "Backing Up..." else "Back Up & Update")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            if (!isBackingUp) {
+                                showBackupPrompt = false
+                            }
+                        },
+                        enabled = !isBackingUp
+                    ) {
+                        Text("Cancel")
+                    }
+                    TextButton(
+                        onClick = {
+                            showBackupPrompt = false
+                            onStartDownload(targetInfo)
+                        },
+                        enabled = !isBackingUp
+                    ) {
+                        Text("Update Without Backup")
+                    }
+                }
+            },
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
     when (state) {
         is UpdateUiState.Idle -> {
             // Nothing to show
@@ -164,7 +266,10 @@ fun UpdateDialog(
                 },
                 confirmButton = {
                     Button(
-                        onClick = { onStartDownload(info) },
+                        onClick = {
+                            pendingUpdateInfo = info
+                            showBackupPrompt = true
+                        },
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("Update Now")

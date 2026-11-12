@@ -2234,6 +2234,11 @@ fun SettingsScreen(
         },
         onInstallApk = { file ->
             updateManager.installApk(file)
+        },
+        onTakeBackup = { onDone ->
+            viewModel.saveBackupToDownloads(context) { success ->
+                onDone(success)
+            }
         }
     )
 

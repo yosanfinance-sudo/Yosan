@@ -840,9 +840,7 @@ fun TransactionsScreen(
         val isDataLoaded by viewModel.isDataLoaded.collectAsState()
 
         // 4. Statement Transactions List
-        if (!isDataLoaded) {
-            SkeletonTransactionsLoading(modifier = Modifier.weight(1f))
-        } else if (transactions.isEmpty()) {
+        if (transactions.isEmpty()) {
             if (allTransactions.isEmpty()) {
                 EmptyState(
                     icon = Icons.Outlined.ReceiptLong,

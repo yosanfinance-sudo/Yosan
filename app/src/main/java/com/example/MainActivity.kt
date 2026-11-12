@@ -21,8 +21,18 @@ import com.example.features.auth.AuthViewModel
 import com.example.features.auth.AuthState
 import com.example.features.auth.BiometricAuthManager
 import com.example.features.transactions.FinanceViewModel
+import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import com.example.utils.AppPreferences
 import com.example.data.remote.ApiClient
+
+private enum class RootScreenState {
+    LOCKED,
+    MAIN,
+    ONBOARDING_STEP_2,
+    ONBOARDING_LOGIN
+}
 
 class MainActivity : FragmentActivity() {
 
@@ -303,50 +313,54 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    if (authState is AuthState.Loading) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = androidx.compose.ui.Alignment.Center
-                        ) {
-                            CircularProgressIndicator(
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    // Priority 1: GPay-Style App Lock Screen
-                    else if (isAppLocked && isBiometricEnabled && isAuthenticated) {
-                        GPayLockScreen(
-                            userName = userProfile?.name ?: "User",
-                            errorMessage = lockErrorMessage,
-                            onFingerprintClick = {
-                                isPinUnlockPreferred = false
-                                triggerBiometricUnlock()
-                            },
-                            onPinPatternClick = triggerPinUnlock,
-                            onExitApp = { finishAffinity() },
-                            isPinMode = isPinUnlockPreferred,
-                            onTogglePinMode = { isPinUnlockPreferred = it }
-                        )
-                    }
-                                        // Priority 2: Authenticated Main Container (with Bank Selection onboarding if not completed)
-                    else if (isAuthenticated) {
-                        val isDataLoaded by financeViewModel.isDataLoaded.collectAsState()
-                        val hasBankAccount = userAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                        val isUserOnboardingDone = appPreferences.isOnboardingCompletedForUser(currentEmail) ||
-                            userProfile?.isOnboardingCompleted == true ||
-                            hasBankAccount
+                    val hasBankAccount = userAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                    val isUserOnboardingDone = appPreferences.isOnboardingCompletedForUser(currentEmail) ||
+                        userProfile?.isOnboardingCompleted == true ||
+                        hasBankAccount
 
-                        if (!isUserOnboardingDone) {
-                            if (!isDataLoaded && userProfile == null) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = androidx.compose.ui.Alignment.Center
-                                ) {
-                                    CircularProgressIndicator(
-                                        color = MaterialTheme.colorScheme.primary
+                    val targetScreen = when {
+                        isAppLocked && isBiometricEnabled && isAuthenticated -> RootScreenState.LOCKED
+                        isAuthenticated && isUserOnboardingDone -> RootScreenState.MAIN
+                        isAuthenticated && !isUserOnboardingDone -> RootScreenState.ONBOARDING_STEP_2
+                        else -> RootScreenState.ONBOARDING_LOGIN
+                    }
+
+                    AnimatedContent(
+                        targetState = targetScreen,
+                        transitionSpec = {
+                            (fadeIn(animationSpec = tween(320, easing = FastOutSlowInEasing)) +
+                             scaleIn(initialScale = 0.98f, animationSpec = tween(320, easing = FastOutSlowInEasing)))
+                                .togetherWith(
+                                    fadeOut(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                )
+                                .using(SizeTransform(clip = false))
+                        },
+                        label = "RootScreenTransition"
+                    ) { screenState ->
+                        when (screenState) {
+                            RootScreenState.LOCKED -> {
+                                GPayLockScreen(
+                                    userName = userProfile?.name ?: "User",
+                                    errorMessage = lockErrorMessage,
+                                    onFingerprintClick = {
+                                        isPinUnlockPreferred = false
+                                        triggerBiometricUnlock()
+                                    },
+                                    onPinPatternClick = triggerPinUnlock,
+                                    onExitApp = { finishAffinity() },
+                                    isPinMode = isPinUnlockPreferred,
+                                    onTogglePinMode = { isPinUnlockPreferred = it }
+                                )
+                            }
+                            RootScreenState.MAIN -> {
+                                key(activeUserKey) {
+                                    MainContainerScreen(
+                                        viewModel = financeViewModel,
+                                        authViewModel = authViewModel
                                     )
                                 }
-                            } else {
+                            }
+                            RootScreenState.ONBOARDING_STEP_2 -> {
                                 key(activeUserKey) {
                                     OnboardingScreen(
                                         authViewModel = authViewModel,
@@ -360,27 +374,19 @@ class MainActivity : FragmentActivity() {
                                     )
                                 }
                             }
-                        } else {
-                            key(activeUserKey) {
-                                MainContainerScreen(
-                                    viewModel = financeViewModel,
-                                    authViewModel = authViewModel
+                            RootScreenState.ONBOARDING_LOGIN -> {
+                                OnboardingScreen(
+                                    authViewModel = authViewModel,
+                                    financeViewModel = financeViewModel,
+                                    initialStep = 1,
+                                    onComplete = {
+                                        appPreferences.setOnboardingCompletedForUser(currentEmail, true)
+                                        appPreferences.setLoggedOutForUser(currentEmail, false)
+                                        authViewModel.completeOnboarding()
+                                    }
                                 )
                             }
                         }
-                    }
-                    // Priority 3: Onboarding / Login Screen for unauthenticated or logged out users
-                    else {
-                        OnboardingScreen(
-                            authViewModel = authViewModel,
-                            financeViewModel = financeViewModel,
-                            initialStep = 1,
-                            onComplete = {
-                                appPreferences.setOnboardingCompletedForUser(currentEmail, true)
-                                appPreferences.setLoggedOutForUser(currentEmail, false)
-                                authViewModel.completeOnboarding()
-                            }
-                        )
                     }
                 }
             }

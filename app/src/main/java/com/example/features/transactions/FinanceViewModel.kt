@@ -128,7 +128,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         .onEach { _isDataLoaded.value = true }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
-    private val _isDataLoaded = MutableStateFlow(false)
+    private val _isDataLoaded = MutableStateFlow(true)
     val isDataLoaded: StateFlow<Boolean> = _isDataLoaded.asStateFlow()
 
     val allTransactions: StateFlow<List<TransactionEntity>> = getTransactionsUseCase()

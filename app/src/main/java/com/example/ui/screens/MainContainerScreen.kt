@@ -296,16 +296,26 @@ fun MainContainerScreen(
                 targetState = currentSubScreen,
                 transitionSpec = {
                     if (targetState != SubScreen.NONE && initialState == SubScreen.NONE) {
-                        (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { it } + fadeIn(tween(250))).togetherWith(
-                            slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { -it / 4 } + fadeOut(tween(200))
+                        (slideInHorizontally(animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing)) { (it * 0.35f).toInt() } +
+                                scaleIn(initialScale = 0.95f, animationSpec = tween(300, easing = FastOutSlowInEasing)) +
+                                fadeIn(tween(220, easing = LinearOutSlowInEasing))).togetherWith(
+                            slideOutHorizontally(animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing)) { (-it * 0.15f).toInt() } +
+                                    scaleOut(targetScale = 0.96f, animationSpec = tween(300, easing = FastOutSlowInEasing)) +
+                                    fadeOut(tween(180, easing = FastOutLinearInEasing))
                         )
                     } else if (targetState == SubScreen.NONE && initialState != SubScreen.NONE) {
-                        (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { -it / 4 } + fadeIn(tween(250))).togetherWith(
-                            slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { it } + fadeOut(tween(200))
+                        (slideInHorizontally(animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)) { (-it * 0.15f).toInt() } +
+                                scaleIn(initialScale = 0.96f, animationSpec = tween(280, easing = FastOutSlowInEasing)) +
+                                fadeIn(tween(220, easing = LinearOutSlowInEasing))).togetherWith(
+                            slideOutHorizontally(animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)) { (it * 0.35f).toInt() } +
+                                    scaleOut(targetScale = 0.95f, animationSpec = tween(280, easing = FastOutSlowInEasing)) +
+                                    fadeOut(tween(180, easing = FastOutLinearInEasing))
                         )
                     } else {
-                        (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { it } + fadeIn(tween(250))).togetherWith(
-                            slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { -it } + fadeOut(tween(200))
+                        (slideInHorizontally(animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)) { (it * 0.25f).toInt() } +
+                                fadeIn(tween(220, easing = LinearOutSlowInEasing))).togetherWith(
+                            slideOutHorizontally(animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)) { (-it * 0.25f).toInt() } +
+                                    fadeOut(tween(180, easing = FastOutLinearInEasing))
                         )
                     }.using(SizeTransform(clip = false))
                 },
@@ -385,12 +395,20 @@ fun MainContainerScreen(
                             val initialIndex = initialState.ordinal
                             val targetIndex = targetState.ordinal
                             if (targetIndex > initialIndex) {
-                                (slideInHorizontally(animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)) { width -> (width * 0.9f).toInt() } + fadeIn(tween(250))).togetherWith(
-                                    slideOutHorizontally(animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)) { width -> (-width * 0.9f).toInt() } + fadeOut(tween(200))
+                                (slideInHorizontally(animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)) { (it * 0.2f).toInt() } +
+                                        scaleIn(initialScale = 0.98f, animationSpec = tween(280, easing = FastOutSlowInEasing)) +
+                                        fadeIn(tween(220, easing = LinearOutSlowInEasing))).togetherWith(
+                                    slideOutHorizontally(animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)) { (-it * 0.2f).toInt() } +
+                                            scaleOut(targetScale = 0.98f, animationSpec = tween(280, easing = FastOutSlowInEasing)) +
+                                            fadeOut(tween(180, easing = FastOutLinearInEasing))
                                 )
                             } else {
-                                (slideInHorizontally(animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)) { width -> (-width * 0.9f).toInt() } + fadeIn(tween(250))).togetherWith(
-                                    slideOutHorizontally(animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)) { width -> (width * 0.9f).toInt() } + fadeOut(tween(200))
+                                (slideInHorizontally(animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)) { (-it * 0.2f).toInt() } +
+                                        scaleIn(initialScale = 0.98f, animationSpec = tween(280, easing = FastOutSlowInEasing)) +
+                                        fadeIn(tween(220, easing = LinearOutSlowInEasing))).togetherWith(
+                                    slideOutHorizontally(animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)) { (it * 0.2f).toInt() } +
+                                            scaleOut(targetScale = 0.98f, animationSpec = tween(280, easing = FastOutSlowInEasing)) +
+                                            fadeOut(tween(180, easing = FastOutLinearInEasing))
                                 )
                             }.using(
                                 SizeTransform(clip = false)

@@ -46,6 +46,7 @@ import com.example.features.reports.FinancialInsight
 import com.example.features.reports.InsightType
 import com.example.features.updater.UpdateManager
 import com.example.features.updater.UpdateUiState
+import com.example.features.updater.UpdateDialog
 import com.example.ui.components.MarkdownContent
 import kotlinx.coroutines.launch
 import com.example.ui.components.*
@@ -366,14 +367,8 @@ fun DashboardScreen(
 
 
 
-        // If data is still loading from local DB, show skeleton loading
-        if (!isDataLoaded) {
-            item(key = "dashboard_skeleton_loading") {
-                SkeletonDashboardLoading()
-            }
-        } else {
-            // Dynamic Dashboard Cards rendering based on user configuration
-            cardsConfig.forEach { cardItem ->
+        // Dynamic Dashboard Cards rendering based on user configuration (local-first, instant render)
+        cardsConfig.forEach { cardItem ->
                 if (cardItem.isEnabled) {
                     when (cardItem.type) {
                         // Hand Cash Card
@@ -1336,7 +1331,6 @@ fun DashboardScreen(
                     }
                 }
             }
-        }
     }
 
     activeDialogTitle?.let { title ->
@@ -1359,131 +1353,32 @@ fun DashboardScreen(
     }
 
     if (showUpdateDialog) {
-        when (val state = updateState) {
-            is UpdateUiState.UpdateAvailable -> {
-                val info = state.info
-                AlertDialog(
-                    onDismissRequest = { showUpdateDialog = false },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.SystemUpdate,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(32.dp)
-                        )
-                    },
-                    title = {
-                        Text(
-                            text = "🎉 Got an Update!",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
-                    text = {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text(
-                                    text = "Version: ${info.versionName} • ${info.releaseTitle}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                            if (info.releaseNotes.isNotBlank()) {
-                                Text(
-                                    text = "What's New:",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                ) {
-                                    Box(modifier = Modifier.padding(10.dp)) {
-                                        MarkdownContent(
-                                            content = info.releaseNotes
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    val result = updateManager.downloadAndPrepareApk(info)
-                                    if (result.isSuccess) {
-                                        val apk = result.getOrNull()
-                                        if (apk != null) {
-                                            updateManager.installApk(apk)
-                                        }
-                                    }
-                                }
-                            }
-                        ) {
-                            Text("Update Now")
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showUpdateDialog = false }) {
-                            Text("Later")
+        UpdateDialog(
+            state = updateState,
+            onDismiss = {
+                showUpdateDialog = false
+                updateManager.resetState()
+            },
+            onStartDownload = { info ->
+                scope.launch {
+                    val result = updateManager.downloadAndPrepareApk(info)
+                    if (result.isSuccess) {
+                        val apk = result.getOrNull()
+                        if (apk != null) {
+                            updateManager.installApk(apk)
                         }
                     }
-                )
+                }
+            },
+            onInstallApk = { file ->
+                updateManager.installApk(file)
+            },
+            onTakeBackup = { onDone ->
+                viewModel.saveBackupToDownloads(context) { success ->
+                    onDone(success)
+                }
             }
-            is UpdateUiState.Downloading -> {
-                AlertDialog(
-                    onDismissRequest = { /* Don't dismiss while downloading */ },
-                    title = { Text("Downloading Update...", fontWeight = FontWeight.Bold) },
-                    text = {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            LinearProgressIndicator(
-                                progress = { state.progress },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Text(
-                                text = "${(state.progress * 100).toInt()}% downloaded",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    confirmButton = {}
-                )
-            }
-            is UpdateUiState.ReadyToInstall -> {
-                AlertDialog(
-                    onDismissRequest = { showUpdateDialog = false },
-                    title = { Text("Ready to Install", fontWeight = FontWeight.Bold) },
-                    text = { Text("The update has been downloaded. Tap Install to finish.") },
-                    confirmButton = {
-                        Button(onClick = { updateManager.installApk(state.apkFile) }) {
-                            Text("Install")
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showUpdateDialog = false }) {
-                            Text("Close")
-                        }
-                    }
-                )
-            }
-            else -> {}
-        }
+        )
     }
 }
 

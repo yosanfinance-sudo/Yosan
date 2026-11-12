@@ -55,10 +55,50 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             return newSm
         }
 
-    private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
+    private fun resolveInitialAuthState(): AuthState {
+        val app = getApplication<Application>()
+        val prefs = com.example.utils.AppPreferences(app)
+        val userEmail = tokenManager.getUserEmail()
+        val isExplicitlyLoggedOut = if (!userEmail.isNullOrBlank()) {
+            prefs.isLoggedOutForUser(userEmail)
+        } else {
+            prefs.isLoggedOut
+        }
+        if (isExplicitlyLoggedOut) return AuthState.Unauthenticated
+
+        val storedAccessToken = tokenManager.getAccessToken()
+        val googleSub = tokenManager.getGoogleSub()
+        if (!storedAccessToken.isNullOrBlank() && !userEmail.isNullOrBlank() && !googleSub.isNullOrBlank()) {
+            val cleanEmail = userEmail.trim().lowercase()
+            val isDone = prefs.isOnboardingCompletedForUser(cleanEmail) || prefs.isOnboardingCompleted
+            return AuthState.Authenticated(isNewUser = !isDone)
+        }
+
+        if (prefs.isOfflineMode && prefs.isOnboardingCompleted) {
+            return AuthState.Authenticated(isNewUser = false)
+        }
+
+        return AuthState.Unauthenticated
+    }
+
+    private fun resolveInitialUser(): UserDto? {
+        val userEmail = tokenManager.getUserEmail() ?: return null
+        val userName = tokenManager.getUserName() ?: ""
+        val userPic = tokenManager.getProfilePic() ?: ""
+        return UserDto(
+            id = 1L,
+            googleSub = "",
+            email = userEmail,
+            name = userName.ifBlank { "User" },
+            profilePictureUrl = userPic,
+            emailVerified = tokenManager.isEmailVerified()
+        )
+    }
+
+    private val _authState = MutableStateFlow<AuthState>(resolveInitialAuthState())
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
-    private val _user = MutableStateFlow<UserDto?>(null)
+    private val _user = MutableStateFlow<UserDto?>(resolveInitialUser())
     val user: StateFlow<UserDto?> = _user.asStateFlow()
 
     private val _isNewUser = MutableStateFlow(false)
@@ -114,9 +154,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
      * 3. Syncs profile and sets Authenticated state.
      * 4. If offline mode was completed without login, loads local profile.
      */
-    fun checkSession() {
+    fun checkSession(showLoading: Boolean = false) {
         viewModelScope.launch {
-            _isLoading.value = true
+            if (showLoading) _isLoading.value = true
             try {
                 val app = getApplication<Application>()
                 val prefs = com.example.utils.AppPreferences(app)
@@ -211,7 +251,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 _user.value = null
                 _authState.value = AuthState.Unauthenticated
             } finally {
-                _isLoading.value = false
+                if (showLoading) _isLoading.value = false
             }
         }
     }

@@ -570,10 +570,6 @@ fun OfficialExpensesScreen(
                     )
                 }
             }
-        } else if (!isDataLoaded) {
-            item {
-                SkeletonOfficialExpensesLoading()
-            }
         } else if (filteredExpenses.isEmpty()) {
             item {
                 when (claimStatusFilter) {
