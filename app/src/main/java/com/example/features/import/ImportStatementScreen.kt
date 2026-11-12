@@ -1,5 +1,10 @@
 package com.example.features.import
 
+import com.example.features.walkthrough.SpotlightTourManager
+import com.example.features.walkthrough.SpotlightStep
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -31,6 +36,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -58,6 +64,7 @@ import com.example.utils.HapticHelper
 fun ImportStatementScreen(
     viewModel: FinanceViewModel,
     onImportSuccess: () -> Unit,
+    initialTab: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -72,11 +79,40 @@ fun ImportStatementScreen(
     var pdfDocPages by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     var currentPdfPage by remember { mutableIntStateOf(0) }
     var isRenderingPdf by remember { mutableStateOf(false) }
+    var uploadProgress by remember { mutableFloatStateOf(0f) }
+    var isParsingStatement by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isImporting, isParsingStatement) {
+        if (isImporting || isParsingStatement) {
+            uploadProgress = 0.08f
+            while (uploadProgress < 0.90f) {
+                kotlinx.coroutines.delay(100)
+                uploadProgress += (0.92f - uploadProgress) * 0.12f
+            }
+        } else {
+            if (uploadProgress > 0f) {
+                uploadProgress = 1.0f
+                kotlinx.coroutines.delay(400)
+                uploadProgress = 0f
+            }
+        }
+    }
+
+    LaunchedEffect(previewResult?.detectedBank) {
+        val bank = previewResult?.detectedBank
+        if (bank != null && bank != SupportedBank.UNKNOWN) {
+            viewModel.ensureAccountForBank(bank.displayName) { createdId ->
+                if (selectedAccountId == null) {
+                    selectedAccountId = createdId
+                }
+            }
+        }
+    }
     val statementImports by viewModel.statementImports.collectAsState()
     val isPasswordPromptRequired by viewModel.isPasswordPromptRequired.collectAsState()
     var pdfPasswordInput by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
-    var selectedScreenTab by remember { mutableIntStateOf(0) }
+    var selectedScreenTab by remember(initialTab) { mutableIntStateOf(initialTab) }
     var showAuditDetailsDialog by remember { mutableStateOf(false) }
     var importToDelete by remember { mutableStateOf<StatementImportEntity?>(null) }
 
@@ -147,6 +183,10 @@ fun ImportStatementScreen(
     ) { uri: Uri? ->
         uri?.let {
             val resolved = resolveStatementFileInfo(context, it)
+            if (resolved.fileSize > 3 * 1024 * 1024L) {
+                viewModel.showMessage("File size exceeds 3 MB limit. Please select a statement under 3 MB.")
+                return@rememberLauncherForActivityResult
+            }
             if (resolved.isSupported) {
                 selectedFileName = resolved.fileName
                 if (resolved.fileName.endsWith(".pdf", ignoreCase = true)) {
@@ -207,12 +247,80 @@ fun ImportStatementScreen(
                     }
                 }
 
+                // Apple-style Percentage Loading Line Progress
+                if (isImporting || isParsingStatement || uploadProgress > 0f) {
+                    item(key = "upload_progress_apple_line") {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = if (isImporting) "Importing Transactions..." else "Uploading & Parsing Statement...",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    Text(
+                                        text = "${(uploadProgress * 100).toInt()}%",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(uploadProgress.coerceIn(0f, 1f))
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(
+                                                Brush.horizontalGradient(
+                                                    listOf(
+                                                        MaterialTheme.colorScheme.primary,
+                                                        MaterialTheme.colorScheme.tertiary
+                                                    )
+                                                )
+                                            )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // 2. Upload Document Card (PDF, Excel, CSV)
                 item {
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .onGloballyPositioned { coords ->
+                                SpotlightTourManager.targetBoundsMap[SpotlightStep.IMPORT_STATEMENT] = coords.boundsInRoot()
+                            }
                             .clip(RoundedCornerShape(16.dp)),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
                     ) {
@@ -555,6 +663,9 @@ fun ImportStatementScreen(
                                                 onClick = {
                                                     HapticHelper.vibrateClick(context)
                                                     viewModel.setManualBankOverride(bankEnum)
+                                                    viewModel.ensureAccountForBank(bankLabel) { createdId ->
+                                                        selectedAccountId = createdId
+                                                    }
                                                 },
                                                 label = { Text(bankLabel) },
                                                 leadingIcon = if (isSelected) {
@@ -568,95 +679,7 @@ fun ImportStatementScreen(
 
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            // 4b. Mathematical Audit Result Banner
-                            preview.auditReport?.let { audit ->
-                                Card(
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = when (audit.status) {
-                                            StatementAuditStatus.PASS -> IncomeGreen.copy(alpha = 0.12f)
-                                            StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber.copy(alpha = 0.15f)
-                                            else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                                        }
-                                    ),
-                                    shape = RoundedCornerShape(14.dp),
-                                    border = BorderStroke(
-                                        1.dp,
-                                        when (audit.status) {
-                                            StatementAuditStatus.PASS -> IncomeGreen.copy(alpha = 0.4f)
-                                            StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber.copy(alpha = 0.5f)
-                                            else -> MaterialTheme.colorScheme.outlineVariant
-                                        }
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Column(modifier = Modifier.padding(14.dp)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Icon(
-                                                    imageVector = when (audit.status) {
-                                                        StatementAuditStatus.PASS -> Icons.Default.CheckCircle
-                                                        StatementAuditStatus.REVIEW_REQUIRED -> Icons.Default.Warning
-                                                        else -> Icons.Default.Info
-                                                    },
-                                                    contentDescription = null,
-                                                    tint = when (audit.status) {
-                                                        StatementAuditStatus.PASS -> IncomeGreen
-                                                        StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber
-                                                        else -> MaterialTheme.colorScheme.primary
-                                                    },
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Text(
-                                                    text = "Audit: ${audit.status}",
-                                                    style = MaterialTheme.typography.titleSmall,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = when (audit.status) {
-                                                        StatementAuditStatus.PASS -> IncomeGreen
-                                                        StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber
-                                                        else -> MaterialTheme.colorScheme.primary
-                                                    }
-                                                )
-                                            }
 
-                                            FilledTonalButton(
-                                                onClick = { showAuditDetailsDialog = true },
-                                                shape = RoundedCornerShape(8.dp),
-                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                            ) {
-                                                Text("Audit Details", style = MaterialTheme.typography.labelSmall)
-                                            }
-                                        }
-
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Text(text = "Valid: ${audit.validCount}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                                            Text(text = "Debits: ${CurrencyFormatter.formatInrCompact(audit.totalDebits)}", color = ExpenseRed, style = MaterialTheme.typography.bodySmall)
-                                            Text(text = "Credits: ${CurrencyFormatter.formatInrCompact(audit.totalCredits)}", color = IncomeGreen, style = MaterialTheme.typography.bodySmall)
-                                        }
-
-                                        if (audit.discrepancies.isNotEmpty()) {
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Text(
-                                                text = "${audit.discrepancies.size} discrepancy flagged. Review items below before confirming import.",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = OutstandingAmber,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                    }
-                                }
-                            }
 
                             Spacer(modifier = Modifier.height(10.dp))
 
@@ -743,7 +766,10 @@ fun ImportStatementScreen(
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 24.dp),
+                                .padding(vertical = 24.dp)
+                                .onGloballyPositioned { coords ->
+                                    SpotlightTourManager.targetBoundsMap[SpotlightStep.IMPORT_HISTORY] = coords.boundsInRoot()
+                                },
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                         ) {
                             Column(
@@ -778,7 +804,12 @@ fun ImportStatementScreen(
                     items(statementImports, key = { it.id }) { item ->
                         StatementImportHistoryCard(
                             item = item,
-                            onDeleteClick = { importToDelete = item }
+                            onDeleteClick = { importToDelete = item },
+                            modifier = if (item == statementImports.firstOrNull()) {
+                                Modifier.onGloballyPositioned { coords ->
+                                    SpotlightTourManager.targetBoundsMap[SpotlightStep.IMPORT_HISTORY] = coords.boundsInRoot()
+                                }
+                            } else Modifier
                         )
                     }
                 }
@@ -786,13 +817,7 @@ fun ImportStatementScreen(
         }
     }
 
-    // Dialog 1: Statement Audit Details Dialog
-    if (showAuditDetailsDialog && previewResult?.auditReport != null) {
-        StatementAuditDetailsDialog(
-            audit = previewResult!!.auditReport!!,
-            onDismiss = { showAuditDetailsDialog = false }
-        )
-    }
+
 
     // Dialog 2: Delete Import Confirmation Dialog
     if (importToDelete != null) {
@@ -928,7 +953,8 @@ fun ImportStatementScreen(
 
 data class ResolvedStatementFile(
     val fileName: String,
-    val isSupported: Boolean
+    val isSupported: Boolean,
+    val fileSize: Long = 0L
 )
 
 private val SUPPORTED_STATEMENT_MIMES = arrayOf(
@@ -946,8 +972,9 @@ private val SUPPORTED_STATEMENT_MIMES = arrayOf(
 
 private fun resolveStatementFileInfo(context: Context, uri: Uri): ResolvedStatementFile {
     var fileName = ""
+    var fileSize = 0L
 
-    // 1. Try OpenableColumns.DISPLAY_NAME
+    // 1. Try OpenableColumns.DISPLAY_NAME & SIZE
     try {
         context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
@@ -955,9 +982,21 @@ private fun resolveStatementFileInfo(context: Context, uri: Uri): ResolvedStatem
                 if (nameIndex != -1) {
                     fileName = cursor.getString(nameIndex) ?: ""
                 }
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIndex != -1 && !cursor.isNull(sizeIndex)) {
+                    fileSize = cursor.getLong(sizeIndex)
+                }
             }
         }
     } catch (_: Exception) {}
+
+    if (fileSize <= 0L) {
+        try {
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { afd ->
+                fileSize = afd.length
+            }
+        } catch (_: Exception) {}
+    }
 
     // 2. Fallback to URI lastPathSegment
     if (fileName.isBlank()) {
@@ -973,7 +1012,7 @@ private fun resolveStatementFileInfo(context: Context, uri: Uri): ResolvedStatem
     val lower = fileName.lowercase()
     val hasValidExt = lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".pdf") || lower.endsWith(".csv")
     if (hasValidExt) {
-        return ResolvedStatementFile(fileName, true)
+        return ResolvedStatementFile(fileName, true, fileSize)
     }
 
     // 3. Inspect ContentResolver MIME type
@@ -982,10 +1021,10 @@ private fun resolveStatementFileInfo(context: Context, uri: Uri): ResolvedStatem
     } catch (_: Exception) { null }
 
     when {
-        mimeType == "application/pdf" -> return ResolvedStatementFile("$fileName.pdf", true)
-        mimeType == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> return ResolvedStatementFile("$fileName.xlsx", true)
-        mimeType == "application/vnd.ms-excel" || mimeType == "application/x-excel" || mimeType == "application/msexcel" || mimeType == "application/excel" -> return ResolvedStatementFile("$fileName.xls", true)
-        mimeType == "text/csv" || mimeType == "text/comma-separated-values" -> return ResolvedStatementFile("$fileName.csv", true)
+        mimeType == "application/pdf" -> return ResolvedStatementFile("$fileName.pdf", true, fileSize)
+        mimeType == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> return ResolvedStatementFile("$fileName.xlsx", true, fileSize)
+        mimeType == "application/vnd.ms-excel" || mimeType == "application/x-excel" || mimeType == "application/msexcel" || mimeType == "application/excel" -> return ResolvedStatementFile("$fileName.xls", true, fileSize)
+        mimeType == "text/csv" || mimeType == "text/comma-separated-values" -> return ResolvedStatementFile("$fileName.csv", true, fileSize)
     }
 
     // 4. Magic bytes inspection from stream
@@ -996,21 +1035,21 @@ private fun resolveStatementFileInfo(context: Context, uri: Uri): ResolvedStatem
             if (read >= 4) {
                 // PDF: %PDF
                 if (header[0] == 0x25.toByte() && header[1] == 0x50.toByte() && header[2] == 0x44.toByte() && header[3] == 0x46.toByte()) {
-                    return ResolvedStatementFile("$fileName.pdf", true)
+                    return ResolvedStatementFile("$fileName.pdf", true, fileSize)
                 }
                 // ZIP / XLSX: PK\x03\x04
                 if (header[0] == 0x50.toByte() && header[1] == 0x4B.toByte() && header[2] == 0x03.toByte() && header[3] == 0x04.toByte()) {
-                    return ResolvedStatementFile("$fileName.xlsx", true)
+                    return ResolvedStatementFile("$fileName.xlsx", true, fileSize)
                 }
                 // OLE2 / XLS: 0xD0, 0xCF, 0x11, 0xE0
                 if (read >= 8 && header[0] == 0xD0.toByte() && header[1] == 0xCF.toByte() && header[2] == 0x11.toByte() && header[3] == 0xE0.toByte()) {
-                    return ResolvedStatementFile("$fileName.xls", true)
+                    return ResolvedStatementFile("$fileName.xls", true, fileSize)
                 }
             }
         }
     } catch (_: Exception) {}
 
-    return ResolvedStatementFile(fileName, false)
+    return ResolvedStatementFile(fileName, false, fileSize)
 }
 
 @Composable
@@ -1331,22 +1370,14 @@ fun StatementImportHistoryCard(
                 }
 
                 Surface(
-                    color = when (item.auditStatus) {
-                        StatementAuditStatus.PASS -> IncomeGreen.copy(alpha = 0.15f)
-                        StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber.copy(alpha = 0.15f)
-                        else -> MaterialTheme.colorScheme.outlineVariant
-                    },
+                    color = IncomeGreen.copy(alpha = 0.15f),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
-                        text = item.auditStatus,
+                        text = "Imported",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = when (item.auditStatus) {
-                            StatementAuditStatus.PASS -> IncomeGreen
-                            StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+                        color = IncomeGreen,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }

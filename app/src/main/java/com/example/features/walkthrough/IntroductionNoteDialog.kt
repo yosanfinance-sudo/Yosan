@@ -265,27 +265,12 @@ fun IntroductionNoteDialog(
                         Text("Get started", fontWeight = FontWeight.Bold)
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    TextButton(
+                        onClick = onSkip,
+                        modifier = Modifier.fillMaxWidth().testTag("intro_skip_btn"),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onOpenWalkthrough,
-                            modifier = Modifier.weight(1f).testTag("intro_walkthrough_btn"),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("How to use the app", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                        }
-
-                        TextButton(
-                            onClick = onSkip,
-                            modifier = Modifier.testTag("intro_skip_btn"),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Skip", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                        Text("Skip", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

@@ -28,6 +28,7 @@ import com.example.features.transactions.coordinator.*
 import com.example.features.transactions.data.TransactionRepository
 import com.example.repository.FinanceRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.yield
@@ -275,8 +276,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     repository.updateThemePreference(true)
                 }
                 else -> {
-                    appPrefs.isDarkMode = null
-                    repository.updateThemePreference(false)
+                    appPrefs.isDarkMode = true
+                    repository.updateThemePreference(true)
                 }
             }
         }
@@ -378,7 +379,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         repository = repository,
         scope = viewModelScope,
         getCompanyExpensesUseCase = getCompanyExpensesUseCase,
-        showMessage = ::showMessage
+        showMessage = ::showMessage,
+        appPreferences = com.example.utils.AppPreferences(getApplication())
     )
 
     private val advanceCoordinator: AdvanceCoordinator = AdvanceCoordinator(
@@ -596,9 +598,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun isCashTransaction(tx: TransactionEntity): Boolean {
         val cashAcc = accounts.value.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
         if (cashAcc != null && tx.accountId == cashAcc.id) return true
-        if (tx.isManual) return true
+        val txAcc = accounts.value.firstOrNull { it.id == tx.accountId }
+        if (txAcc?.accountType == com.example.data.local.entity.AccountType.CASH) return true
         if (tx.source.equals("CASH", ignoreCase = true) || 
-            tx.source.equals("MANUAL", ignoreCase = true) || 
             tx.source.equals("MANUAL_CASH", ignoreCase = true)) return true
         return false
     }
@@ -802,6 +804,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun markCompanyExpenseApplied(id: Long, applied: Boolean) = companyExpenseCoordinator.markCompanyExpenseApplied(id, applied)
     fun markCompanyExpenseReimbursed(id: Long, reimbursed: Boolean) = companyExpenseCoordinator.markCompanyExpenseReimbursed(id, reimbursed)
     fun deleteCompanyExpense(id: Long) = companyExpenseCoordinator.deleteCompanyExpense(id)
+    fun linkTransactionToReimbursement(txId: Long, expenseId: Long?) = companyExpenseCoordinator.linkTransactionToReimbursement(txId, expenseId)
 
     // Delegated Category & Rule Methods
     fun acceptSmartRule(prompt: SmartRulePrompt) = categoryRuleCoordinator.acceptSmartRule(prompt)
@@ -835,6 +838,41 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         statementImportCoordinator.deleteStatementImport(importId, accountId, onComplete)
     fun setManualBankOverride(bank: com.example.features.import.SupportedBank?) =
         statementImportCoordinator.setManualBankOverride(bank)
+
+    fun ensureAccountForBank(bankName: String, onResult: ((Long) -> Unit)? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cleanBank = bankName.trim()
+                if (cleanBank.isBlank()) return@launch
+                val currentList = database.accountDao().getAllAccountsList()
+                val existing = currentList.firstOrNull {
+                    it.bankName.equals(cleanBank, ignoreCase = true) ||
+                    it.accountName.contains(cleanBank, ignoreCase = true)
+                }
+                if (existing != null) {
+                    withContext(Dispatchers.Main) {
+                        onResult?.invoke(existing.id)
+                    }
+                    return@launch
+                }
+                val newAccount = com.example.data.local.entity.AccountEntity(
+                    accountName = "$cleanBank Account",
+                    bankName = cleanBank,
+                    accountNumberMasked = "••••",
+                    accountType = com.example.data.local.entity.AccountType.BANK,
+                    openingBalance = 0.0,
+                    currentBalance = 0.0,
+                    isDefault = false
+                )
+                val newId = database.accountDao().insertAccount(newAccount)
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(newId)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("FinanceViewModel", "ensureAccountForBank error", e)
+            }
+        }
+    }
     fun clearImportPreview() = statementImportCoordinator.clearImportPreview()
     fun submitStatementPassword(context: Context, password: String) =
         statementImportCoordinator.submitStatementPassword(context, password)
@@ -852,7 +890,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         monthlyTrends = monthlyTrends.value,
         loans = loans.value,
         allTransactions = allTransactions.value,
-        companyExpenses = companyExpenses.value
+        companyExpenses = companyExpenses.value,
+        accounts = accounts.value
     )
 
     // Delegated Excel Sync Methods

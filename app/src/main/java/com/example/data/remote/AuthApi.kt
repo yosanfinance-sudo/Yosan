@@ -156,7 +156,8 @@ data class LatestBackupResponse(
     @field:Json(name = "backupDate") val backupDate: String? = null,
     @field:Json(name = "accountsCount") val accountsCount: Int = 0,
     @field:Json(name = "transactionsCount") val transactionsCount: Int = 0,
-    @field:Json(name = "backupJson") val backupJson: String? = null
+    @field:Json(name = "backupJson") val backupJson: String? = null,
+    @field:Json(name = "fileName") val fileName: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -230,7 +231,8 @@ data class FinancialClientContextDto(
 data class ChatRequest(
     @field:Json(name = "message") val message: String,
     @field:Json(name = "history") val history: List<ChatMessageDto>? = null,
-    @field:Json(name = "clientContext") val clientContext: FinancialClientContextDto? = null
+    @field:Json(name = "clientContext") val clientContext: FinancialClientContextDto? = null,
+    @field:Json(name = "apiKey") val apiKey: String? = null
 )
 
 @JsonClass(generateAdapter = true)

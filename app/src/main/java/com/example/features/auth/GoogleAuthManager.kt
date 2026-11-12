@@ -14,6 +14,8 @@ import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 import com.example.BuildConfig
 import android.content.Intent
 import android.net.Uri
@@ -185,6 +187,74 @@ class GoogleAuthManager(private val context: Context) {
      * Builds an Android system Account Chooser intent to select any Google account on this device.
      * Works natively across all Android versions without requiring Google Cloud Console SHA-1 registration.
      */
+    /**
+     * Builds a native Google Play Services sign-in intent.
+     * Uses on-device Google Play Services dialog without opening an external browser.
+     */
+    /**
+     * Signs out from Google Play Services, resetting the cached signed-in account
+     * so that the account picker is always prompted on the next sign-in.
+     */
+    fun signOut(onComplete: (() -> Unit)? = null) {
+        try {
+            val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestEmail()
+                .requestProfile()
+                .build()
+            val client = GoogleSignIn.getClient(context, gso)
+            client.signOut().addOnCompleteListener {
+                onComplete?.invoke()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to sign out of Google Play Services: ${e.message}")
+            onComplete?.invoke()
+        }
+    }
+
+    /**
+     * Builds a native Google Play Services sign-in intent.
+     * Uses on-device Google Play Services dialog without opening an external browser.
+     * Always resets the client so account selection is prompted every time.
+     */
+    fun getGoogleSignInIntent(): Intent {
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestProfile()
+            .build()
+        val client = GoogleSignIn.getClient(context, gso)
+        try {
+            client.signOut()
+        } catch (_: Exception) {}
+        return client.signInIntent
+    }
+
+    /**
+     * Extracts GoogleClaims from the ActivityResult data returned by GoogleSignInClient.
+     */
+    fun getSignedInAccountFromIntent(data: Intent?): GoogleClaims? {
+        if (data == null) return null
+        return try {
+            val task = GoogleSignIn.getSignedInAccountFromIntent(data)
+            val account = task.getResult(ApiException::class.java)
+            if (account != null && !account.email.isNullOrBlank()) {
+                val email = account.email!!.trim().lowercase()
+                val name = account.displayName?.takeIf { it.isNotBlank() && !it.contains("@") }
+                    ?: listOfNotNull(account.givenName, account.familyName).joinToString(" ").trim().takeIf { it.isNotBlank() && !it.contains("@") }
+                    ?: resolveDisplayName(context, email)
+                    ?: formatEmailAsReadableName(email).ifBlank { "User" }
+                GoogleClaims(
+                    sub = account.id ?: "google_${com.example.data.local.AppDatabase.sanitizeUserKey(email)}",
+                    email = email,
+                    name = name,
+                    picture = account.photoUrl?.toString() ?: ""
+                )
+            } else null
+        } catch (e: Exception) {
+            Log.e(TAG, "getSignedInAccountFromIntent error: ${e.message}", e)
+            null
+        }
+    }
+
     fun createSystemAccountPickerIntent(): Intent? {
         return try {
             android.accounts.AccountManager.newChooseAccountIntent(

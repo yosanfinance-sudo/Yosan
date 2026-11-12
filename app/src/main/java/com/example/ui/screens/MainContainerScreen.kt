@@ -46,6 +46,9 @@ import com.example.features.transactions.InvestmentsScreen
 import com.example.features.transactions.TransfersScreen
 import com.example.features.ai.FinancialChatSheet
 import com.example.features.walkthrough.IntroductionNoteDialog
+import com.example.features.walkthrough.SpotlightTourManager
+import com.example.features.walkthrough.SpotlightTourOverlay
+import com.example.features.walkthrough.SpotlightStep
 import com.example.features.walkthrough.UserWalkthroughDialog
 import com.example.utils.AppPreferences
 import androidx.compose.ui.platform.LocalContext
@@ -82,11 +85,18 @@ fun MainContainerScreen(
     // Dialog & Sheet States
     var showAddSheet by remember { mutableStateOf(false) }
     var showAiChatSheet by remember { mutableStateOf(false) }
+    var autoOpenGeminiConfig by remember { mutableStateOf(false) }
     var addSheetTab by remember { mutableStateOf(AddTab.EXPENSE) }
     var preselectedLoanForRepay by remember { mutableStateOf<LoanEntity?>(null) }
     var selectedTransactionForDetail by remember { mutableStateOf<TransactionEntity?>(null) }
 
-    var showIntroNoteDialog by remember { mutableStateOf(!appPreferences.isIntroNoteDismissed) }
+        LaunchedEffect(Unit) {
+        if (!appPreferences.isProductTourCompleted) {
+            currentSubScreen = SubScreen.IMPORT_STATEMENT
+            SpotlightTourManager.startTour()
+        }
+    }
+    var showIntroNoteDialog by remember { mutableStateOf(false) }
     var showUserWalkthroughDialog by remember { mutableStateOf(false) }
 
     val smartRulePrompt by viewModel.smartRulePrompt.collectAsState()
@@ -144,11 +154,17 @@ fun MainContainerScreen(
         )
     }
 
-    val isBackNavEnabled = showIntroNoteDialog || showUserWalkthroughDialog || currentSubScreen != SubScreen.NONE || currentTab != MainTab.DASHBOARD || showAddSheet || selectedTransactionForDetail != null
+    val isBackNavEnabled = SpotlightTourManager.activeStep != null || showIntroNoteDialog || showUserWalkthroughDialog || currentSubScreen != SubScreen.NONE || currentTab != MainTab.DASHBOARD || showAddSheet || selectedTransactionForDetail != null
 
     BackHandler(enabled = isBackNavEnabled) {
         com.example.utils.HapticHelper.vibrateClick(context)
         when {
+            SpotlightTourManager.activeStep != null -> {
+                currentTab = MainTab.DASHBOARD
+                currentSubScreen = SubScreen.NONE
+                appPreferences.isProductTourCompleted = true
+                SpotlightTourManager.dismissTour()
+            }
             showIntroNoteDialog -> {
                 appPreferences.isIntroNoteDismissed = true
                 showIntroNoteDialog = false
@@ -165,6 +181,7 @@ fun MainContainerScreen(
     }
 
     CompositionLocalProvider(com.example.ui.components.LocalFloatingEffectEnabled provides isFloatingEffectEnabled) {
+        Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -310,7 +327,8 @@ fun MainContainerScreen(
                             onImportSuccess = {
                                 currentSubScreen = SubScreen.NONE
                                 currentTab = MainTab.TRANSACTIONS
-                            }
+                            },
+                            initialTab = if (SpotlightTourManager.activeStep == SpotlightStep.IMPORT_HISTORY) 1 else 0
                         )
                         SubScreen.LENDING -> LendingScreen(
                             viewModel = viewModel,
@@ -397,7 +415,16 @@ fun MainContainerScreen(
                                 onNavigateToPersonalExpenses = { currentSubScreen = SubScreen.PERSONAL_EXPENSES },
                                 onNavigateToInvestments = { currentSubScreen = SubScreen.INVESTMENTS },
                                 onNavigateToTransfers = { currentSubScreen = SubScreen.TRANSFERS },
-                                onOpenAiChat = { showAiChatSheet = true }
+                                onOpenAiChat = {
+                                    val currentEmail = authViewModel?.user?.value?.email ?: appPreferences.lastUserEmail
+                                    val geminiKey = appPreferences.getGeminiApiKeyForUser(currentEmail).ifBlank { appPreferences.geminiApiKey }
+                                    if (geminiKey.isNotBlank()) {
+                                        showAiChatSheet = true
+                                    } else {
+                                        currentTab = MainTab.SETTINGS
+                                        autoOpenGeminiConfig = true
+                                    }
+                                }
                             )
 
                             MainTab.TRANSACTIONS -> TransactionsScreen(
@@ -414,12 +441,19 @@ fun MainContainerScreen(
                             MainTab.SETTINGS -> SettingsScreen(
                                 viewModel = viewModel,
                                 authViewModel = authViewModel,
+                                initialTab = if (autoOpenGeminiConfig) com.example.features.settings.SettingsTab.FINANCE else if (SpotlightTourManager.activeStep == SpotlightStep.SETTINGS_SECURITY) com.example.features.settings.SettingsTab.SECURITY else com.example.features.settings.SettingsTab.FINANCE,
+                                openGeminiConfig = autoOpenGeminiConfig,
+                                onGeminiConfigDismissed = { autoOpenGeminiConfig = false },
                                 onNavigateToRules = { currentSubScreen = SubScreen.RULES },
                                 onNavigateToCompanyExpenses = { currentSubScreen = SubScreen.COMPANY_EXPENSES },
                                 onNavigateToReports = { currentTab = MainTab.REPORTS },
                                 onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT },
                                 onNavigateToLending = { currentSubScreen = SubScreen.LENDING },
                                 onNavigateToExcelSync = { currentSubScreen = SubScreen.EXCEL_SYNC },
+                                onOpenProductTour = {
+                                    currentSubScreen = SubScreen.IMPORT_STATEMENT
+                                    SpotlightTourManager.startTour()
+                                },
                                 onOpenWalkthrough = { showUserWalkthroughDialog = true },
                                 onOpenIntroNote = { showIntroNoteDialog = true },
                                 onAccountSwitched = {
@@ -477,7 +511,7 @@ fun MainContainerScreen(
                 )
             }
 
-            // Introduction & Welcome Note Dialog (shown on first launch, dismissable)
+                        // Introduction & Welcome Note Dialog (shown on first launch, dismissable)
             if (showIntroNoteDialog) {
                 IntroductionNoteDialog(
                     onGetStarted = {
@@ -510,7 +544,103 @@ fun MainContainerScreen(
             }
         }
     }
+
+        // Interactive In-App Spotlight Product Tour (OnRent style - rendered at true window root level)
+        SpotlightTourManager.activeStep?.let { tourStep ->
+            val targetBounds = SpotlightTourManager.targetBoundsMap[tourStep]
+            SpotlightTourOverlay(
+                step = tourStep,
+                targetBounds = targetBounds,
+                onNext = {
+                    when (tourStep) {
+                        SpotlightStep.IMPORT_STATEMENT -> {
+                            currentSubScreen = SubScreen.NONE
+                            currentTab = MainTab.TRANSACTIONS
+                            SpotlightTourManager.nextStep()
+                        }
+                        SpotlightStep.STATEMENTS_LEDGER -> {
+                            currentSubScreen = SubScreen.NONE
+                            currentTab = MainTab.TRANSACTIONS
+                            SpotlightTourManager.nextStep()
+                        }
+                        SpotlightStep.STATEMENTS_FILTER -> {
+                            currentSubScreen = SubScreen.IMPORT_STATEMENT
+                            SpotlightTourManager.nextStep()
+                        }
+                        SpotlightStep.IMPORT_HISTORY -> {
+                            currentSubScreen = SubScreen.COMPANY_EXPENSES
+                            SpotlightTourManager.nextStep()
+                        }
+                        SpotlightStep.OFFICIAL_EXPENSES -> {
+                            currentSubScreen = SubScreen.NONE
+                            currentTab = MainTab.DASHBOARD
+                            SpotlightTourManager.nextStep()
+                        }
+                        SpotlightStep.DASHBOARD_CASHFLOW -> {
+                            currentSubScreen = SubScreen.NONE
+                            currentTab = MainTab.REPORTS
+                            SpotlightTourManager.nextStep()
+                        }
+                        SpotlightStep.REPORTS_PDF -> {
+                            currentSubScreen = SubScreen.NONE
+                            currentTab = MainTab.SETTINGS
+                            SpotlightTourManager.nextStep()
+                        }
+                        SpotlightStep.SETTINGS_SECURITY -> {
+                            currentSubScreen = SubScreen.NONE
+                            currentTab = MainTab.DASHBOARD
+                            appPreferences.isProductTourCompleted = true
+                            SpotlightTourManager.dismissTour()
+                        }
+                    }
+                },
+                onBack = {
+                    when (tourStep) {
+                        SpotlightStep.SETTINGS_SECURITY -> {
+                            currentSubScreen = SubScreen.NONE
+                            currentTab = MainTab.REPORTS
+                            SpotlightTourManager.previousStep()
+                        }
+                        SpotlightStep.REPORTS_PDF -> {
+                            currentSubScreen = SubScreen.NONE
+                            currentTab = MainTab.DASHBOARD
+                            SpotlightTourManager.previousStep()
+                        }
+                        SpotlightStep.DASHBOARD_CASHFLOW -> {
+                            currentSubScreen = SubScreen.COMPANY_EXPENSES
+                            SpotlightTourManager.previousStep()
+                        }
+                        SpotlightStep.OFFICIAL_EXPENSES -> {
+                            currentSubScreen = SubScreen.IMPORT_STATEMENT
+                            SpotlightTourManager.previousStep()
+                        }
+                        SpotlightStep.IMPORT_HISTORY -> {
+                            currentSubScreen = SubScreen.NONE
+                            currentTab = MainTab.TRANSACTIONS
+                            SpotlightTourManager.previousStep()
+                        }
+                        SpotlightStep.STATEMENTS_FILTER -> {
+                            currentSubScreen = SubScreen.NONE
+                            currentTab = MainTab.TRANSACTIONS
+                            SpotlightTourManager.previousStep()
+                        }
+                        SpotlightStep.STATEMENTS_LEDGER -> {
+                            currentSubScreen = SubScreen.IMPORT_STATEMENT
+                            SpotlightTourManager.previousStep()
+                        }
+                        SpotlightStep.IMPORT_STATEMENT -> {
+                            SpotlightTourManager.previousStep()
+                        }
+                    }
+                },
+                onDismiss = {
+                    currentSubScreen = SubScreen.NONE
+                    currentTab = MainTab.DASHBOARD
+                    appPreferences.isProductTourCompleted = true
+                    SpotlightTourManager.dismissTour()
+                }
+            )
+        }
+    }
 }
 }
-
-

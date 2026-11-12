@@ -235,7 +235,13 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 when (val result = googleAuthManager.getGoogleIdToken()) {
                     is GoogleAuthResult.RequiresBrowserOAuth -> {
                         Log.i(TAG, "Native credentials require browser OAuth: ${result.message}")
-                        launchGoogleOAuth2Flow(context)
+                        _isLoading.value = false
+                        if (onFallbackPicker != null) {
+                            onFallbackPicker.invoke()
+                        } else {
+                            _errorMessage.value = "Google Sign-In requires account selection."
+                        }
+                        return@launch
                     }
                     is GoogleAuthResult.FallbackAccountPicker -> {
                         Log.i(TAG, "Credential Manager unavailable, delegating to system picker: ${result.message}")
@@ -244,7 +250,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         if (onFallbackPicker != null) {
                             onFallbackPicker.invoke()
                         } else {
-                            launchGoogleOAuth2Flow(context)
+                            _errorMessage.value = "Please select a Google account using on-device account chooser."
                         }
                         return@launch
                     }
@@ -1140,18 +1146,21 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 when (val res = driveAuth.fetchAccessTokenForEmail(email)) {
                     is DriveAuthTokenResult.Success -> {
                         tokenManager.saveDriveTokens(res.token, driveEmail = email)
-                        val json = driveService.getLatestBackupContent(res.token, email)
-                        if (!json.isNullOrBlank()) {
-                            val jsonObj = org.json.JSONObject(json)
+                        val backupDetails = driveService.getLatestBackupDetails(res.token, email)
+                        if (backupDetails != null && backupDetails.json.isNotBlank()) {
+                            val jsonObj = org.json.JSONObject(backupDetails.json)
                             val accountsCount = jsonObj.optJSONArray("accounts")?.length() ?: 0
                             val txCount = jsonObj.optJSONArray("transactions")?.length() ?: 0
-                            val dateStr = jsonObj.optString("created_at", "Recent")
+                            val rawDate = jsonObj.optString("created_at", backupDetails.modifiedTime ?: "")
+                            val readableDate = formatReadableBackupTimestamp(rawDate)
+                            val backupFileName = jsonObj.optString("backup_file_name", backupDetails.fileName)
                             onResult(true, LatestBackupResponse(
                                 hasBackup = true,
-                                backupDate = dateStr,
+                                backupDate = readableDate,
                                 accountsCount = accountsCount,
                                 transactionsCount = txCount,
-                                backupJson = json
+                                backupJson = backupDetails.json,
+                                fileName = backupFileName
                             ))
                             return@launch
                         }
@@ -1489,6 +1498,13 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             tokenManager.clearActiveSession(preserveSavedSession = true)
             _driveStatus.value = DriveStatusResponse(isConnected = false)
             refreshDriveStatus()
+            try {
+                val googleAuthManager = GoogleAuthManager(app)
+                googleAuthManager.signOut()
+            } catch (e: Exception) {
+                Log.w(TAG, "GoogleAuthManager sign out error: ${e.message}")
+            }
+
             prefs.clearSession(preserveDeviceIdentity = true)
             _user.value = null
             _isNewUser.value = false
@@ -1977,6 +1993,22 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     fun decodeGoogleIdToken(idToken: String): GoogleClaims? = decodeGoogleIdTokenLocally(idToken)
+
+    private fun formatReadableBackupTimestamp(rawDate: String?): String {
+        if (rawDate.isNullOrBlank()) return java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+        return try {
+            val clean = rawDate.substringBefore("Z").substringBefore(".")
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }
+            val date = sdf.parse(clean)
+            if (date != null) {
+                java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault()).format(date)
+            } else rawDate
+        } catch (_: Exception) {
+            rawDate
+        }
+    }
 
     companion object {
         fun decodeGoogleIdTokenLocally(idToken: String): GoogleClaims? {

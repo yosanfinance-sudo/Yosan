@@ -6,6 +6,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
+import com.example.data.local.entity.AccountEntity
+import com.example.data.local.entity.AccountType
 import com.example.data.local.entity.CompanyExpenseEntity
 import com.example.data.local.entity.LoanEntity
 import com.example.data.local.entity.TransactionEntity
@@ -215,7 +217,8 @@ object ExportService {
         monthlyTrends: List<MonthlyTrendItem> = emptyList(),
         loans: List<LoanEntity> = emptyList(),
         allTransactions: List<TransactionEntity> = emptyList(),
-        companyExpenses: List<CompanyExpenseEntity> = emptyList()
+        companyExpenses: List<CompanyExpenseEntity> = emptyList(),
+        accounts: List<AccountEntity> = emptyList()
     ): String {
         val borrows = computeBorrowSummaries(allTransactions)
         val sb = StringBuilder()
@@ -224,7 +227,15 @@ object ExportService {
         sb.append("=====================================================\n\n")
 
         sb.append("--- 1. OVERVIEW SUMMARY ---\n")
-        sb.append("Current Net Balance:        ${CurrencyFormatter.formatInr(summary.currentBalance)}\n")
+        if (accounts.isNotEmpty()) {
+            accounts.forEach { acc ->
+                val bankLabel = acc.bankName.ifBlank { acc.accountName }
+                val label = if (acc.accountType == AccountType.CASH) "In-Hand Cash" else "$bankLabel Balance"
+                sb.append(String.format("%-28s: %s\n", label, CurrencyFormatter.formatInr(acc.currentBalance)))
+            }
+        } else {
+            sb.append("Bank Balance:               ${CurrencyFormatter.formatInr(summary.currentBalance)}\n")
+        }
         sb.append("Total Income Recorded:      ${CurrencyFormatter.formatInr(summary.totalIncome)}\n")
         sb.append("Total Personal Expenses:    ${CurrencyFormatter.formatInr(summary.totalExpense)}\n")
         sb.append("Official Company Expenses:  ${CurrencyFormatter.formatInr(summary.companyExpense)}\n")
@@ -326,7 +337,8 @@ object ExportService {
         companyExpenses: List<CompanyExpenseEntity> = emptyList(),
         userName: String? = null,
         reportType: ReportType = ReportType.OVERALL_SUMMARY,
-        periodLabel: String = "All Time"
+        periodLabel: String = "All Time",
+        accounts: List<AccountEntity> = emptyList()
     ): File {
         val borrows = computeBorrowSummaries(allTransactions)
         val pdfDocument = PdfDocument()
@@ -462,34 +474,54 @@ object ExportService {
                     val inHandCashBalance = cashInflow - cashOutflow
 
                     canvas.drawText("Overview Summary", 30f, currentY, sectionTitlePaint)
-                    canvas.drawRoundRect(30f, currentY + 8f, 565f, currentY + 266f, 10f, 10f, cardBgPaint)
-                    canvas.drawRoundRect(30f, currentY + 8f, 565f, currentY + 266f, 10f, 10f, cardBorderPaint)
+                    val netCashFlow = summary.totalIncome - summary.totalExpense
+                    val overviewMetrics = mutableListOf<Pair<String, Double>>()
+                    overviewMetrics.add("Total Inflow / Income" to summary.totalIncome)
+                    overviewMetrics.add("Total Outflow / Expense" to summary.totalExpense)
+                    overviewMetrics.add("Net Cash Flow" to netCashFlow)
+                    if (accounts.isNotEmpty()) {
+                        accounts.forEach { acc ->
+                            val bankLabel = acc.bankName.ifBlank { acc.accountName }
+                            val displayName = if (acc.accountType == AccountType.CASH) "In-Hand Cash" else "$bankLabel Balance"
+                            overviewMetrics.add(displayName to acc.currentBalance)
+                        }
+                    } else {
+                        overviewMetrics.add("Bank Balance" to summary.currentBalance)
+                    }
+                    if (summary.companyExpense > 0.0) {
+                        overviewMetrics.add("Official Company Expenses" to summary.companyExpense)
+                    }
+                    if (summary.moneyLent > 0.0 || summary.totalOutstanding > 0.0) {
+                        overviewMetrics.add("Total Money Lent" to summary.moneyLent)
+                        overviewMetrics.add("Outstanding Loans (Due)" to summary.totalOutstanding)
+                    }
+                    if (summary.borrowingMetrics.totalBorrowed > 0.0 || summary.borrowingMetrics.outstandingBorrowing > 0.0) {
+                        overviewMetrics.add("Total Borrowed Debt" to summary.borrowingMetrics.totalBorrowed)
+                        overviewMetrics.add("Outstanding Borrowed Due" to summary.borrowingMetrics.outstandingBorrowing)
+                    }
+
+                    val cardHeight = (overviewMetrics.size * 22f + 16f).coerceAtLeast(60f)
+                    val cardBottom = currentY + 8f + cardHeight
+                    canvas.drawRoundRect(30f, currentY + 8f, 565f, cardBottom, 10f, 10f, cardBgPaint)
+                    canvas.drawRoundRect(30f, currentY + 8f, 565f, cardBottom, 10f, 10f, cardBorderPaint)
 
                     var y = currentY + 28f
-                    val overviewMetrics = listOf(
-                        "Current Net Balance" to summary.currentBalance,
-                        "In-Hand Cash Balance" to inHandCashBalance,
-                        "Total Income Recorded" to summary.totalIncome,
-                        "Total Personal Expenses" to summary.totalExpense,
-                        "Official Company Expenses" to summary.companyExpense,
-                        "Total Money Lent" to summary.moneyLent,
-                        "Total Repayments Received" to summary.totalRepaid,
-                        "Total Outstanding Loans (Due)" to summary.totalOutstanding,
-                        "Total Money Borrowed" to summary.borrowingMetrics.totalBorrowed,
-                        "Outstanding Borrowed Debt" to summary.borrowingMetrics.outstandingBorrowing
-                    )
-
                     overviewMetrics.forEach { (label, value) ->
                         textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
                         canvas.drawText(label, 45f, y, textPaint)
                         val valStr = formatInr(value)
-                        textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
-                        val width = textPaint.measureText(valStr)
-                        canvas.drawText(valStr, 550f - width, y, textPaint)
+                        val vPaint = when {
+                            label.contains("Inflow", ignoreCase = true) || (label.contains("Net Cash Flow", ignoreCase = true) && value >= 0) -> positivePaint
+                            label.contains("Outflow", ignoreCase = true) || (label.contains("Net Cash Flow", ignoreCase = true) && value < 0) -> negativePaint
+                            else -> textPaint
+                        }
+                        vPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                        val width = vPaint.measureText(valStr)
+                        canvas.drawText(valStr, 550f - width, y, vPaint)
                         y += 22f
                     }
 
-                    currentY = currentY + 286f
+                    currentY = cardBottom + 20f
 
                     // 2. Monthly Trends Table
                     if (monthlyTrends.isNotEmpty()) {
@@ -712,6 +744,43 @@ object ExportService {
                                 canvas.drawText(if (exp.isReimbursed) "Reimbursed" else "Pending", 475f, rowY, statusPaint)
 
                                 rowY += 18f
+                            }
+                            currentY = tableB + 20f
+                        }
+                    }
+                    // ================= FILTERED STATEMENT PARTICULARS =================
+                    if (allTransactions.isNotEmpty()) {
+                        val txChunks = allTransactions.take(150).chunked(25)
+                        txChunks.forEachIndexed { pageIdx, chunk ->
+                            val pTitle = if (pageIdx == 0) "Statement Particulars (${allTransactions.size} Records)" else "Statement Particulars (Part ${pageIdx + 1})"
+                            canvas = startNewPage(pTitle)
+                            canvas.drawText("Transaction Particulars (${allTransactions.size} Items)", 30f, currentY, sectionTitlePaint)
+                            val tableH = (chunk.size * 20f + 36f).coerceAtLeast(60f)
+                            val tableB = currentY + 8f + tableH
+                            canvas.drawRoundRect(30f, currentY + 8f, 565f, tableB, 10f, 10f, cardBgPaint)
+                            canvas.drawRoundRect(30f, currentY + 8f, 565f, tableB, 10f, 10f, cardBorderPaint)
+
+                            val hdrY = currentY + 26f
+                            textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                            canvas.drawText("Date", 45f, hdrY, textPaint)
+                            canvas.drawText("Particulars / Narration", 135f, hdrY, textPaint)
+                            canvas.drawText("Category", 350f, hdrY, textPaint)
+                            canvas.drawText("Amount", 480f, hdrY, textPaint)
+                            canvas.drawLine(40f, hdrY + 5f, 555f, hdrY + 5f, linePaint)
+
+                            var rowY = hdrY + 18f
+                            chunk.forEach { tx ->
+                                textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                                canvas.drawText(tx.transactionDate, 45f, rowY, textPaint)
+                                canvas.drawText(tx.description.take(28), 135f, rowY, textPaint)
+                                canvas.drawText(tx.categoryName.take(16), 350f, rowY, textPaint)
+                                val isCredit = tx.creditAmount > 0 || tx.transactionType == TransactionType.INCOME
+                                val amtVal = if (isCredit) (if (tx.creditAmount > 0) tx.creditAmount else tx.amount) else (if (tx.debitAmount > 0) tx.debitAmount else tx.amount)
+                                val amtStr = (if (isCredit) "+ " else "- ") + formatInr(amtVal)
+                                val amtPaint = if (isCredit) positivePaint else negativePaint
+                                amtPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                                canvas.drawText(amtStr, 550f - amtPaint.measureText(amtStr), rowY, amtPaint)
+                                rowY += 20f
                             }
                             currentY = tableB + 20f
                         }

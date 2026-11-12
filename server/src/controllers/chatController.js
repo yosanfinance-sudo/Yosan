@@ -3,7 +3,7 @@ const aiChatService = require('../services/aiChatService');
 class ChatController {
   async handleChat(req, res) {
     try {
-      const { message, history, clientContext } = req.body;
+      const { message, history, clientContext, apiKey } = req.body;
 
       if (!message || typeof message !== 'string' || message.trim().length === 0) {
         return res.status(400).json({
@@ -13,7 +13,7 @@ class ChatController {
       }
 
       const userId = req.user?.id || 1;
-      const result = await aiChatService.processChat(userId, message.trim(), history || [], clientContext);
+      const result = await aiChatService.processChat(userId, message.trim(), history || [], clientContext, apiKey);
 
       return res.json({
         success: true,

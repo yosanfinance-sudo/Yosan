@@ -2,39 +2,43 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Primary Professional Purple Brand (Material 3 Professional Polish)
-val PurplePrimary = Color(0xFF6750A4)
-val PurpleLight = Color(0xFFEADDFF)
-val PurpleDark = Color(0xFF21005D)
-val PurpleContainer = Color(0xFFE8DEF8)
-val EmeraldPrimary = Color(0xFF6750A4) // Backwards-compatible alias for existing references
+// Apple-Grade Minimalist Primary Brand (Monochrome Titanium Polish & Punchy Mint)
+val PurplePrimary = Color(0xFFF2F4F8)
+val PurpleLight = Color(0xFFFFFFFF)
+val PurpleDark = Color(0xFF0A0C10)
+val PurpleContainer = Color(0xFF1E222D)
+val EmeraldPrimary = Color(0xFF00E676) // Punchy Vibrant Mint Green
+val PunchyMint = Color(0xFF00E676)
+val PunchyRed = Color(0xFFFF3B30)
+val PunchyAmber = Color(0xFFFF9F0A)
 
-// Financial Semantic Colors
-val IncomeGreen = Color(0xFF15803D)
-val ExpenseRed = Color(0xFFBA1A1A)
-val LendingIndigo = Color(0xFF6750A4)
-val OutstandingAmber = Color(0xFFB45309)
-val CompanySky = Color(0xFF00639B)
-val TransferSlate = Color(0xFF49454F)
+// Financial Semantic Colors (Apple HIG Refined Palette)
+val IncomeGreen = Color(0xFF00E676)       // Punchy Mint
+val ExpenseRed = Color(0xFFFF3B30)        // Punchy Apple Coral Rose
+val LendingIndigo = Color(0xFFAF52DE)     // Apple Purple
+val OutstandingAmber = Color(0xFFFF9F0A)  // Apple Amber
+val CompanySky = Color(0xFF64D2FF)        // Apple Cyan
+val TransferSlate = Color(0xFF8E8E93)     // Apple System Gray
+val FilterSelectionBlue = Color(0xFF0A84FF) // Apple System Blue / Cobalt Filter Accent
 
-// Light Theme Colors (Professional Polish)
-val LightBackground = Color(0xFFFEF7FF)
+// Light Theme Colors (Punchy Apple Clean Paper / iOS Inset Grouped)
+val LightBackground = Color(0xFFF2F2F7)
 val LightSurface = Color(0xFFFFFFFF)
-val LightSurfaceVariant = Color(0xFFF3EDF7)
-val LightSurfaceContainerHigh = Color(0xFFECE6F0)
-val LightTextPrimary = Color(0xFF1D1B20)
-val LightTextSecondary = Color(0xFF49454F)
-val LightBorder = Color(0xFFCAC4D0)
-val HeroContainerBlue = Color(0xFFD3E2FF)
-val HeroOnContainerNavy = Color(0xFF001D35)
+val LightSurfaceVariant = Color(0xFFE5E5EA)
+val LightSurfaceContainerHigh = Color(0xFFD1D1D6)
+val LightTextPrimary = Color(0xFF000000)
+val LightTextSecondary = Color(0xFF6E6E73)
+val LightBorder = Color(0x1F000000)
+val HeroContainerBlue = Color(0xFFE5E5EA)
+val HeroOnContainerNavy = Color(0xFF1C1C1E)
 
-// Dark Theme Colors
-val DarkBackground = Color(0xFF141218)
-val DarkSurface = Color(0xFF1D1B20)
-val DarkSurfaceVariant = Color(0xFF2B2930)
-val DarkSurfaceContainerHigh = Color(0xFF36343B)
-val DarkTextPrimary = Color(0xFFE6E0E9)
-val DarkTextSecondary = Color(0xFFCAC4D0)
-val DarkBorder = Color(0xFF49454F)
-val DarkHeroContainer = Color(0xFF003258)
-val DarkHeroOnContainer = Color(0xFFD3E2FF)
+// Dark Theme Colors (True Apple OLED Deep Black)
+val DarkBackground = Color(0xFF000000)
+val DarkSurface = Color(0xFF12141A)
+val DarkSurfaceVariant = Color(0xFF191D26)
+val DarkSurfaceContainerHigh = Color(0xFF222836)
+val DarkTextPrimary = Color(0xFFF5F5F7)
+val DarkTextSecondary = Color(0xFF8E8E93)
+val DarkBorder = Color(0x1FFFFFFF)
+val DarkHeroContainer = Color(0xFF141822)
+val DarkHeroOnContainer = Color(0xFFF5F5F7)

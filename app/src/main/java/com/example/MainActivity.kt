@@ -297,15 +297,8 @@ class MainActivity : FragmentActivity() {
 // 30-second continuous polling loop removed to prevent battery drain and API quota throttling
 
             val currentThemeMode by financeViewModel.themeMode.collectAsState()
-            val systemInDark = isSystemInDarkTheme()
-            val isDark = when (currentThemeMode.uppercase()) {
-                "LIGHT" -> false
-                "DARK" -> true
-                "SYSTEM" -> systemInDark
-                else -> systemInDark
-            }
 
-            FinanceManagerTheme(darkTheme = isDark) {
+            FinanceManagerTheme(themeMode = currentThemeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

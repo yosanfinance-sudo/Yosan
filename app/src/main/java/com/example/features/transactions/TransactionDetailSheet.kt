@@ -529,6 +529,70 @@ fun TransactionDetailSheet(
                         }
                     }
                 }
+                // Reimbursement Linking (For Inflows / Income)
+                val companyExpenses by viewModel.companyExpenses.collectAsState()
+                val availableClaims = remember(companyExpenses, currentTx) {
+                    companyExpenses.filter {
+                        !it.isReimbursed || it.notes.contains("Statement #${currentTx.id}") || currentTx.advanceId == "REIMB-${it.id}"
+                    }
+                }
+
+                if (availableClaims.isNotEmpty()) {
+                    val currentlyLinkedExpId = remember(companyExpenses, currentTx) {
+                        companyExpenses.find {
+                            it.notes.contains("Statement #${currentTx.id}") || currentTx.advanceId == "REIMB-${it.id}"
+                        }?.id
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = "Link to Reimbursement Claim (Corporate Settled)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = currentlyLinkedExpId == null,
+                                onClick = {
+                                    if (currentlyLinkedExpId != null) {
+                                        viewModel.linkTransactionToReimbursement(currentTx.id, null)
+                                    }
+                                },
+                                label = { Text("None") }
+                            )
+
+                            availableClaims.forEach { exp ->
+                                val isSelected = currentlyLinkedExpId == exp.id
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.linkTransactionToReimbursement(
+                                            currentTx.id,
+                                            if (isSelected) null else exp.id
+                                        )
+                                    },
+                                    label = { Text("#EXP-${exp.id} - ${exp.reason.take(20)} (₹${exp.amount.toInt()})") },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                        selectedLabelColor = MaterialTheme.colorScheme.primary
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
             }
 
             // Borrow Repayment Link (For Outflows / Expenses)

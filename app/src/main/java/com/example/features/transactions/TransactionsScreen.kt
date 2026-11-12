@@ -1,5 +1,11 @@
 package com.example.features.transactions
 
+import com.example.features.walkthrough.SpotlightTourManager
+import com.example.features.walkthrough.SpotlightStep
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -19,6 +25,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,6 +64,13 @@ fun TransactionsScreen(
     val userProfile by viewModel.userProfile.collectAsState()
     val allTransactions by viewModel.allTransactions.collectAsState()
     val isRevealed by viewModel.isAmountTemporarilyRevealed.collectAsState()
+    var showTxFlipkartFilterSheet by remember { mutableStateOf(false) }
+    val txActiveCount = remember(selectedType, selectedCategory, selectedAccount, selectedMonth) {
+        (if (selectedType != null) 1 else 0) +
+        (if (selectedCategory != null) 1 else 0) +
+        (if (selectedAccount != null) 1 else 0) +
+        (if (selectedMonth != null) 1 else 0)
+    }
 
     // Group transactions by Date
     val groupedTransactions = remember(transactions) {
@@ -564,168 +578,192 @@ fun TransactionsScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
-                .testTag("transaction_search_input"),
+                .onGloballyPositioned { coords ->
+                SpotlightTourManager.targetBoundsMap[SpotlightStep.STATEMENTS_LEDGER] = coords.boundsInRoot()
+            }
+            .testTag("transaction_search_input"),
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
                 unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
             )
         )
 
-        // 2. Horizontal Filter Type Chips
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        // 2. Flipkart Filter Bar & Quick Chips (Matching Reports Screen)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (selectedCategory != null) {
-                item {
-                    InputChip(
-                        selected = true,
-                        onClick = {
-                            HapticHelper.vibrateTick(context)
-                            viewModel.setCategoryFilter(null)
-                        },
-                        label = { Text("Category: $selectedCategory", fontWeight = FontWeight.Bold) },
-                        trailingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Clear Category Filter",
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(
+                    1.dp,
+                    if (txActiveCount > 0) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                ),
+                shadowElevation = if (txActiveCount > 0) 1.dp else 0.dp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .onGloballyPositioned { coords ->
+                        SpotlightTourManager.targetBoundsMap[SpotlightStep.STATEMENTS_FILTER] = coords.boundsInRoot()
+                    }
+                    .clickable {
+                        HapticHelper.vibrateClick(context)
+                        showTxFlipkartFilterSheet = true
+                    }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FilterList,
+                        contentDescription = "Filters",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (txActiveCount > 0) "Filters ($txActiveCount)" else "Filters",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Icon(
+                        imageVector = Icons.Default.ArrowDropDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
-            item {
-                FilterChip(
-                    selected = selectedType == null && selectedCategory == null && selectedAccount == null,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        viewModel.clearFilters()
-                    },
-                    label = { Text("All") }
-                )
-            }
-            item {
-                val cashAccount = accounts.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
-                val isCashSelected = selectedAccount != null && ((cashAccount != null && selectedAccount == cashAccount.id) || selectedAccount == -999L)
-                FilterChip(
-                    selected = isCashSelected,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        if (isCashSelected) viewModel.setAccountFilter(null) else viewModel.setAccountFilter(cashAccount?.id ?: -999L)
-                    },
-                    label = { Text("Hand Cash") },
-                    leadingIcon = {
-                        Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(16.dp))
+
+            LazyRow(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (txActiveCount > 0) {
+                    item {
+                        Surface(
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable {
+                                    HapticHelper.vibrateTick(context)
+                                    viewModel.clearFilters()
+                                }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                            ) {
+                                Text(
+                                    text = "Clear",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear Filters",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                        }
                     }
-                )
-            }
-            item {
-                val isUncategorized = selectedCategory.equals("Uncategorized", ignoreCase = true)
-                FilterChip(
-                    selected = isUncategorized,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        if (isUncategorized) viewModel.setCategoryFilter(null) else viewModel.setCategoryFilter("Uncategorized")
-                    },
-                    label = { Text("Uncategorized") },
-                    leadingIcon = {
-                        if (isUncategorized) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                }
+                item {
+                    FilterChip(
+                        selected = txActiveCount == 0,
+                        onClick = {
+                            HapticHelper.vibrateTick(context)
+                            viewModel.clearFilters()
+                        },
+                        label = { Text("All") }
+                    )
+                }
+                item {
+                    val isExpenseSelected = selectedType == TransactionType.EXPENSE
+                    FilterChip(
+                        selected = isExpenseSelected,
+                        onClick = {
+                            HapticHelper.vibrateTick(context)
+                            viewModel.setTypeFilter(if (isExpenseSelected) null else TransactionType.EXPENSE)
+                        },
+                        label = { Text("Expense") }
+                    )
+                }
+                item {
+                    val isIncomeSelected = selectedType == TransactionType.INCOME
+                    FilterChip(
+                        selected = isIncomeSelected,
+                        onClick = {
+                            HapticHelper.vibrateTick(context)
+                            viewModel.setTypeFilter(if (isIncomeSelected) null else TransactionType.INCOME)
+                        },
+                        label = { Text("Income") }
+                    )
+                }
+                item {
+                    val cashAccount = accounts.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
+                    val isCashSelected = selectedAccount != null && ((cashAccount != null && selectedAccount == cashAccount.id) || selectedAccount == -999L)
+                    FilterChip(
+                        selected = isCashSelected,
+                        onClick = {
+                            HapticHelper.vibrateTick(context)
+                            if (isCashSelected) viewModel.setAccountFilter(null) else viewModel.setAccountFilter(cashAccount?.id ?: -999L)
+                        },
+                        label = { Text("Hand Cash") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                    )
+                }
+                if (selectedCategory != null) {
+                    item {
+                        InputChip(
+                            selected = true,
+                            onClick = {
+                                HapticHelper.vibrateTick(context)
+                                viewModel.setCategoryFilter(null)
+                            },
+                            label = { Text("Cat: $selectedCategory", fontWeight = FontWeight.Bold) },
+                            trailingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear Category Filter",
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        )
                     }
-                )
-            }
-            item {
-                FilterChip(
-                    selected = selectedType == TransactionType.EXPENSE && selectedCategory == null,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        viewModel.setTypeFilter(if (selectedType == TransactionType.EXPENSE) null else TransactionType.EXPENSE)
-                    },
-                    label = { Text("Expense") },
-                    leadingIcon = {
-                        if (selectedType == TransactionType.EXPENSE) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                }
+                if (selectedMonth != null) {
+                    item {
+                        InputChip(
+                            selected = true,
+                            onClick = {
+                                HapticHelper.vibrateTick(context)
+                                viewModel.setMonthFilter(null)
+                            },
+                            label = { Text("Month: $selectedMonth", fontWeight = FontWeight.Bold) },
+                            trailingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear Month Filter",
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        )
                     }
-                )
-            }
-            item {
-                FilterChip(
-                    selected = selectedType == TransactionType.INCOME && selectedCategory == null,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        viewModel.setTypeFilter(if (selectedType == TransactionType.INCOME) null else TransactionType.INCOME)
-                    },
-                    label = { Text("Income") },
-                    leadingIcon = {
-                        if (selectedType == TransactionType.INCOME) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    }
-                )
-            }
-            item {
-                FilterChip(
-                    selected = selectedType == TransactionType.LENDING && selectedCategory == null,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        viewModel.setTypeFilter(if (selectedType == TransactionType.LENDING) null else TransactionType.LENDING)
-                    },
-                    label = { Text("Lend") },
-                    leadingIcon = {
-                        if (selectedType == TransactionType.LENDING) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    }
-                )
-            }
-            item {
-                FilterChip(
-                    selected = selectedType == TransactionType.BORROWING && selectedCategory == null,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        viewModel.setTypeFilter(if (selectedType == TransactionType.BORROWING) null else TransactionType.BORROWING)
-                    },
-                    label = { Text("Borrow") },
-                    leadingIcon = {
-                        if (selectedType == TransactionType.BORROWING) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    }
-                )
-            }
-            item {
-                FilterChip(
-                    selected = selectedType == TransactionType.INVESTMENT && selectedCategory == null,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        viewModel.setTypeFilter(if (selectedType == TransactionType.INVESTMENT) null else TransactionType.INVESTMENT)
-                    },
-                    label = { Text("Investment") },
-                    leadingIcon = {
-                        if (selectedType == TransactionType.INVESTMENT) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    }
-                )
-            }
-            item {
-                FilterChip(
-                    selected = selectedType == TransactionType.TRANSFER && selectedCategory == null,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        viewModel.setTypeFilter(if (selectedType == TransactionType.TRANSFER) null else TransactionType.TRANSFER)
-                    },
-                    label = { Text("Transfer") },
-                    leadingIcon = {
-                        if (selectedType == TransactionType.TRANSFER) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    }
-                )
-            }
-            item {
-                val isOfficial = selectedCategory.equals("Official Expense", ignoreCase = true)
-                FilterChip(
-                    selected = isOfficial,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        if (isOfficial) viewModel.setCategoryFilter(null) else viewModel.setCategoryFilter("Official Expense")
-                    },
-                    label = { Text("Official") },
-                    leadingIcon = {
-                        if (isOfficial) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    }
-                )
+                }
             }
         }
 
@@ -840,54 +878,595 @@ fun TransactionsScreen(
             }
         } else {
             val privacyEnabled = userProfile?.isPrivacyBlurEnabled ?: true
+            val statementListState = androidx.compose.foundation.lazy.rememberLazyListState()
+            LaunchedEffect(selectedTxIds.size) {
+                if (selectedTxIds.isNotEmpty()) {
+                    statementListState.animateScrollToItem(0)
+                }
+            }
             LazyColumn(
+                state = statementListState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // Pinned Selected Statements Section on Top
+                if (isSelectionMode) {
+                    val pinnedSelectedList = transactions.filter { selectedTxIds.contains(it.id) }
+                    if (pinnedSelectedList.isNotEmpty()) {
+                        item(key = "pinned_selected_statement_header") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 6.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PushPin,
+                                    contentDescription = "Pinned Selection",
+                                    tint = FilterSelectionBlue,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Pinned Selection (${pinnedSelectedList.size})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = FilterSelectionBlue
+                                )
+                            }
+                        }
+                        items(pinnedSelectedList, key = { "pinned_${it.id}" }) { tx ->
+                            TransactionItemCard(
+                                transaction = tx,
+                                isSelected = true,
+                                isRevealed = isRevealed,
+                                isPrivacyEnabled = privacyEnabled,
+                                onToggleReveal = { viewModel.revealAmountsTemporarily() },
+                                onClick = { selectedTxIds.remove(tx.id) },
+                                onLongClick = { selectedTxIds.remove(tx.id) },
+                                onDelete = { viewModel.deleteTransaction(tx.id) }
+                            )
+                        }
+                        item(key = "pinned_selected_divider") {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
+                }
+
                 groupedTransactions.forEach { (date, txList) ->
-                    item(key = "header_$date") {
+                    val unselectedTxList = if (isSelectionMode) txList.filter { !selectedTxIds.contains(it.id) } else txList
+                    if (unselectedTxList.isNotEmpty()) {
+                        item(key = "header_$date") {
+                            Text(
+                                text = DateUtils.formatForDisplay(date),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                            )
+                        }
+                        items(unselectedTxList, key = { it.id }) { tx ->
+                            val isSelected = selectedTxIds.contains(tx.id)
+                            TransactionItemCard(
+                                transaction = tx,
+                                isSelected = isSelected,
+                                isRevealed = isRevealed,
+                                isPrivacyEnabled = privacyEnabled,
+                                onToggleReveal = { viewModel.revealAmountsTemporarily() },
+                                onClick = {
+                                    if (isSelectionMode) {
+                                        if (isSelected) {
+                                            selectedTxIds.remove(tx.id)
+                                        } else {
+                                            selectedTxIds.add(tx.id)
+                                        }
+                                    } else {
+                                        onTransactionClick(tx)
+                                    }
+                                },
+                                onLongClick = {
+                                    if (!isSelectionMode) {
+                                        selectedTxIds.add(tx.id)
+                                    } else {
+                                        if (isSelected) {
+                                            selectedTxIds.remove(tx.id)
+                                        } else {
+                                            selectedTxIds.add(tx.id)
+                                        }
+                                    }
+                                },
+                                onDelete = { viewModel.deleteTransaction(tx.id) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    
+    if (showTxFlipkartFilterSheet) {
+        var draftCategory by remember { mutableStateOf(TxFlipkartFilterCategory.TYPE) }
+        var draftType by remember { mutableStateOf(selectedType) }
+        var draftAccount by remember { mutableStateOf(selectedAccount) }
+        var draftCategoryName by remember { mutableStateOf(selectedCategory) }
+        var draftMonth by remember { mutableStateOf(selectedMonth) }
+
+        val draftCount = remember(draftType, draftCategoryName, draftAccount, draftMonth) {
+            (if (draftType != null) 1 else 0) +
+            (if (draftCategoryName != null) 1 else 0) +
+            (if (draftAccount != null) 1 else 0) +
+            (if (draftMonth != null) 1 else 0)
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = { showTxFlipkartFilterSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            containerColor = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxHeight(0.70f)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
                         Text(
-                            text = DateUtils.formatForDisplay(date),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                            text = "Filter Transactions",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "${transactions.size} transactions matching",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    items(txList, key = { it.id }) { tx ->
-                        val isSelected = selectedTxIds.contains(tx.id)
-                        TransactionItemCard(
-                            transaction = tx,
-                            isSelected = isSelected,
-                            isRevealed = isRevealed,
-                            isPrivacyEnabled = privacyEnabled,
-                            onToggleReveal = { viewModel.revealAmountsTemporarily() },
-                            onClick = {
-                                if (isSelectionMode) {
-                                    if (isSelected) {
-                                        selectedTxIds.remove(tx.id)
-                                    } else {
-                                        selectedTxIds.add(tx.id)
-                                    }
-                                } else {
-                                    onTransactionClick(tx)
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (draftCount > 0) {
+                            TextButton(
+                                onClick = {
+                                    HapticHelper.vibrateTick(context)
+                                    draftType = null
+                                    draftAccount = null
+                                    draftCategoryName = null
+                                    draftMonth = null
                                 }
-                            },
-                            onLongClick = {
-                                if (!isSelectionMode) {
-                                    selectedTxIds.add(tx.id)
-                                } else {
-                                    if (isSelected) {
-                                        selectedTxIds.remove(tx.id)
-                                    } else {
-                                        selectedTxIds.add(tx.id)
+                            ) {
+                                Text(
+                                    text = "Clear Filters",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        IconButton(onClick = { showTxFlipkartFilterSheet = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+
+                // 2-Column Body
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    // Left Column
+                    Column(
+                        modifier = Modifier
+                            .width(130.dp)
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f))
+                    ) {
+                        TxFlipkartFilterCategory.values().forEach { cat ->
+                            val isSelected = draftCategory == cat
+                            val isCategoryActive = when (cat) {
+                                TxFlipkartFilterCategory.TYPE -> draftType != null
+                                TxFlipkartFilterCategory.ACCOUNT -> draftAccount != null
+                                TxFlipkartFilterCategory.CATEGORY -> draftCategoryName != null
+                                TxFlipkartFilterCategory.MONTH -> draftMonth != null
+                            }
+
+                            Surface(
+                                color = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        HapticHelper.vibrateTick(context)
+                                        draftCategory = cat
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = cat.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        val sub = when (cat) {
+                                            TxFlipkartFilterCategory.TYPE -> draftType?.name ?: "All"
+                                            TxFlipkartFilterCategory.ACCOUNT -> accounts.find { it.id == draftAccount }?.bankName ?: if (draftAccount == -999L) "Hand Cash" else "All"
+                                            TxFlipkartFilterCategory.CATEGORY -> draftCategoryName ?: "All"
+                                            TxFlipkartFilterCategory.MONTH -> draftMonth ?: "All"
+                                        }
+                                        Text(
+                                            text = sub,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isCategoryActive) FilterSelectionBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (isCategoryActive) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(7.dp)
+                                                .background(FilterSelectionBlue, CircleShape)
+                                        )
                                     }
                                 }
-                            },
-                            onDelete = { viewModel.deleteTransaction(tx.id) }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+                        }
+                    }
+
+                    // Right Column
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .padding(12.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        when (draftCategory) {
+                            TxFlipkartFilterCategory.TYPE -> {
+                                listOf(
+                                    null to "All Types",
+                                    TransactionType.EXPENSE to "Expense",
+                                    TransactionType.INCOME to "Income",
+                                    TransactionType.TRANSFER to "Transfer"
+                                ).forEach { (typeVal, label) ->
+                                    val isSelected = draftType == typeVal
+                                    Surface(
+                                        color = if (isSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                HapticHelper.vibrateTick(context)
+                                                draftType = typeVal
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    HapticHelper.vibrateTick(context)
+                                                    draftType = typeVal
+                                                },
+                                                colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = label,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            TxFlipkartFilterCategory.ACCOUNT -> {
+                                val isAllSelected = draftAccount == null
+                                Surface(
+                                    color = if (isAllSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            HapticHelper.vibrateTick(context)
+                                            draftAccount = null
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = isAllSelected,
+                                            onClick = {
+                                                HapticHelper.vibrateTick(context)
+                                                draftAccount = null
+                                            },
+                                            colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "All Accounts",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isAllSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+
+                                accounts.forEach { acc ->
+                                    val isSelected = draftAccount == acc.id
+                                    Surface(
+                                        color = if (isSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                HapticHelper.vibrateTick(context)
+                                                draftAccount = acc.id
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    HapticHelper.vibrateTick(context)
+                                                    draftAccount = acc.id
+                                                },
+                                                colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Column {
+                                                Text(
+                                                    text = acc.bankName,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (isSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                                )
+                                                if (acc.accountNumberMasked.isNotBlank()) {
+                                                    Text(
+                                                        text = acc.accountNumberMasked,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            TxFlipkartFilterCategory.CATEGORY -> {
+                                val isAllSelected = draftCategoryName == null
+                                Surface(
+                                    color = if (isAllSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            HapticHelper.vibrateTick(context)
+                                            draftCategoryName = null
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = isAllSelected,
+                                            onClick = {
+                                                HapticHelper.vibrateTick(context)
+                                                draftCategoryName = null
+                                            },
+                                            colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "All Categories",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isAllSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+
+                                categories.forEach { cat ->
+                                    val isSelected = draftCategoryName.equals(cat.name, ignoreCase = true)
+                                    Surface(
+                                        color = if (isSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                HapticHelper.vibrateTick(context)
+                                                draftCategoryName = cat.name
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    HapticHelper.vibrateTick(context)
+                                                    draftCategoryName = cat.name
+                                                },
+                                                colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = cat.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            TxFlipkartFilterCategory.MONTH -> {
+                                val isAllSelected = draftMonth == null
+                                Surface(
+                                    color = if (isAllSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            HapticHelper.vibrateTick(context)
+                                            draftMonth = null
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = isAllSelected,
+                                            onClick = {
+                                                HapticHelper.vibrateTick(context)
+                                                draftMonth = null
+                                            },
+                                            colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "All Months",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isAllSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+
+                                val availableMonths = remember(allTransactions) {
+                                    allTransactions.map { it.transactionDate.take(7) }.filter { it.isNotBlank() }.distinct().sortedDescending()
+                                }
+                                availableMonths.forEach { mStr ->
+                                    val isSelected = draftMonth == mStr
+                                    Surface(
+                                        color = if (isSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                HapticHelper.vibrateTick(context)
+                                                draftMonth = mStr
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    HapticHelper.vibrateTick(context)
+                                                    draftMonth = mStr
+                                                },
+                                                colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = mStr,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+
+                // Bottom Sticky Action Bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            HapticHelper.vibrateTick(context)
+                            draftType = null
+                            draftAccount = null
+                            draftCategoryName = null
+                            draftMonth = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Clear All")
+                    }
+
+                    Button(
+                        onClick = {
+                            HapticHelper.vibrateSuccess(context)
+                            viewModel.setTypeFilter(draftType)
+                            viewModel.setAccountFilter(draftAccount)
+                            viewModel.setCategoryFilter(draftCategoryName)
+                            viewModel.setMonthFilter(draftMonth)
+                            showTxFlipkartFilterSheet = false
+                        },
+                        modifier = Modifier.weight(1.4f),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(
+                            text = if (draftCount > 0) "Apply ($draftCount)" else "Apply Filters",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimary
                         )
                     }
                 }
@@ -941,3 +1520,11 @@ private fun StatementHeaderAction(
     }
 }
 
+
+
+private enum class TxFlipkartFilterCategory(val label: String) {
+    TYPE("Type"),
+    ACCOUNT("Account"),
+    CATEGORY("Category"),
+    MONTH("Month")
+}

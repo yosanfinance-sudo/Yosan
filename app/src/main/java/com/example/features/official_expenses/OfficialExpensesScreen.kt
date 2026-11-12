@@ -1,6 +1,13 @@
 package com.example.features.official_expenses
 
+import com.example.features.walkthrough.SpotlightTourManager
+import com.example.features.walkthrough.SpotlightStep
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -37,11 +44,16 @@ import com.example.utils.HapticHelper
 import com.example.data.local.entity.TransactionEntity
 import com.example.data.local.entity.TransactionType
 
-enum class ExpenseSectionTab(val label: String) {
-    PENDING_CLAIMS("Pending Claims"),
-    APPLIED_CLAIMS("Applied Claims"),
-    REIMBURSEMENTS("Reimbursements"),
-    ADVANCE("Advance")
+enum class OfficialExpenseMainTab(val label: String) {
+    CLAIMS("Official Claims"),
+    ADVANCE("Advance Sets")
+}
+
+enum class ClaimStatusFilter(val label: String) {
+    ALL("All"),
+    PENDING("Pending"),
+    APPLIED("Applied"),
+    REIMBURSED("Reimbursed")
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -58,8 +70,16 @@ fun OfficialExpensesScreen(
     val selectedExpenseIds = remember { mutableStateListOf<Long>() }
     var editingExpense by remember { mutableStateOf<CompanyExpenseEntity?>(null) }
     var showEditDialog by remember { mutableStateOf(false) }
-    var currentSectionTab by remember { mutableStateOf(ExpenseSectionTab.PENDING_CLAIMS) }
+    var currentMainTab by remember { mutableStateOf(OfficialExpenseMainTab.CLAIMS) }
+    var claimStatusFilter by remember { mutableStateOf(ClaimStatusFilter.ALL) }
     var selectedCategoryFilter by remember { mutableStateOf<String?>(null) }
+    val appPrefs = remember { com.example.utils.AppPreferences(context) }
+    val currentUserEmail = viewModel.userProfile.value?.email ?: appPrefs.lastUserEmail
+    var customCategories by remember {
+        mutableStateOf(appPrefs.getOfficialExpenseCategoriesForUser(currentUserEmail))
+    }
+    var showAddCategoryDialog by remember { mutableStateOf(false) }
+    var showAssignClaimIdDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
 
     val advanceSummaries by viewModel.advanceSummaries.collectAsState()
@@ -87,11 +107,11 @@ fun OfficialExpensesScreen(
     val totalAdvSpent = remember(advanceSummaries) { advanceSummaries.sumOf { it.totalSpent } }
     val totalAdvRemaining = remember(advanceSummaries) { advanceSummaries.sumOf { it.remainingBalance } }
 
-    val activeList = when (currentSectionTab) {
-        ExpenseSectionTab.PENDING_CLAIMS -> pendingClaimsList
-        ExpenseSectionTab.APPLIED_CLAIMS -> appliedClaimsList
-        ExpenseSectionTab.REIMBURSEMENTS -> reimbursedList
-        ExpenseSectionTab.ADVANCE -> emptyList()
+    val activeList = when (claimStatusFilter) {
+        ClaimStatusFilter.ALL -> companyExpenses
+        ClaimStatusFilter.PENDING -> pendingClaimsList
+        ClaimStatusFilter.APPLIED -> appliedClaimsList
+        ClaimStatusFilter.REIMBURSED -> reimbursedList
     }
 
     val categories = remember(companyExpenses) {
@@ -175,41 +195,42 @@ fun OfficialExpensesScreen(
             }
         }
 
-        // 2. Section Navigation Tabs (Pending Claims, Applied Claims, Reimbursements, and Advance in the last position)
+        // 2. Section Navigation Tabs (Unified Official Claims vs Advance Sets)
         item {
-            ScrollableTabRow(
-                selectedTabIndex = currentSectionTab.ordinal,
+            TabRow(
+                selectedTabIndex = if (currentMainTab == OfficialExpenseMainTab.CLAIMS) 0 else 1,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .onGloballyPositioned { coords ->
+                        SpotlightTourManager.targetBoundsMap[SpotlightStep.OFFICIAL_EXPENSES] = coords.boundsInRoot()
+                    },
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                 contentColor = MaterialTheme.colorScheme.primary,
-                edgePadding = 8.dp,
                 divider = {}
             ) {
-                // Tab 1: Pending Claims
                 Tab(
-                    selected = currentSectionTab == ExpenseSectionTab.PENDING_CLAIMS,
+                    selected = currentMainTab == OfficialExpenseMainTab.CLAIMS,
                     onClick = {
                         HapticHelper.vibrateTick(context)
-                        currentSectionTab = ExpenseSectionTab.PENDING_CLAIMS
+                        currentMainTab = OfficialExpenseMainTab.CLAIMS
                         selectedExpenseIds.clear()
                     },
                     text = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "Pending Claims",
-                                fontWeight = if (currentSectionTab == ExpenseSectionTab.PENDING_CLAIMS) FontWeight.Bold else FontWeight.Normal
+                                text = "Official Claims",
+                                fontWeight = if (currentMainTab == OfficialExpenseMainTab.CLAIMS) FontWeight.Bold else FontWeight.Normal
                             )
-                            if (pendingClaimsList.isNotEmpty()) {
+                            if (companyExpenses.isNotEmpty()) {
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Surface(
-                                    color = OutstandingAmber.copy(alpha = 0.2f),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Text(
-                                        text = "${pendingClaimsList.size}",
-                                        color = OutstandingAmber,
+                                        text = "${companyExpenses.size}",
+                                        color = MaterialTheme.colorScheme.primary,
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -220,90 +241,23 @@ fun OfficialExpensesScreen(
                     }
                 )
 
-                // Tab 2: Applied Claims
                 Tab(
-                    selected = currentSectionTab == ExpenseSectionTab.APPLIED_CLAIMS,
+                    selected = currentMainTab == OfficialExpenseMainTab.ADVANCE,
                     onClick = {
                         HapticHelper.vibrateTick(context)
-                        currentSectionTab = ExpenseSectionTab.APPLIED_CLAIMS
+                        currentMainTab = OfficialExpenseMainTab.ADVANCE
                         selectedExpenseIds.clear()
                     },
                     text = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "Applied Claims",
-                                fontWeight = if (currentSectionTab == ExpenseSectionTab.APPLIED_CLAIMS) FontWeight.Bold else FontWeight.Normal
-                            )
-                            if (appliedClaimsList.isNotEmpty()) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    color = CompanySky.copy(alpha = 0.2f),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Text(
-                                        text = "${appliedClaimsList.size}",
-                                        color = CompanySky,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                )
-
-                // Tab 3: Reimbursements
-                Tab(
-                    selected = currentSectionTab == ExpenseSectionTab.REIMBURSEMENTS,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        currentSectionTab = ExpenseSectionTab.REIMBURSEMENTS
-                        selectedExpenseIds.clear()
-                    },
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "Reimbursements",
-                                fontWeight = if (currentSectionTab == ExpenseSectionTab.REIMBURSEMENTS) FontWeight.Bold else FontWeight.Normal
-                            )
-                            if (reimbursedList.isNotEmpty()) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    color = IncomeGreen.copy(alpha = 0.2f),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Text(
-                                        text = "${reimbursedList.size}",
-                                        color = IncomeGreen,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                )
-
-                // Tab 4: Advance (LAST POSITION)
-                Tab(
-                    selected = currentSectionTab == ExpenseSectionTab.ADVANCE,
-                    onClick = {
-                        HapticHelper.vibrateTick(context)
-                        currentSectionTab = ExpenseSectionTab.ADVANCE
-                        selectedExpenseIds.clear()
-                    },
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "Advance",
-                                fontWeight = if (currentSectionTab == ExpenseSectionTab.ADVANCE) FontWeight.Bold else FontWeight.Normal
+                                text = "Advance Sets",
+                                fontWeight = if (currentMainTab == OfficialExpenseMainTab.ADVANCE) FontWeight.Bold else FontWeight.Normal
                             )
                             if (advanceSummaries.isNotEmpty()) {
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Surface(
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Text(
@@ -321,8 +275,8 @@ fun OfficialExpensesScreen(
             }
         }
 
-        // 3. Search & Category Filters + Add Action
-        if (currentSectionTab != ExpenseSectionTab.ADVANCE) {
+        // 3. Search, 3-in-1 Lifecycle Stage Filters & Category Chips
+        if (currentMainTab == OfficialExpenseMainTab.CLAIMS) {
             item {
                 Column(
                     modifier = Modifier
@@ -353,17 +307,58 @@ fun OfficialExpensesScreen(
                                 .height(50.dp)
                         )
 
-                        Button(
-                            onClick = onAddExpenseClick,
-                            modifier = Modifier.height(48.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = CompanySky),
-                            contentPadding = PaddingValues(horizontal = 14.dp)
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Add", style = MaterialTheme.typography.labelMedium)
-                        }
+
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    // 3-in-1 Claim Lifecycle Stage Filter Chips
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = claimStatusFilter == ClaimStatusFilter.ALL,
+                            onClick = { claimStatusFilter = ClaimStatusFilter.ALL },
+                            label = { Text("All Claims (${companyExpenses.size})", fontSize = 12.sp) }
+                        )
+                        FilterChip(
+                            selected = claimStatusFilter == ClaimStatusFilter.PENDING,
+                            onClick = { claimStatusFilter = ClaimStatusFilter.PENDING },
+                            label = { Text("Pending (${pendingClaimsList.size})", fontSize = 12.sp) },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(OutstandingAmber, CircleShape)
+                                )
+                            }
+                        )
+                        FilterChip(
+                            selected = claimStatusFilter == ClaimStatusFilter.APPLIED,
+                            onClick = { claimStatusFilter = ClaimStatusFilter.APPLIED },
+                            label = { Text("Applied (${appliedClaimsList.size})", fontSize = 12.sp) },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(CompanySky, CircleShape)
+                                )
+                            }
+                        )
+                        FilterChip(
+                            selected = claimStatusFilter == ClaimStatusFilter.REIMBURSED,
+                            onClick = { claimStatusFilter = ClaimStatusFilter.REIMBURSED },
+                            label = { Text("Reimbursed (${reimbursedList.size})", fontSize = 12.sp) },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(IncomeGreen, CircleShape)
+                                )
+                            }
+                        )
                     }
 
                     if (categories.isNotEmpty()) {
@@ -421,64 +416,41 @@ fun OfficialExpensesScreen(
                             )
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            when (currentSectionTab) {
-                                ExpenseSectionTab.PENDING_CLAIMS -> {
-                                    TextButton(
-                                        onClick = {
-                                            selectedExpenseIds.forEach { id ->
-                                                viewModel.markCompanyExpenseApplied(id, true)
-                                            }
-                                            selectedExpenseIds.clear()
-                                        }
-                                    ) {
-                                        Text("Mark Applied", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            TextButton(
+                                onClick = { showAssignClaimIdDialog = true }
+                            ) {
+                                Text("Claim ID", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            }
+                            TextButton(
+                                onClick = {
+                                    selectedExpenseIds.forEach { id ->
+                                        viewModel.markCompanyExpenseApplied(id, true)
                                     }
-                                    TextButton(
-                                        onClick = {
-                                            selectedExpenseIds.forEach { id ->
-                                                viewModel.markCompanyExpenseReimbursed(id, true)
-                                            }
-                                            selectedExpenseIds.clear()
-                                        }
-                                    ) {
-                                        Text("Reimburse", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = IncomeGreen)
-                                    }
+                                    selectedExpenseIds.clear()
                                 }
-                                ExpenseSectionTab.APPLIED_CLAIMS -> {
-                                    TextButton(
-                                        onClick = {
-                                            selectedExpenseIds.forEach { id ->
-                                                viewModel.markCompanyExpenseReimbursed(id, true)
-                                            }
-                                            selectedExpenseIds.clear()
-                                        }
-                                    ) {
-                                        Text("Mark Settled", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = IncomeGreen)
+                            ) {
+                                Text("Mark Applied", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = CompanySky)
+                            }
+                            TextButton(
+                                onClick = {
+                                    selectedExpenseIds.forEach { id ->
+                                        viewModel.markCompanyExpenseReimbursed(id, true)
                                     }
-                                    TextButton(
-                                        onClick = {
-                                            selectedExpenseIds.forEach { id ->
-                                                viewModel.markCompanyExpenseApplied(id, false)
-                                            }
-                                            selectedExpenseIds.clear()
-                                        }
-                                    ) {
-                                        Text("Move Pending", fontSize = 12.sp)
-                                    }
+                                    selectedExpenseIds.clear()
                                 }
-                                ExpenseSectionTab.REIMBURSEMENTS -> {
-                                    TextButton(
-                                        onClick = {
-                                            selectedExpenseIds.forEach { id ->
-                                                viewModel.markCompanyExpenseReimbursed(id, false)
-                                            }
-                                            selectedExpenseIds.clear()
-                                        }
-                                    ) {
-                                        Text("Reopen Claim", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = OutstandingAmber)
+                            ) {
+                                Text("Reimburse", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = IncomeGreen)
+                            }
+                            TextButton(
+                                onClick = {
+                                    selectedExpenseIds.forEach { id ->
+                                        viewModel.markCompanyExpenseReimbursed(id, false)
+                                        viewModel.markCompanyExpenseApplied(id, false)
                                     }
+                                    selectedExpenseIds.clear()
                                 }
-                                ExpenseSectionTab.ADVANCE -> {}
+                            ) {
+                                Text("Reopen", fontSize = 12.sp, color = OutstandingAmber)
                             }
 
                             IconButton(
@@ -504,7 +476,7 @@ fun OfficialExpensesScreen(
         }
 
         // 5. Section Tab Content & Item Rendering
-        if (currentSectionTab == ExpenseSectionTab.ADVANCE) {
+        if (currentMainTab == OfficialExpenseMainTab.ADVANCE) {
             // Ledger summary banner
             item {
                 Card(
@@ -604,8 +576,17 @@ fun OfficialExpensesScreen(
             }
         } else if (filteredExpenses.isEmpty()) {
             item {
-                when (currentSectionTab) {
-                    ExpenseSectionTab.PENDING_CLAIMS -> {
+                when (claimStatusFilter) {
+                    ClaimStatusFilter.ALL -> {
+                        EmptyState(
+                            icon = Icons.Outlined.CheckCircleOutline,
+                            title = "No Official Claims Found",
+                            description = "Log work expenses, client meals, or travel to track pending reimbursements.",
+                            actionText = "Log Official Expense",
+                            onActionClick = onAddExpenseClick
+                        )
+                    }
+                    ClaimStatusFilter.PENDING -> {
                         EmptyState(
                             icon = Icons.Outlined.CheckCircleOutline,
                             title = "No Pending Claims",
@@ -614,7 +595,7 @@ fun OfficialExpensesScreen(
                             onActionClick = onAddExpenseClick
                         )
                     }
-                    ExpenseSectionTab.APPLIED_CLAIMS -> {
+                    ClaimStatusFilter.APPLIED -> {
                         EmptyState(
                             icon = Icons.Outlined.HourglassTop,
                             title = "No Applied Claims",
@@ -623,7 +604,7 @@ fun OfficialExpensesScreen(
                             onActionClick = onAddExpenseClick
                         )
                     }
-                    ExpenseSectionTab.REIMBURSEMENTS -> {
+                    ClaimStatusFilter.REIMBURSED -> {
                         EmptyState(
                             icon = Icons.Outlined.ReceiptLong,
                             title = "No Reimbursements",
@@ -632,7 +613,6 @@ fun OfficialExpensesScreen(
                             onActionClick = onAddExpenseClick
                         )
                     }
-                    ExpenseSectionTab.ADVANCE -> {}
                 }
             }
         } else {
@@ -684,7 +664,21 @@ fun OfficialExpensesScreen(
         var paymentMethod by remember(exp) { mutableStateOf(exp.paymentMethod) }
         var isReimbursed by remember(exp) { mutableStateOf(exp.isReimbursed) }
         var isApplied by remember(exp) { mutableStateOf(exp.notes.contains("#APPLIED", ignoreCase = true)) }
-        var notes by remember(exp) { mutableStateOf(exp.notes.replace("#APPLIED", "", ignoreCase = true).trim()) }
+        var notes by remember(exp) {
+            mutableStateOf(
+                exp.notes.replace("#APPLIED", "", ignoreCase = true)
+                    .replace(Regex("""(?:Statement\s*#|#STMT-)\d+""", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("""#?CLAIM[-_ ]*[a-zA-Z0-9]+""", RegexOption.IGNORE_CASE), "")
+                    .trim()
+            )
+        }
+        val existingClaimMatch = remember(exp.notes) {
+            Regex("""#(CLAIM[-_ ]*[a-zA-Z0-9]+)""", RegexOption.IGNORE_CASE).find(exp.notes)
+                ?: Regex("""\b(CLAIM[-_ ]*[a-zA-Z0-9]+)\b""", RegexOption.IGNORE_CASE).find(exp.notes)
+        }
+        var selectedClaimId by remember(exp.notes) {
+            mutableStateOf(existingClaimMatch?.groupValues?.get(1)?.uppercase()?.replace(" ", "-") ?: "")
+        }
 
         val existingAdvMatch = remember(exp.notes) {
             Regex("""#(ADV[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(exp.notes)
@@ -692,6 +686,12 @@ fun OfficialExpensesScreen(
         }
         var selectedAdvId by remember(exp.notes) {
             mutableStateOf(existingAdvMatch?.groupValues?.get(1)?.uppercase()?.replace(" ", "-"))
+        }
+        val existingTxMatch = remember(exp.notes) {
+            Regex("""(?:Statement\s*#|#REIMB-TX-)(\d+)""", RegexOption.IGNORE_CASE).find(exp.notes)
+        }
+        var selectedTxId by remember(exp.notes) {
+            mutableStateOf(existingTxMatch?.groupValues?.get(1)?.toLongOrNull())
         }
 
         AlertDialog(
@@ -735,10 +735,48 @@ fun OfficialExpensesScreen(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
+                    Column {
+                        Text(
+                            text = "Category",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            customCategories.forEach { catName ->
+                                val isSelected = category.equals(catName, ignoreCase = true)
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { category = catName },
+                                    label = { Text(catName, fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primaryContainer)
+                                )
+                            }
+                            FilterChip(
+                                selected = false,
+                                onClick = { showAddCategoryDialog = true },
+                                label = { Text("+ Add Category", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) }
+                            )
+                        }
+                    }
                     OutlinedTextField(
                         value = category,
                         onValueChange = { category = it },
-                        label = { Text("Category (e.g. Travel, Client Meal, Supplies)") },
+                        label = { Text("Category Name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    OutlinedTextField(
+                        value = selectedClaimId,
+                        onValueChange = { selectedClaimId = it },
+                        label = { Text("Claim ID (e.g. CLAIM-1, CLAIM-OCT24)") },
+                        placeholder = { Text("Optional group claim ID") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
@@ -777,6 +815,54 @@ fun OfficialExpensesScreen(
                                     onClick = { selectedAdvId = if (isSelected) null else adv.advanceId },
                                     label = { Text("#${adv.advanceId} (₹${adv.remainingBalance.toInt()} left)", fontSize = 11.sp) },
                                     colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                                )
+                            }
+                        }
+                    }
+
+                    // Map Reimbursement from Statement (Optional) - Pinned to top if selected
+                    val creditTransactions = remember(allTransactions) {
+                        allTransactions.filter { (it.creditAmount > 0.0 || (it.amount > 0.0 && it.transactionType == com.example.data.local.entity.TransactionType.INCOME)) }
+                    }
+                    if (creditTransactions.isNotEmpty()) {
+                        Text(
+                            text = "Map Reimbursement from Statement (Optional)",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = IncomeGreen,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            FilterChip(
+                                selected = selectedTxId == null,
+                                onClick = { selectedTxId = null },
+                                label = { Text("None", fontSize = 11.sp) }
+                            )
+                            val sortedCreditTxs = remember(creditTransactions, selectedTxId) {
+                                if (selectedTxId != null) {
+                                    creditTransactions.sortedByDescending { it.id == selectedTxId }
+                                } else {
+                                    creditTransactions
+                                }
+                            }
+                            sortedCreditTxs.take(15).forEach { tx ->
+                                val isSelected = selectedTxId == tx.id
+                                val creditAmt = if (tx.creditAmount > 0) tx.creditAmount else tx.amount
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        selectedTxId = if (isSelected) null else tx.id
+                                        if (!isSelected) {
+                                            isReimbursed = true
+                                        }
+                                    },
+                                    label = { Text("#STMT-${tx.id} - ${tx.description.take(16)} (₹${creditAmt.toInt()})", fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = IncomeGreen.copy(alpha = 0.2f))
                                 )
                             }
                         }
@@ -838,13 +924,21 @@ fun OfficialExpensesScreen(
                     onClick = {
                         val amt = amountText.toDoubleOrNull() ?: 0.0
                         if (reason.isNotBlank() && amt > 0.0 && date.isNotBlank()) {
-                            var cleanNotes = notes.replace("#APPLIED", "", ignoreCase = true).trim()
-                            cleanNotes = cleanNotes.replace(Regex("""#?ADV[-_ ]*\d+""", RegexOption.IGNORE_CASE), "").trim()
+                            var cleanNotes = notes.replace("#APPLIED", "", ignoreCase = true)
+                                .replace(Regex("""#?ADV[-_ ]*\d+""", RegexOption.IGNORE_CASE), "")
+                                .replace(Regex("""#?CLAIM[-_ ]*[a-zA-Z0-9]+""", RegexOption.IGNORE_CASE), "")
+                                .replace(Regex("""(?:Statement\s*#|#STMT-)\d+""", RegexOption.IGNORE_CASE), "")
+                                .trim()
+
+                            val notesWithClaim = if (selectedClaimId.isNotBlank()) {
+                                val cleanClaim = selectedClaimId.trim().removePrefix("#")
+                                if (cleanNotes.isBlank()) "#$cleanClaim" else "$cleanNotes #$cleanClaim"
+                            } else cleanNotes
 
                             val notesWithAdv = if (!selectedAdvId.isNullOrBlank()) {
-                                if (cleanNotes.isBlank()) "#$selectedAdvId" else "$cleanNotes #$selectedAdvId"
+                                if (notesWithClaim.isBlank()) "#$selectedAdvId" else "$notesWithClaim #$selectedAdvId"
                             } else {
-                                cleanNotes
+                                notesWithClaim
                             }
 
                             val finalNotes = if (isApplied && !isReimbursed) {
@@ -865,6 +959,13 @@ fun OfficialExpensesScreen(
                                 updatedAt = System.currentTimeMillis()
                             )
                             viewModel.updateCompanyExpense(updated)
+                            if (selectedTxId != null) {
+                                viewModel.linkTransactionToReimbursement(selectedTxId!!, exp.id)
+                            } else if (existingTxMatch != null) {
+                                existingTxMatch.groupValues.get(1).toLongOrNull()?.let { oldTxId ->
+                                    viewModel.linkTransactionToReimbursement(oldTxId, null)
+                                }
+                            }
                             showEditDialog = false
                             editingExpense = null
                         }
@@ -881,6 +982,100 @@ fun OfficialExpensesScreen(
                         editingExpense = null
                     }
                 ) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Add Custom Category Dialog
+    if (showAddCategoryDialog) {
+        var newCatName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showAddCategoryDialog = false },
+            title = { Text("Add Official Category", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Create a custom category for fast one-tap mapping under Official Claims.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = newCatName,
+                        onValueChange = { newCatName = it },
+                        label = { Text("Category Name (e.g. Travel, Fuel, Supplies)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val clean = newCatName.trim()
+                        if (clean.isNotBlank()) {
+                            appPrefs.addOfficialExpenseCategoryForUser(currentUserEmail, clean)
+                            customCategories = appPrefs.getOfficialExpenseCategoriesForUser(currentUserEmail)
+                            showAddCategoryDialog = false
+                        }
+                    }
+                ) {
+                    Text("Add Category")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddCategoryDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Assign Group Claim ID Dialog
+    if (showAssignClaimIdDialog) {
+        var claimIdInput by remember { mutableStateOf("CLAIM-1") }
+        AlertDialog(
+            onDismissRequest = { showAssignClaimIdDialog = false },
+            title = { Text("Assign Claim ID to ${selectedExpenseIds.size} Claims", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Group all selected claims together under a single Claim ID for consolidated claim tracking.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = claimIdInput,
+                        onValueChange = { claimIdInput = it },
+                        label = { Text("Claim ID (e.g. CLAIM-1, CLAIM-OCT24)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val cleanId = claimIdInput.trim().removePrefix("#").ifBlank { "CLAIM-1" }
+                        val expensesToUpdate = companyExpenses.filter { selectedExpenseIds.contains(it.id) }
+                        expensesToUpdate.forEach { expItem ->
+                            val currentNotes = expItem.notes
+                                .replace(Regex("""#?CLAIM[-_ ]*[a-zA-Z0-9]+""", RegexOption.IGNORE_CASE), "")
+                                .replace(Regex("""(?:Statement\s*#|#STMT-)\d+""", RegexOption.IGNORE_CASE), "")
+                                .trim()
+                            val updatedNotes = if (currentNotes.isBlank()) "#$cleanId" else "$currentNotes #$cleanId"
+                            viewModel.updateCompanyExpense(expItem.copy(notes = updatedNotes))
+                        }
+                        selectedExpenseIds.clear()
+                        showAssignClaimIdDialog = false
+                    }
+                ) {
+                    Text("Assign Claim ID")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAssignClaimIdDialog = false }) {
+                    Text("Cancel")
+                }
             }
         )
     }
@@ -1246,6 +1441,10 @@ fun OfficialExpenseCard(
             ?: Regex("""\b(ADV[-_ ]*\d+)\b""", RegexOption.IGNORE_CASE).find(expense.notes)
         match?.groupValues?.get(1)?.uppercase()?.replace(" ", "-")
     }
+    val linkedTxId = remember(expense.notes) {
+        val match = Regex("""(?:Statement\s*#|#REIMB-TX-)(\d+)""", RegexOption.IGNORE_CASE).find(expense.notes)
+        match?.groupValues?.get(1)
+    }
 
     Card(
         modifier = modifier
@@ -1286,6 +1485,26 @@ fun OfficialExpenseCard(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    val linkedClaimId = remember(expense.notes) {
+                        val match = Regex("""#(CLAIM[-_ ]*[a-zA-Z0-9]+)""", RegexOption.IGNORE_CASE).find(expense.notes)
+                            ?: Regex("""\b(CLAIM[-_ ]*[a-zA-Z0-9]+)\b""", RegexOption.IGNORE_CASE).find(expense.notes)
+                        match?.groupValues?.get(1)?.uppercase()?.replace(" ", "-")
+                    }
+                    if (!linkedClaimId.isNullOrBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = "#$linkedClaimId",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.tertiary,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }

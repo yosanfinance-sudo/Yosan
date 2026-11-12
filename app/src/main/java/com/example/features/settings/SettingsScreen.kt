@@ -1,5 +1,10 @@
 package com.example.features.settings
 
+import com.example.features.walkthrough.SpotlightTourManager
+import com.example.features.walkthrough.SpotlightStep
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+
 import com.example.features.settings.dialogs.*
 import com.example.features.auth.GoogleClaims
 
@@ -44,6 +49,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,6 +68,9 @@ import com.example.data.local.entity.AccountType
 import com.example.data.local.entity.CategoryType
 import com.example.data.local.entity.CategoryEntity
 import androidx.compose.ui.draw.scale
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.draw.rotate
 import com.example.features.dashboard.DashboardCardConfigManager
 import com.example.features.dashboard.DashboardCardItem
 import com.example.features.dashboard.DashboardCardType
@@ -88,19 +98,24 @@ import android.os.Build
 fun SettingsScreen(
     viewModel: FinanceViewModel,
     authViewModel: AuthViewModel? = null,
+    initialTab: SettingsTab = SettingsTab.FINANCE,
     onNavigateToRules: () -> Unit,
     onNavigateToCompanyExpenses: () -> Unit,
     onNavigateToReports: () -> Unit,
     onNavigateToImport: () -> Unit,
     onNavigateToLending: () -> Unit = {},
     onNavigateToExcelSync: () -> Unit = {},
+    onOpenProductTour: () -> Unit = {},
     onOpenWalkthrough: () -> Unit = {},
     onOpenIntroNote: () -> Unit = {},
     onAccountSwitched: () -> Unit = {},
+    openGeminiConfig: Boolean = false,
+    onGeminiConfigDismissed: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
 
     var switchingAccountName by remember { mutableStateOf<String?>(null) }
+    var expandedSection by remember { mutableStateOf<String?>(null) }
     val userProfile by viewModel.userProfile.collectAsState()
     val accounts by viewModel.accounts.collectAsState()
     val allTransactions by viewModel.allTransactions.collectAsState()
@@ -135,7 +150,16 @@ fun SettingsScreen(
 
     var showBackupOptionsDialog by remember { mutableStateOf(false) }
     var showAccountsDialog by remember { mutableStateOf(false) }
+    var showGeminiConfigDialog by remember { mutableStateOf(openGeminiConfig) }
+    var showOfficialKeywordDialog by remember { mutableStateOf(false) }
     var showCustomizeDashboard by remember { mutableStateOf(false) }
+    var selectedTab by remember(initialTab) { mutableStateOf(initialTab) }
+    LaunchedEffect(openGeminiConfig) {
+        if (openGeminiConfig) {
+            selectedTab = SettingsTab.FINANCE
+            showGeminiConfigDialog = true
+        }
+    }
     var showUndoHistorySheet by remember { mutableStateOf(false) }
     
     var showResetWizard by remember { mutableStateOf(false) }
@@ -250,6 +274,27 @@ fun SettingsScreen(
         }
     }
 
+    val linkGoogleAccountLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { res ->
+        val googleAuthManager = GoogleAuthManager(context)
+        val claims = googleAuthManager.getSignedInAccountFromIntent(res.data)
+            ?: res.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME)?.let { accName ->
+                val cleanEmail = accName.trim().lowercase()
+                com.example.features.auth.GoogleClaims(
+                    sub = "google_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}",
+                    email = cleanEmail,
+                    name = GoogleAuthManager.resolveDisplayName(context, cleanEmail)
+                        ?: GoogleAuthManager.formatEmailAsReadableName(cleanEmail),
+                    picture = ""
+                )
+            }
+        if (claims != null) {
+            pendingMigrationClaims = claims
+            showLinkOfflineConfirmDialog = true
+        }
+    }
+
     val driveSignInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { res ->
@@ -311,11 +356,7 @@ fun SettingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .clickable {
-                        tempName = userProfile?.name ?: authUser?.name ?: "User"
-                        showEditNameDialog = true
-                    },
+                    .clip(RoundedCornerShape(18.dp)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -394,11 +435,17 @@ fun SettingsScreen(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     FilledTonalButton(
                                         onClick = {
-                                            authViewModel?.signInWithGoogle(
-                                                context = context
-                                            ) { claims ->
-                                                pendingMigrationClaims = claims
-                                                showLinkOfflineConfirmDialog = true
+                                            val googleAuthManager = GoogleAuthManager(context)
+                                            googleAuthManager.signOut {
+                                                try {
+                                                    val signInIntent = googleAuthManager.getGoogleSignInIntent()
+                                                    linkGoogleAccountLauncher.launch(signInIntent)
+                                                } catch (_: Exception) {
+                                                    val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
+                                                    if (pickerIntent != null) {
+                                                        linkGoogleAccountLauncher.launch(pickerIntent)
+                                                    }
+                                                }
                                             }
                                         },
                                         shape = RoundedCornerShape(8.dp),
@@ -514,589 +561,448 @@ fun SettingsScreen(
 
 
 
-        // 3. Navigation: Finance Group
+        // 2. Zero-Scroll Category Tab Bar (Sticky Header for Settings)
         item {
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = "Finance",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-            )
-        }
-
-        item {
-            Card(
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .height(44.dp)
             ) {
-                Column {
-                    MoreMenuItem(
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    SettingsTab.values().forEach { tab ->
+                        val isSelected = selectedTab == tab
+                        Surface(
+                            color = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                            shape = RoundedCornerShape(9.dp),
+                            shadowElevation = if (isSelected) 2.dp else 0.dp,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(9.dp))
+                                .clickable {
+                                    com.example.utils.HapticHelper.vibrateTick(context)
+                                    selectedTab = tab
+                                }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = tab.label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // TAB 2: FINANCE (Bank Accounts, Rules, AI Configuration & Official Keyword)
+        if (selectedTab == SettingsTab.FINANCE) {
+            item {
+                AppleSettingsGroup(title = "Finance Options") {
+                    AppleSettingsRow(
+                        title = "Bank Accounts",
+                        icon = Icons.Default.AccountBalance,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        valueText = "${accounts.size} Accounts",
+                        onClick = { showAccountsDialog = true }
+                    )
+                    AppleDivider()
+                    AppleSettingsRow(
                         title = "Categorization Rules",
-                        subtitle = "Automatically categorize transactions using your rules",
                         icon = Icons.Default.AutoAwesome,
-                        iconColor = LendingIndigo,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        valueText = "${rules.size} Rules",
                         onClick = onNavigateToRules
+                    )
+                    AppleDivider()
+                    AppleSettingsRow(
+                        title = "Undo & Action History",
+                        icon = Icons.Default.History,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        valueText = "${undoHistory.size} Actions",
+                        onClick = { showUndoHistorySheet = true }
+                    )
+                }
+            }
+
+            item {
+                val appPrefs = remember { com.example.utils.AppPreferences(context) }
+                val currentEmail = userProfile?.email ?: authUser?.email ?: appPrefs.lastUserEmail
+                val currentGeminiKey = appPrefs.getGeminiApiKeyForUser(currentEmail).ifBlank { appPrefs.geminiApiKey }
+                AppleSettingsGroup(title = "Google Gemini AI") {
+                    AppleSettingsRow(
+                        title = "Gemini API Key",
+                        subtitle = if (currentGeminiKey.isNotBlank()) "Configured • AI Financial Assistant is active" else "Not configured • Tap to enter your Google Gemini API key",
+                        icon = Icons.Default.AutoAwesome,
+                        iconBgColor = MaterialTheme.colorScheme.primaryContainer,
+                        valueText = if (currentGeminiKey.isNotBlank()) "Active" else "Setup",
+                        onClick = { showGeminiConfigDialog = true }
+                    )
+                }
+            }
+
+            item {
+                val appPrefs = remember { com.example.utils.AppPreferences(context) }
+                val currentEmail = userProfile?.email ?: authUser?.email ?: appPrefs.lastUserEmail
+                val currentKeyword = appPrefs.getOfficialExpenseKeywordForUser(currentEmail).ifBlank { appPrefs.officialExpenseKeyword.ifBlank { "Company" } }
+                AppleSettingsGroup(title = "Official Expenses") {
+                    AppleSettingsRow(
+                        title = "Official Expense Keyword",
+                        subtitle = "Keyword assigned to scan & identify official claimable expenses",
+                        icon = Icons.Default.Work,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant,
+                        valueText = currentKeyword,
+                        onClick = { showOfficialKeywordDialog = true }
                     )
                 }
             }
         }
 
-        // 4. Navigation: Appearance & Layout Group
-        item {
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = "Appearance & Layout",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-            )
+        // TAB 3: SECURITY & DATA (Biometrics, Privacy, Cloud & Local Backup)
+        if (selectedTab == SettingsTab.SECURITY) {
+            item {
+                val privacyEnabled = userProfile?.isPrivacyBlurEnabled ?: true
+                val timeoutSeconds = userProfile?.blurTimeoutSeconds ?: 5
+                val appPrefs = remember { AppPreferences(context) }
+                val biometricAuthManager = remember { BiometricAuthManager(context) }
+                val isBioEnabled = userProfile?.isBiometricEnabled ?: appPrefs.isBiometricEnabledForUser(userProfile?.email)
+                val currentTimeout by viewModel.appLockTimeoutSeconds.collectAsState()
+                val activity = remember(context) { context.findFragmentActivity() }
+
+                AppleSettingsGroup(title = "Security & Privacy") {
+                    AppleSettingsRow(
+                        title = "Biometric & Screen Lock",
+                        subtitle = "Require fingerprint, face, or phone PIN",
+                        icon = Icons.Default.Fingerprint,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant,
+                        showChevron = false,
+                        trailing = {
+                            Switch(
+                                checked = isBioEnabled,
+                                onCheckedChange = { targetState ->
+                                    val cap = biometricAuthManager.checkCapability()
+                                    when {
+                                        cap == BiometricCapability.NO_HARDWARE -> {
+                                            viewModel.showMessage("Biometric hardware is not available on this device")
+                                        }
+                                        cap == BiometricCapability.NOT_ENROLLED && targetState -> {
+                                            showEnrollmentDialog = true
+                                        }
+                                        activity != null -> {
+                                            biometricAuthManager.authenticate(
+                                                activity = activity,
+                                                title = if (targetState) "Enable App Lock" else "Disable App Lock",
+                                                subtitle = "Verify your identity to change app security",
+                                                onSuccess = {
+                                                    viewModel.setBiometricLock(targetState)
+                                                },
+                                                onError = { errorCode, errMsg ->
+                                                    if (errorCode != androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED &&
+                                                        errorCode != androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                                                        viewModel.showMessage(errMsg)
+                                                    }
+                                                }
+                                            )
+                                        }
+                                        else -> {
+                                            viewModel.setBiometricLock(targetState)
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.scale(0.8f)
+                            )
+                        }
+                    )
+
+                    if (isBioEnabled) {
+                        AppleDivider()
+                        AppleSettingsRow(
+                            title = "Auto-Lock Timeout",
+                            icon = Icons.Default.Timer,
+                            iconBgColor = OutstandingAmber,
+                            valueText = when (currentTimeout) {
+                                0 -> "Immediately"
+                                30 -> "30s"
+                                60 -> "1m"
+                                300 -> "5m"
+                                else -> "${currentTimeout}s"
+                            },
+                            onClick = {
+                                val timeouts = listOf(0, 30, 60, 300)
+                                val nextIdx = (timeouts.indexOf(currentTimeout) + 1) % timeouts.size
+                                com.example.utils.HapticHelper.vibrateTick(context)
+                                viewModel.setAppLockTimeout(timeouts[nextIdx])
+                            }
+                        )
+                    }
+
+                    AppleDivider()
+
+                    AppleSettingsRow(
+                        title = "Financial Privacy Blur",
+                        subtitle = "Mask balances on launch; tap to reveal",
+                        icon = if (privacyEnabled) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant,
+                        showChevron = false,
+                        trailing = {
+                            Switch(
+                                checked = privacyEnabled,
+                                onCheckedChange = { viewModel.updatePrivacyBlurPreference(it, timeoutSeconds) },
+                                modifier = Modifier.scale(0.8f)
+                            )
+                        }
+                    )
+
+                    if (privacyEnabled) {
+                        AppleDivider()
+                        AppleSettingsRow(
+                            title = "Auto-Hide Reveal Timer",
+                            icon = Icons.Default.Schedule,
+                            iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                            valueText = "${timeoutSeconds}s",
+                            onClick = {
+                                val timers = listOf(3, 5, 10, 15)
+                                val nextIdx = (timers.indexOf(timeoutSeconds) + 1) % timers.size
+                                com.example.utils.HapticHelper.vibrateTick(context)
+                                viewModel.updatePrivacyBlurPreference(privacyEnabled, timers[nextIdx])
+                            }
+                        )
+                    }
+                }
+            }
+
+            item {
+                val isDriveConnected = driveStatus?.isConnected == true
+                val connectedDriveEmail = driveStatus?.driveEmail ?: (userProfile?.email ?: authUser?.email ?: "")
+
+                AppleSettingsGroup(
+                    title = "Data & Cloud Backup",
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        SpotlightTourManager.targetBoundsMap[SpotlightStep.SETTINGS_SECURITY] = coords.boundsInRoot()
+                    }
+                ) {
+                    AppleSettingsRow(
+                        title = "Google Drive Cloud Backup",
+                        subtitle = if (isDriveConnected) "Synced with $connectedDriveEmail" else "Connect Google Drive for automated sync",
+                        icon = if (isDriveConnected) Icons.Default.CloudDone else Icons.Default.CloudSync,
+                        iconBgColor = IncomeGreen,
+                        valueText = if (isDriveConnected) "Connected" else "Not Connected",
+                        onClick = {
+                            driveMismatchError = null
+                            showGoogleDriveDialog = true
+                        }
+                    )
+                    AppleDivider()
+                    AppleSettingsRow(
+                        title = "Export Local Backup",
+                        subtitle = "Export JSON file to Downloads or Storage",
+                        icon = Icons.Default.SaveAlt,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        onClick = { showBackupOptionsDialog = true }
+                    )
+                    AppleDivider()
+                    AppleSettingsRow(
+                        title = "Restore from Backup File",
+                        subtitle = "Import and restore complete records",
+                        icon = Icons.Default.Restore,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        onClick = {
+                            viewModel.setExternalIntentActive(true)
+                            restoreLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+                        }
+                    )
+                }
+            }
         }
 
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column {
-                    MoreMenuItem(
-                        title = "Customize Dashboard",
-                        subtitle = "Enable, disable, and reorder cards on your Dashboard",
-                        icon = Icons.Default.DashboardCustomize,
-                        iconColor = MaterialTheme.colorScheme.primary,
-                        onClick = { showCustomizeDashboard = true }
-                    )
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    val currentThemeMode by viewModel.themeMode.collectAsState()
+        // TAB 1: GENERAL (Appearance & Profiles - Display Name edit removed per user request)
+        if (selectedTab == SettingsTab.GENERAL) {
+            item {
+                val currentThemeMode by viewModel.themeMode.collectAsState()
+
+                AppleSettingsGroup(title = "Appearance") {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                shape = CircleShape,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = when (currentThemeMode) {
-                                            "DARK" -> Icons.Default.DarkMode
-                                            "LIGHT" -> Icons.Default.LightMode
-                                            else -> Icons.Default.BrightnessMedium
-                                        },
-                                        contentDescription = "Theme",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column {
-                                Text(
-                                    text = "Theme Mode",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = when (currentThemeMode) {
-                                        "DARK" -> "Dark theme active"
-                                        "LIGHT" -> "Light theme active"
-                                        else -> "Follow system default"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            listOf(
-                                "LIGHT" to "Light",
-                                "DARK" to "Dark",
-                                "SYSTEM" to "System"
-                            ).forEach { (mode, label) ->
-                                FilterChip(
-                                    selected = currentThemeMode == mode,
-                                    onClick = {
-                                        com.example.utils.HapticHelper.vibrateTick(context)
-                                        viewModel.setThemeMode(mode)
-                                    },
-                                    label = { Text(label) }
-                                )
-                            }
-                        }
-                    }
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                shape = CircleShape,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Vibration,
-                                        contentDescription = "Haptic Feedback",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Haptic Feedback & Vibration",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Tactile vibration feedback on touches, gestures, and transactions",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Switch(
-                            checked = isHapticFeedbackEnabled,
-                            onCheckedChange = { enabled ->
-                                viewModel.setHapticFeedbackEnabled(enabled)
-                                if (enabled) {
-                                    com.example.utils.HapticHelper.vibrateSuccess(context)
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-        }
-
-        // Security & Privacy Group
-        item {
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = "Security & Privacy",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-            )
-        }
-
-        // 4.1 Navigation: Privacy Blur Settings
-        item {
-            val privacyEnabled = userProfile?.isPrivacyBlurEnabled ?: true
-            val timeoutSeconds = userProfile?.blurTimeoutSeconds ?: 5
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Surface(
-                                color = LendingIndigo.copy(alpha = 0.12f),
-                                shape = CircleShape,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = if (privacyEnabled) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                        contentDescription = "Privacy Blur",
-                                        tint = LendingIndigo,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Financial Privacy Blur",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Mask financial values; tap to reveal temporarily",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Switch(
-                            checked = privacyEnabled,
-                            onCheckedChange = { viewModel.updatePrivacyBlurPreference(it, timeoutSeconds) }
-                        )
-                    }
-
-                    if (privacyEnabled) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = "Auto-hide reveal timer:",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf(3, 5, 10, 15).forEach { sec ->
-                                FilterChip(
-                                    selected = timeoutSeconds == sec,
-                                    onClick = {
-                                        com.example.utils.HapticHelper.vibrateTick(context)
-                                        viewModel.updatePrivacyBlurPreference(privacyEnabled, sec)
-                                    },
-                                    label = { Text("${sec}s") }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 4.2 Security: Biometric & App Lock (GPay Style)
-        item {
-            val appPrefs = remember { AppPreferences(context) }
-            val biometricAuthManager = remember { BiometricAuthManager(context) }
-            val isBioEnabled = userProfile?.isBiometricEnabled ?: appPrefs.isBiometricEnabledForUser(userProfile?.email)
-            val currentTimeout by viewModel.appLockTimeoutSeconds.collectAsState()
-            val activity = remember(context) { context.findFragmentActivity() }
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                shape = CircleShape,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Fingerprint,
-                                        contentDescription = "App Lock",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Biometric & Screen Lock",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Require fingerprint, face, or phone PIN to open Yosan",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        Switch(
-                            checked = isBioEnabled,
-                            onCheckedChange = { targetState ->
-                                val cap = biometricAuthManager.checkCapability()
-                                when {
-                                    cap == BiometricCapability.NO_HARDWARE -> {
-                                        viewModel.showMessage("Biometric hardware is not available on this device")
-                                    }
-                                    cap == BiometricCapability.NOT_ENROLLED && targetState -> {
-                                        showEnrollmentDialog = true
-                                    }
-                                    activity != null -> {
-                                        biometricAuthManager.authenticate(
-                                            activity = activity,
-                                            title = if (targetState) "Enable App Lock" else "Disable App Lock",
-                                            subtitle = "Verify your identity to change app security",
-                                            onSuccess = {
-                                                viewModel.setBiometricLock(targetState)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = when (currentThemeMode) {
+                                                "SYSTEM" -> Icons.Default.BrightnessAuto
+                                                "DARK" -> Icons.Default.DarkMode
+                                                "LIGHT" -> Icons.Default.LightMode
+                                                else -> Icons.Default.BrightnessAuto
                                             },
-                                            onError = { errorCode, errMsg ->
-                                                if (errorCode != androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED &&
-                                                    errorCode != androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
-                                                    viewModel.showMessage(errMsg)
-                                                }
-                                            }
+                                            contentDescription = "Theme",
+                                            tint = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.size(17.dp)
                                         )
                                     }
-                                    else -> {
-                                        viewModel.setBiometricLock(targetState)
+                                }
+                                Spacer(modifier = Modifier.width(14.dp))
+                                Text(
+                                    text = "Theme Mode",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Apple iOS-Style 2-Segment Control (Dark & Light Only, white/onSurface when selected)
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(9.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(36.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(2.dp)
+                            ) {
+                                listOf(
+                                    "SYSTEM" to "System",
+                                    "DARK" to "Dark",
+                                    "LIGHT" to "Light"
+                                ).forEach { (mode, label) ->
+                                    val isSelected = currentThemeMode == mode
+                                    Surface(
+                                        color = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                                        shape = RoundedCornerShape(7.dp),
+                                        shadowElevation = if (isSelected) 2.dp else 0.dp,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(7.dp))
+                                            .clickable {
+                                                com.example.utils.HapticHelper.vibrateTick(context)
+                                                viewModel.setThemeMode(mode)
+                                            }
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = label,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
                             }
-                        )
-                    }
-
-                    if (isBioEnabled) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = "Auto-lock timeout:",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf(
-                                0 to "Immediately",
-                                30 to "30s",
-                                60 to "1m",
-                                300 to "5m"
-                            ).forEach { (sec, label) ->
-                                FilterChip(
-                                    selected = currentTimeout == sec,
-                                    onClick = {
-                                        com.example.utils.HapticHelper.vibrateTick(context)
-                                        viewModel.setAppLockTimeout(sec)
-                                    },
-                                    label = { Text(label) }
-                                )
-                            }
                         }
                     }
-                }
-            }
-        }
 
+                    AppleDivider()
 
-
-        // 5. Navigation: Account Group
-        item {
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = "Account",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-            )
-        }
-
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column {
-                    MoreMenuItem(
-                        title = "Bank Accounts",
-                        subtitle = "${accounts.size} accounts managed",
-                        icon = Icons.Default.AccountBalance,
-                        iconColor = MaterialTheme.colorScheme.primary,
-                        onClick = { showAccountsDialog = true }
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                    )
-                    MoreMenuItem(
-                        title = "Switch / Add Account",
-                        subtitle = "Switch between user profiles or add another account on this device",
-                        icon = Icons.Default.SwitchAccount,
-                        iconColor = MaterialTheme.colorScheme.primary,
-                        onClick = {
-                            showSwitchAccountDialog = true
-                        }
-                    )
-                }
-            }
-        }
-
-        // 6. Navigation: Backup & Data Management
-        item {
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = "Backup & Data Management",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = IncomeGreen,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-            )
-        }
-
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column {
-                    val isDriveConnected = driveStatus?.isConnected == true
-                    val connectedDriveEmail = driveStatus?.driveEmail ?: (userProfile?.email ?: authUser?.email ?: "")
-
-                    MoreMenuItem(
-                        title = "Google Drive Cloud Backup",
-                        subtitle = if (isDriveConnected)
-                            "Connected as $connectedDriveEmail • Cloud sync & recovery snapshots"
-                        else
-                            "Connect Google Drive for automated cloud backup & multi-device restore",
-                        icon = if (isDriveConnected) Icons.Default.CloudDone else Icons.Default.CloudSync,
-                        iconColor = if (isDriveConnected) IncomeGreen else MaterialTheme.colorScheme.primary,
-                        onClick = {
-                            driveMismatchError = null
-                            showGoogleDriveDialog = true
-                        },
+                    AppleSettingsRow(
+                        title = "Haptic Feedback",
+                        subtitle = "Tactile vibration feedback on touches & gestures",
+                        icon = Icons.Default.Vibration,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        showChevron = false,
                         trailing = {
-                            Surface(
-                                color = if (isDriveConnected) IncomeGreen.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text(
-                                    text = if (isDriveConnected) "Connected" else "Not Connected",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isDriveConnected) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
+                            Switch(
+                                checked = isHapticFeedbackEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.setHapticFeedbackEnabled(enabled)
+                                    if (enabled) {
+                                        com.example.utils.HapticHelper.vibrateSuccess(context)
+                                    }
+                                },
+                                modifier = Modifier.scale(0.8f)
+                            )
                         }
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                    MoreMenuItem(
-                        title = "Local Device Backup",
-                        subtitle = "Export database backup (JSON) to Downloads, storage folder, or share",
-                        icon = Icons.Default.SaveAlt,
-                        iconColor = IncomeGreen,
+                }
+            }
+
+            item {
+                AppleSettingsGroup(title = "Account & Profiles") {
+                    AppleSettingsRow(
+                        title = "Switch / Add Account",
+                        subtitle = "Manage multiple user profiles on this device",
+                        icon = Icons.Default.SwitchAccount,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        onClick = { showSwitchAccountDialog = true }
+                    )
+                    AppleDivider()
+                    AppleSettingsRow(
+                        title = "Edit User Name",
+                        subtitle = userProfile?.name?.ifBlank { "User" } ?: "User",
+                        icon = Icons.Default.Person,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
                         onClick = {
-                            showBackupOptionsDialog = true
+                            tempName = userProfile?.name ?: ""
+                            showEditNameDialog = true
                         }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                    MoreMenuItem(
-                        title = "Restore from Local File",
-                        subtitle = "Import and restore complete records from a JSON backup file",
-                        icon = Icons.Default.Restore,
-                        iconColor = LendingIndigo,
-                        onClick = {
-                            viewModel.setExternalIntentActive(true)
-                            restoreLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
-                        }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                    MoreMenuItem(
-                        title = "Undo & Recovery History",
-                        subtitle = "${undoHistory.size} actions available to revert",
-                        icon = Icons.Default.History,
-                        iconColor = LendingIndigo,
-                        onClick = { showUndoHistorySheet = true }
                     )
                 }
             }
         }
 
-        // 6.5. System & Updates Group
-        item {
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = "System & Updates",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-            )
-        }
-
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column {
-                    MoreMenuItem(
+        // TAB 4: ABOUT & SYSTEM (Updates, Walkthrough, Feedback, Logout, Wipe - Server URL removed)
+        if (selectedTab == SettingsTab.ABOUT) {
+            item {
+                AppleSettingsGroup(title = "Help & Information") {
+                    AppleSettingsRow(
+                        title = "Product Tour",
+                        subtitle = "Interactive guided tour of features and workflows",
+                        icon = Icons.Default.Explore,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant,
+                        onClick = onOpenProductTour
+                    )
+                    AppleDivider()
+                    AppleSettingsRow(
                         title = "Check for Updates",
-                        subtitle = "Current version: v${BuildConfig.VERSION_NAME}",
                         icon = Icons.Default.SystemUpdate,
-                        iconColor = MaterialTheme.colorScheme.primary,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant,
+                        valueText = "v${BuildConfig.VERSION_NAME}",
                         onClick = {
                             coroutineScope.launch {
                                 updateManager.checkForUpdates()
                             }
                         }
                     )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    AppleDivider()
+                    AppleSettingsRow(
+                        title = "Welcome & Privacy Note",
+                        icon = Icons.Default.Info,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        onClick = onOpenIntroNote
                     )
-                    MoreMenuItem(
-                        title = "Send Feedback / Report Issue",
-                        subtitle = "Bug reports, statement parsing issues, or feature ideas",
+                    AppleDivider()
+                    AppleSettingsRow(
+                        title = "Send Feedback / Report Bug",
                         icon = Icons.Default.RateReview,
-                        iconColor = MaterialTheme.colorScheme.primary,
+                        iconBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
                         onClick = {
                             feedbackSubject = ""
                             feedbackDescription = ""
@@ -1106,177 +1012,101 @@ fun SettingsScreen(
                     )
                 }
             }
-        }
 
-        // Help & User Guide Group
-        item {
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = "Help & User Guide",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-            )
-        }
-
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column {
-                    MoreMenuItem(
-                        title = "How to Use the App",
-                        subtitle = "Interactive 12-module walkthrough covering all features & safety",
-                        icon = Icons.Default.MenuBook,
-                        iconColor = LendingIndigo,
-                        onClick = onOpenWalkthrough
+            item {
+                AppleSettingsGroup(title = "Account Actions") {
+                    AppleSettingsRow(
+                        title = "Log Out",
+                        icon = Icons.AutoMirrored.Filled.Logout,
+                        iconBgColor = ExpenseRed,
+                        showChevron = false,
+                        onClick = { showLogoutDialog = true }
                     )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                    )
-                    MoreMenuItem(
-                        title = "Welcome Note & Introduction",
-                        subtitle = "Review the purpose, getting-started guide, and privacy note",
-                        icon = Icons.Default.Info,
-                        iconColor = MaterialTheme.colorScheme.primary,
-                        onClick = onOpenIntroNote
-                    )
-                }
-            }
-        }
-
-        // 7. Navigation: Data & Privacy Group
-        item {
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = "Danger Zone",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-            )
-        }
-
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column {
-                    MoreMenuItem(
-                        title = "Delete Account",
-                        subtitle = "Entire account and local data will be permanently deleted",
+                    AppleDivider()
+                    AppleSettingsRow(
+                        title = "Delete Account & Wipe Data",
+                        subtitle = "Permanently delete account and local transactions",
                         icon = Icons.Default.DeleteOutline,
-                        iconColor = MaterialTheme.colorScheme.error,
+                        iconBgColor = ExpenseRed,
+                        showChevron = false,
                         onClick = {
                             resetWizardStep = 1
                             resetConfirmText = ""
                             showResetWizard = true
                         }
                     )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                    )
-                    MoreMenuItem(
-                        title = "Log Out",
-                        subtitle = "End your active session and return to welcome screen",
-                        icon = Icons.AutoMirrored.Filled.Logout,
-                        iconColor = MaterialTheme.colorScheme.error,
-                        onClick = {
-                            showLogoutDialog = true
-                        }
-                    )
                 }
             }
-        }
 
-        // 8. App Version & Engineering Credits Footer
-        item {
-            Spacer(modifier = Modifier.height(28.dp))
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+            item {
+                Spacer(modifier = Modifier.height(20.dp))
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { showDeveloperDetailsDialog = true }
+                        .padding(horizontal = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Column(
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 16.dp, horizontal = 16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { showDeveloperDetailsDialog = true }
                     ) {
-                        Image(
-                            painter = painterResource(id = com.example.R.drawable.ic_launcher_foreground),
-                            contentDescription = "Yosan Logo",
-                            modifier = Modifier.size(44.dp)
-                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 16.dp, horizontal = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Image(
+                                painter = painterResource(id = com.example.R.drawable.ic_launcher_foreground),
+                                contentDescription = "Yosan Logo",
+                                modifier = Modifier.size(44.dp)
+                            )
 
-                        Text(
-                            text = "YOSAN",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            letterSpacing = 1.1.sp
-                        )
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = "Version ${BuildConfig.VERSION_NAME}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
-                            modifier = Modifier.padding(horizontal = 24.dp)
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = "Designed & Developed by",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                        )
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = "Rooparaj & Gokulraj",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                            Text(
+                                text = "YOSAN",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                letterSpacing = 1.1.sp
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "Version ${BuildConfig.VERSION_NAME}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
+                                modifier = Modifier.padding(horizontal = 24.dp)
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Designed & Developed by",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "Rooparaj & Gokulraj",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
+                    Spacer(modifier = Modifier.height(36.dp))
                 }
-                Spacer(modifier = Modifier.height(36.dp))
             }
         }
     }
 
-
-
-
-
-    // Backup Options Dialog
+// Backup Options Dialog
     if (showBackupOptionsDialog) {
         val timeTag = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val defaultBackupFileName = "yosan_backup_$timeTag.json"
@@ -3532,6 +3362,249 @@ fun SettingsScreen(
             onDismiss = { showDeveloperDetailsDialog = false }
         )
     }
+
+    // Google Gemini AI Configuration Dialog
+    if (showGeminiConfigDialog) {
+        val appPrefs = remember { com.example.utils.AppPreferences(context) }
+        val currentEmail = userProfile?.email ?: authUser?.email ?: appPrefs.lastUserEmail
+        var keyInput by remember { mutableStateOf(appPrefs.getGeminiApiKeyForUser(currentEmail).ifBlank { appPrefs.geminiApiKey }) }
+        var isKeyVisible by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = {
+                showGeminiConfigDialog = false
+                onGeminiConfigDismissed()
+            },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Google Gemini AI Key", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Enter your Google Gemini API key to activate the AI Financial Advisor. Your key is stored securely on your device.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = keyInput,
+                        onValueChange = { keyInput = it },
+                        label = { Text("Gemini API Key") },
+                        placeholder = { Text("AIzaSy...") },
+                        singleLine = true,
+                        visualTransformation = if (isKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { isKeyVisible = !isKeyVisible }) {
+                                Icon(
+                                    imageVector = if (isKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (isKeyVisible) "Hide Key" else "Show Key"
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = keyInput.trim()
+                        appPrefs.setGeminiApiKeyForUser(currentEmail, trimmed)
+                        appPrefs.geminiApiKey = trimmed
+                        showGeminiConfigDialog = false
+                        onGeminiConfigDismissed()
+                        statusNotificationMsg = if (trimmed.isNotBlank()) "Gemini API key saved! AI Assistant is now active." else "Gemini API key removed."
+                    }
+                ) {
+                    Text("Save Key")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showGeminiConfigDialog = false
+                        onGeminiConfigDismissed()
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Official Expense Keyword Dialog
+    if (showOfficialKeywordDialog) {
+        val appPrefs = remember { com.example.utils.AppPreferences(context) }
+        val currentEmail = userProfile?.email ?: authUser?.email ?: appPrefs.lastUserEmail
+        var keywordInput by remember { mutableStateOf(appPrefs.getOfficialExpenseKeywordForUser(currentEmail).ifBlank { appPrefs.officialExpenseKeyword.ifBlank { "Company" } }) }
+
+        AlertDialog(
+            onDismissRequest = { showOfficialKeywordDialog = false },
+            title = { Text("Official Expense Keyword", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Transactions matching this keyword will be recognized as official company claims and reimbursements.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = keywordInput,
+                        onValueChange = { keywordInput = it },
+                        label = { Text("Keyword (e.g. Company, Work, Corp)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = keywordInput.trim().ifBlank { "Company" }
+                        appPrefs.setOfficialExpenseKeywordForUser(currentEmail, trimmed)
+                        appPrefs.officialExpenseKeyword = trimmed
+                        showOfficialKeywordDialog = false
+                        statusNotificationMsg = "Official expense keyword updated to '$trimmed'"
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showOfficialKeywordDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun AppleSettingsGroup(
+    title: String? = null,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        if (!title.isNullOrBlank()) {
+            Text(
+                text = title.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                letterSpacing = 0.8.sp,
+                modifier = Modifier.padding(start = 12.dp, bottom = 6.dp)
+            )
+        }
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp)),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+fun AppleSettingsRow(
+    title: String,
+    subtitle: String? = null,
+    icon: ImageVector,
+    iconBgColor: Color,
+    iconTint: Color = Color.White,
+    valueText: String? = null,
+    showChevron: Boolean = true,
+    onClick: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            color = iconBgColor,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.size(30.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = iconTint,
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(14.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.5.sp,
+                    lineHeight = 14.sp
+                )
+            }
+        }
+
+        if (trailing != null) {
+            trailing()
+        } else {
+            if (!valueText.isNullOrBlank()) {
+                Text(
+                    text = valueText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    fontSize = 13.5.sp
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+            }
+            if (showChevron) {
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun AppleDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 60.dp),
+        thickness = 0.5.dp,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+    )
 }
 
 @Composable
@@ -3587,4 +3660,12 @@ fun MoreMenuItem(
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
+}
+
+
+enum class SettingsTab(val label: String) {
+    FINANCE("Finance"),
+    SECURITY("Security & Data"),
+    GENERAL("General"),
+    ABOUT("Help & System")
 }

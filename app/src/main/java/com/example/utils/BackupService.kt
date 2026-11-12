@@ -56,6 +56,15 @@ object BackupService {
         root.put("createdAt", System.currentTimeMillis())
         root.put("created_at", nowIso)
         root.put("updated_at", nowIso)
+        try {
+            val userProfile = database.userProfileDao().getUserProfileOnce()
+            val email = userProfile?.email?.ifBlank { "user" } ?: "user"
+            val prefix = email.substringBefore("@").replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "user" }
+            val timePart = SimpleDateFormat("HH:mm;dd:MM", Locale.US).format(Date())
+            root.put("backup_file_name", "$prefix$timePart")
+        } catch (_: Exception) {
+            root.put("backup_file_name", "backup")
+        }
 
         // 1. User Profile
         try {

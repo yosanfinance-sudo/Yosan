@@ -106,6 +106,16 @@ fun FinancialChatSheet(
             }
 
             try {
+                if (LocalFinancialAiAnalyzer.isPromptInjection(trimmed) || !LocalFinancialAiAnalyzer.isApplicationRelated(trimmed)) {
+                    messages = messages + UiChatMessage(role = "model", text = LocalFinancialAiAnalyzer.OUT_OF_SCOPE_RESPONSE)
+                    isLoading = false
+                    return@launch
+                }
+
+                val appPrefs = com.example.utils.AppPreferences(context)
+                val userEmail = viewModel?.userProfile?.value?.email ?: appPrefs.lastUserEmail
+                val userGeminiKey = appPrefs.getGeminiApiKeyForUser(userEmail).ifBlank { appPrefs.geminiApiKey }
+
                 val api = ApiClient.getAuthApi(context)
                 val historyDto = messages.takeLast(6).map {
                     ChatMessageDto(role = it.role, text = it.text)
@@ -173,7 +183,7 @@ fun FinancialChatSheet(
                 )
 
                 val response = api.sendChatMessage(
-                    ChatRequest(message = trimmed, history = historyDto, clientContext = clientCtx)
+                    ChatRequest(message = trimmed, history = historyDto, clientContext = clientCtx, apiKey = userGeminiKey.ifBlank { null })
                 )
 
                 if (response.isSuccessful && response.body()?.success == true && !response.body()?.reply.isNullOrBlank()) {

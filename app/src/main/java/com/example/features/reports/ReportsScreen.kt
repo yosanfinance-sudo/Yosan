@@ -1,5 +1,10 @@
 package com.example.features.reports
 
+import com.example.features.walkthrough.SpotlightTourManager
+import com.example.features.walkthrough.SpotlightStep
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -15,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -97,6 +103,16 @@ fun ReportsScreen(
     var currentPageIndex by remember { mutableIntStateOf(0) }
     var generatedFile by remember { mutableStateOf<File?>(null) }
     var isRendering by remember { mutableStateOf(true) }
+    var showFlipkartFilterSheet by remember { mutableStateOf(false) }
+
+    val activeFilterCount = remember(selectedReportType, selectedDateRange, selectedAccountId, selectedCategoryName) {
+        var count = 0
+        if (selectedReportType != ReportType.OVERALL_SUMMARY) count++
+        if (selectedDateRange != DateRangeFilter.ALL_TIME) count++
+        if (selectedAccountId != null) count++
+        if (selectedCategoryName != null) count++
+        count
+    }
 
     // Period Label
     val periodLabel = remember(selectedDateRange, customStartDate, customEndDate) {
@@ -148,6 +164,16 @@ fun ReportsScreen(
         )
     }
 
+    val filteredCategoryExpenseBreakdown = remember(filteredTransactions, categories) {
+        FinancialCalculationService.calculateCategoryExpenseBreakdown(filteredTransactions, categories)
+    }
+    val filteredCategoryIncomeBreakdown = remember(filteredTransactions, categories) {
+        FinancialCalculationService.calculateCategoryIncomeBreakdown(filteredTransactions, categories)
+    }
+    val filteredMonthlyTrends = remember(filteredTransactions, categories) {
+        FinancialCalculationService.calculateMonthlyTrends(filteredTransactions)
+    }
+
     // Regenerate & Render PDF whenever filters, report type, or sync time change
     LaunchedEffect(
         selectedReportType, selectedDateRange, customStartDate, customEndDate,
@@ -160,15 +186,16 @@ fun ReportsScreen(
                 val file = ExportService.generatePdfReport(
                     context = context,
                     summary = filteredSummary,
-                    categoryExpenseBreakdown = categoryBreakdown,
-                    categoryIncomeBreakdown = categoryIncomeBreakdown,
-                    monthlyTrends = monthlyTrends,
+                    categoryExpenseBreakdown = filteredCategoryExpenseBreakdown,
+                    categoryIncomeBreakdown = filteredCategoryIncomeBreakdown,
+                    monthlyTrends = filteredMonthlyTrends,
                     loans = filteredLoans,
                     allTransactions = filteredTransactions,
                     companyExpenses = filteredCompanyExpenses,
                     userName = userProfile?.name,
                     reportType = selectedReportType,
-                    periodLabel = periodLabel
+                    periodLabel = periodLabel,
+                    accounts = accounts
                 )
                 generatedFile = file
 
@@ -292,65 +319,148 @@ fun ReportsScreen(
             .fillMaxSize()
             .testTag("reports_screen")
     ) {
-        // 1. Report Type Selector Chips
-        Text(
-            text = "Report Type",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
-        )
+        // 1. Flipkart-Style Quick Filter Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            ReportType.values().forEach { rType ->
-                val isSelected = selectedReportType == rType
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { selectedReportType = rType },
-                    label = { Text(rType.displayName) },
-                    leadingIcon = if (isSelected) {
-                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                    } else null
-                )
+            // Main Flipkart Filter Trigger Button (Seamless Blended Style)
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(
+                    1.dp,
+                    if (activeFilterCount > 0) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                ),
+                shadowElevation = if (activeFilterCount > 0) 1.dp else 0.dp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        HapticHelper.vibrateClick(context)
+                        showFlipkartFilterSheet = true
+                    }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FilterList,
+                        contentDescription = "Filters",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Icon(
+                        imageVector = Icons.Default.ArrowDropDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
-        }
 
-        // 3. Date Range Filter Chips
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            DateRangeFilter.values().forEach { dFilter ->
-                val isSelected = selectedDateRange == dFilter
-                FilterChip(
-                    selected = isSelected,
-                    onClick = {
-                        selectedDateRange = dFilter
-                        if (dFilter == DateRangeFilter.CUSTOM) {
-                            showCustomDateDialog = true
+            // Quick Active Filter Chips Row
+            LazyRow(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (activeFilterCount > 0) {
+                    item {
+                        Surface(
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable {
+                                    HapticHelper.vibrateTick(context)
+                                    selectedReportType = ReportType.OVERALL_SUMMARY
+                                    selectedDateRange = DateRangeFilter.ALL_TIME
+                                    customStartDate = ""
+                                    customEndDate = ""
+                                    selectedAccountId = null
+                                    selectedCategoryName = null
+                                }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                            ) {
+                                Text(
+                                    text = "Clear All",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear All",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
                         }
-                    },
-                    label = {
-                        Text(
-                            if (dFilter == DateRangeFilter.CUSTOM && customStartDate.isNotBlank()) {
-                                "$customStartDate -> $customEndDate"
-                            } else {
-                                dFilter.displayName
+                    }
+                }
+
+                item {
+                    AssistChip(
+                        onClick = { showFlipkartFilterSheet = true },
+                        label = { Text(selectedReportType.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingIcon = {
+                            Icon(Icons.Default.Assessment, contentDescription = null, modifier = Modifier.size(14.dp))
+                        }
+                    )
+                }
+
+                item {
+                    AssistChip(
+                        onClick = { showFlipkartFilterSheet = true },
+                        label = { Text(periodLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingIcon = {
+                            Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(14.dp))
+                        }
+                    )
+                }
+
+                if (selectedAccountId != null) {
+                    val acc = accounts.find { it.id == selectedAccountId }
+                    item {
+                        InputChip(
+                            selected = true,
+                            onClick = { selectedAccountId = null },
+                            label = { Text(acc?.bankName ?: "Account") },
+                            trailingIcon = {
+                                Icon(Icons.Default.Close, contentDescription = "Clear Account", modifier = Modifier.size(12.dp))
                             }
                         )
-                    },
-                    leadingIcon = if (isSelected) {
-                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                    } else null
-                )
+                    }
+                }
+
+                if (selectedCategoryName != null) {
+                    item {
+                        InputChip(
+                            selected = true,
+                            onClick = { selectedCategoryName = null },
+                            label = { Text(selectedCategoryName ?: "Category") },
+                            trailingIcon = {
+                                Icon(Icons.Default.Close, contentDescription = "Clear Category", modifier = Modifier.size(12.dp))
+                            }
+                        )
+                    }
+                }
             }
         }
 
@@ -358,7 +468,10 @@ fun ReportsScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .onGloballyPositioned { coords ->
+                    SpotlightTourManager.targetBoundsMap[SpotlightStep.REPORTS_PDF] = coords.boundsInRoot()
+                },
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Button(
@@ -641,4 +754,487 @@ fun ReportsScreen(
             }
         )
     }
+
+    // 8. Flipkart-Style 2-Column Filter Bottom Sheet
+    if (showFlipkartFilterSheet) {
+        var draftCategory by remember { mutableStateOf(FlipkartFilterCategory.REPORT_TYPE) }
+        var draftReportType by remember { mutableStateOf(selectedReportType) }
+        var draftDateRange by remember { mutableStateOf(selectedDateRange) }
+        var draftCustomStart by remember { mutableStateOf(customStartDate) }
+        var draftCustomEnd by remember { mutableStateOf(customEndDate) }
+        var draftAccountId by remember { mutableStateOf(selectedAccountId) }
+        var draftCategoryName by remember { mutableStateOf(selectedCategoryName) }
+
+        val draftActiveCount = remember(draftReportType, draftDateRange, draftAccountId, draftCategoryName) {
+            var c = 0
+            if (draftReportType != ReportType.OVERALL_SUMMARY) c++
+            if (draftDateRange != DateRangeFilter.ALL_TIME) c++
+            if (draftAccountId != null) c++
+            if (draftCategoryName != null) c++
+            c
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = { showFlipkartFilterSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            containerColor = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxHeight(0.70f)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Header (Flipkart Style: Title + Result count + Clear Filters + Close)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Filters",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "${filteredTransactions.size} transactions matching",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (draftActiveCount > 0) {
+                            TextButton(
+                                onClick = {
+                                    HapticHelper.vibrateTick(context)
+                                    draftReportType = ReportType.OVERALL_SUMMARY
+                                    draftDateRange = DateRangeFilter.ALL_TIME
+                                    draftCustomStart = ""
+                                    draftCustomEnd = ""
+                                    draftAccountId = null
+                                    draftCategoryName = null
+                                }
+                            ) {
+                                Text(
+                                    text = "Clear Filters",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        IconButton(onClick = { showFlipkartFilterSheet = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+
+                // Flipkart 2-Column Body
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    // LEFT COLUMN (Categories, ~38% width)
+                    Column(
+                        modifier = Modifier
+                            .width(135.dp)
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f))
+                    ) {
+                        FlipkartFilterCategory.values().forEach { cat ->
+                            val isSelected = draftCategory == cat
+                            val isCategoryActive = when (cat) {
+                                FlipkartFilterCategory.REPORT_TYPE -> draftReportType != ReportType.OVERALL_SUMMARY
+                                FlipkartFilterCategory.DATE_RANGE -> draftDateRange != DateRangeFilter.ALL_TIME
+                                FlipkartFilterCategory.ACCOUNT -> draftAccountId != null
+                                FlipkartFilterCategory.CATEGORY -> draftCategoryName != null
+                            }
+
+                            Surface(
+                                color = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        HapticHelper.vibrateTick(context)
+                                        draftCategory = cat
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = cat.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        val subtitle = when (cat) {
+                                            FlipkartFilterCategory.REPORT_TYPE -> draftReportType.displayName
+                                            FlipkartFilterCategory.DATE_RANGE -> draftDateRange.displayName
+                                            FlipkartFilterCategory.ACCOUNT -> accounts.find { it.id == draftAccountId }?.bankName ?: "All"
+                                            FlipkartFilterCategory.CATEGORY -> draftCategoryName ?: "All"
+                                        }
+                                        Text(
+                                            text = subtitle,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isCategoryActive) FilterSelectionBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (isCategoryActive) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(7.dp)
+                                                .background(FilterSelectionBlue, CircleShape)
+                                        )
+                                    }
+                                }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+                        }
+                    }
+
+                    // RIGHT COLUMN (Values for selected category)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .padding(12.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        when (draftCategory) {
+                            FlipkartFilterCategory.REPORT_TYPE -> {
+                                ReportType.values().forEach { rType ->
+                                    val isSelected = draftReportType == rType
+                                    Surface(
+                                        color = if (isSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                HapticHelper.vibrateTick(context)
+                                                draftReportType = rType
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    HapticHelper.vibrateTick(context)
+                                                    draftReportType = rType
+                                                },
+                                                colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = rType.displayName,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            FlipkartFilterCategory.DATE_RANGE -> {
+                                DateRangeFilter.values().forEach { dFilter ->
+                                    val isSelected = draftDateRange == dFilter
+                                    Surface(
+                                        color = if (isSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                HapticHelper.vibrateTick(context)
+                                                draftDateRange = dFilter
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    HapticHelper.vibrateTick(context)
+                                                    draftDateRange = dFilter
+                                                },
+                                                colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = dFilter.displayName,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (draftDateRange == DateRangeFilter.CUSTOM) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text("Custom Date Range", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                            OutlinedTextField(
+                                                value = draftCustomStart,
+                                                onValueChange = { draftCustomStart = it },
+                                                label = { Text("From (yyyy-MM-dd)") },
+                                                singleLine = true,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                            OutlinedTextField(
+                                                value = draftCustomEnd,
+                                                onValueChange = { draftCustomEnd = it },
+                                                label = { Text("To (yyyy-MM-dd)") },
+                                                singleLine = true,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            FlipkartFilterCategory.ACCOUNT -> {
+                                val isAllSelected = draftAccountId == null
+                                Surface(
+                                    color = if (isAllSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            HapticHelper.vibrateTick(context)
+                                            draftAccountId = null
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = isAllSelected,
+                                            onClick = {
+                                                HapticHelper.vibrateTick(context)
+                                                draftAccountId = null
+                                            },
+                                            colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "All Accounts",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isAllSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+
+                                accounts.forEach { acc ->
+                                    val isSelected = draftAccountId == acc.id
+                                    Surface(
+                                        color = if (isSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                HapticHelper.vibrateTick(context)
+                                                draftAccountId = acc.id
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    HapticHelper.vibrateTick(context)
+                                                    draftAccountId = acc.id
+                                                },
+                                                colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Column {
+                                                Text(
+                                                    text = acc.bankName,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (isSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                                )
+                                                if (acc.accountNumberMasked.isNotBlank()) {
+                                                    Text(
+                                                        text = acc.accountNumberMasked,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            FlipkartFilterCategory.CATEGORY -> {
+                                val isAllSelected = draftCategoryName == null
+                                Surface(
+                                    color = if (isAllSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            HapticHelper.vibrateTick(context)
+                                            draftCategoryName = null
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = isAllSelected,
+                                            onClick = {
+                                                HapticHelper.vibrateTick(context)
+                                                draftCategoryName = null
+                                            },
+                                            colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "All Categories",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isAllSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+
+                                categories.forEach { cat ->
+                                    val isSelected = draftCategoryName.equals(cat.name, ignoreCase = true)
+                                    Surface(
+                                        color = if (isSelected) FilterSelectionBlue.copy(alpha = 0.12f) else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                HapticHelper.vibrateTick(context)
+                                                draftCategoryName = cat.name
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    HapticHelper.vibrateTick(context)
+                                                    draftCategoryName = cat.name
+                                                },
+                                                colors = RadioButtonDefaults.colors(selectedColor = FilterSelectionBlue)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = cat.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) FilterSelectionBlue else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+
+                // Bottom Sticky Flipkart Action Bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            HapticHelper.vibrateTick(context)
+                            draftReportType = ReportType.OVERALL_SUMMARY
+                            draftDateRange = DateRangeFilter.ALL_TIME
+                            draftCustomStart = ""
+                            draftCustomEnd = ""
+                            draftAccountId = null
+                            draftCategoryName = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Clear All")
+                    }
+
+                    Button(
+                        onClick = {
+                            HapticHelper.vibrateSuccess(context)
+                            selectedReportType = draftReportType
+                            selectedDateRange = draftDateRange
+                            customStartDate = draftCustomStart
+                            customEndDate = draftCustomEnd
+                            selectedAccountId = draftAccountId
+                            selectedCategoryName = draftCategoryName
+                            showFlipkartFilterSheet = false
+                        },
+                        modifier = Modifier.weight(1.4f),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(
+                            text = if (draftActiveCount > 0) "Apply ($draftActiveCount)" else "Apply Filters",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+}
+private enum class FlipkartFilterCategory(val label: String) {
+    REPORT_TYPE("Report Type"),
+    DATE_RANGE("Date Range"),
+    ACCOUNT("Bank Account"),
+    CATEGORY("Category")
 }

@@ -79,8 +79,16 @@ class TransactionCoordinator(
             val credit = if (finalType == TransactionType.INCOME || finalType == TransactionType.REFUND) amount else 0.0
 
             val cleanAdvanceId = advanceId?.trim()?.takeIf { it.isNotBlank() }
-            val cashAcc = database.accountDao().getAllAccountsList().firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
-            val resolvedAccountId = cashAcc?.id ?: if (accountId > 0L) accountId else 1L
+            val allAccs = database.accountDao().getAllAccountsList()
+            val cashAcc = allAccs.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
+            val defaultAcc = allAccs.firstOrNull { it.isDefault } ?: allAccs.firstOrNull { it.accountType != com.example.data.local.entity.AccountType.CASH } ?: allAccs.firstOrNull()
+            val resolvedAccountId = if (accountId > 0L && allAccs.any { it.id == accountId }) {
+                accountId
+            } else {
+                defaultAcc?.id ?: cashAcc?.id ?: 1L
+            }
+            val isCash = cashAcc != null && resolvedAccountId == cashAcc.id
+            val source = if (isCash) "MANUAL_CASH" else "MANUAL"
 
             val tx = TransactionEntity(
                 accountId = resolvedAccountId,
@@ -92,7 +100,7 @@ class TransactionCoordinator(
                 transactionType = finalType,
                 categoryId = finalCatId,
                 categoryName = finalCatName,
-                source = "MANUAL_CASH",
+                source = source,
                 notes = notes,
                 advanceId = cleanAdvanceId,
                 isManual = true,

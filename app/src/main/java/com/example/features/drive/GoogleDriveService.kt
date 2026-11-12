@@ -19,6 +19,12 @@ sealed class DriveOperationResult<out T> {
     data class Error(val message: String, val code: String = "DRIVE_ERROR") : DriveOperationResult<Nothing>()
 }
 
+data class DriveBackupDetails(
+    val json: String,
+    val fileName: String,
+    val modifiedTime: String? = null
+)
+
 class GoogleDriveService(
     private val context: Context,
     private val tokenManager: SecureTokenManager
@@ -252,6 +258,71 @@ class GoogleDriveService(
     /**
      * Retrieves the content of the latest backup JSON from root Yosan-Backup folder or versions folder.
      */
+    fun formatDriveBackupFileName(userEmail: String? = null): String {
+        val email = userEmail?.takeIf { it.isNotBlank() } ?: tokenManager.getUserEmail() ?: "user"
+        val prefix = email.substringBefore("@").replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "user" }
+        val timePart = java.text.SimpleDateFormat("HH:mm;dd:MM", java.util.Locale.US).format(java.util.Date())
+        return "$prefix$timePart"
+    }
+
+    suspend fun getLatestBackupDetails(driveToken: String, userEmail: String? = null): DriveBackupDetails? = withContext(Dispatchers.IO) {
+        try {
+            val rootFolderId = getOrCreateRootFolder(driveToken) ?: return@withContext null
+            val manifestName = getBackupManifestFileName(userEmail)
+
+            // 1. Look for user-specific manifest in root
+            var query = "name = '$manifestName' and '$rootFolderId' in parents and trashed = false"
+            var listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+
+            // 2. Fallback to generic unpartitioned manifest
+            if ((!listRes.isSuccessful || listRes.body()?.files.isNullOrEmpty()) && manifestName != "detailsaboutbackup.json") {
+                query = "name = 'detailsaboutbackup.json' and '$rootFolderId' in parents and trashed = false"
+                listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+            }
+
+            // 3. Fallback to versions folder if root has no manifest
+            if (!listRes.isSuccessful || listRes.body()?.files.isNullOrEmpty()) {
+                val versionsFolderId = getOrCreateVersionsFolder(driveToken, rootFolderId)
+                if (versionsFolderId != null) {
+                    query = "'$versionsFolderId' in parents and mimeType = 'application/json' and trashed = false"
+                    listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+                }
+            }
+
+            // 4. Fallback to any JSON file in root containing 'backup'
+            if (!listRes.isSuccessful || listRes.body()?.files.isNullOrEmpty()) {
+                query = "'$rootFolderId' in parents and mimeType = 'application/json' and trashed = false"
+                listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+            }
+
+            if (listRes.isSuccessful && listRes.body()?.files?.isNotEmpty() == true) {
+                val files = listRes.body()!!.files
+                val file = files.sortedWith(
+                    compareByDescending<GoogleDriveFileDto> { it.name.startsWith("detailsaboutbackup") }
+                        .thenByDescending { it.createdTime ?: it.modifiedTime ?: "" }
+                ).firstOrNull() ?: files.first()
+                val json = downloadJsonFile(driveToken, file.id)
+                if (json != null) {
+                    var displayFileName = file.name
+                    try {
+                        val parsed = org.json.JSONObject(json)
+                        val storedName = parsed.optString("backup_file_name", "")
+                        if (storedName.isNotBlank()) {
+                            displayFileName = storedName
+                        }
+                    } catch (_: Exception) {}
+                    if (displayFileName.startsWith("detailsaboutbackup")) {
+                        displayFileName = formatDriveBackupFileName(userEmail)
+                    }
+                    return@withContext DriveBackupDetails(json = json, fileName = displayFileName, modifiedTime = file.modifiedTime ?: file.createdTime)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching latest backup details from Drive: ${e.message}", e)
+        }
+        null
+    }
+
     suspend fun getLatestBackupContent(driveToken: String, userEmail: String? = null): String? = withContext(Dispatchers.IO) {
         try {
             val rootFolderId = getOrCreateRootFolder(driveToken) ?: return@withContext null
@@ -348,11 +419,8 @@ class GoogleDriveService(
             val jsonStr = BackupEncryptionUtil.encrypt(rawJsonStr, encryptionKey)
 
             val userKey = AppDatabase.sanitizeUserKey(email)
-            val snapshotName = if (userKey.isBlank() || userKey == "guest") {
-                "backup-v%04d.json".format(java.util.Locale.US, nextVersion)
-            } else {
-                "backup-$userKey-v%04d.json".format(java.util.Locale.US, nextVersion)
-            }
+            val namedBackupId = formatDriveBackupFileName(email)
+            val snapshotName = "$namedBackupId.json"
             uploadJsonFile(driveToken, versionsFolderId, snapshotName, jsonStr)
 
             // Non-blocking prune of old version files (retaining up to 15 snapshots)

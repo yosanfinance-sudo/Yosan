@@ -20,7 +20,8 @@ class CompanyExpenseCoordinator(
     private val repository: FinanceRepository,
     private val scope: CoroutineScope,
     private val getCompanyExpensesUseCase: GetCompanyExpensesUseCase,
-    private val showMessage: (String) -> Unit
+    private val showMessage: (String) -> Unit,
+    private val appPreferences: com.example.utils.AppPreferences? = null
 ) {
     val companyExpenses: StateFlow<List<CompanyExpenseEntity>> = getCompanyExpensesUseCase()
         .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -37,11 +38,14 @@ class CompanyExpenseCoordinator(
                 val transactions = database.transactionDao().getAllTransactionsList()
                 val expenses = database.companyExpenseDao().getAllCompanyExpensesList()
 
+                val customKeyword = appPreferences?.officialExpenseKeyword?.ifBlank { "Company" } ?: "Company"
+
                 // Check for Reimbursements against outstanding company expenses
                 if (expenses.isNotEmpty()) {
                     val credits = transactions.filter {
                         (it.creditAmount > 0.0 || (it.amount > 0.0 && it.transactionType == TransactionType.INCOME)) &&
-                        (it.description.contains("company", ignoreCase = true) ||
+                        (it.description.contains(customKeyword, ignoreCase = true) ||
+                         it.description.contains("company", ignoreCase = true) ||
                          it.description.contains("reimbursement", ignoreCase = true) ||
                          it.description.contains("claim", ignoreCase = true))
                     }
@@ -68,6 +72,8 @@ class CompanyExpenseCoordinator(
                     (it.debitAmount > 0.0 || (it.amount > 0.0 && it.transactionType == TransactionType.EXPENSE)) &&
                     (it.categoryName.equals("Official Expense", ignoreCase = true) ||
                      it.categoryName.contains("official", ignoreCase = true) ||
+                     it.categoryName.contains(customKeyword, ignoreCase = true) ||
+                     it.description.contains(customKeyword, ignoreCase = true) ||
                      it.description.contains("official", ignoreCase = true) ||
                      it.description.contains("reimbursement", ignoreCase = true) ||
                      it.description.contains("corp claim", ignoreCase = true) ||
@@ -77,8 +83,7 @@ class CompanyExpenseCoordinator(
                 val unlogged = debits.filter { debit ->
                     val debitAmt = if (debit.debitAmount > 0.0) debit.debitAmount else debit.amount
                     !expenses.any {
-                        it.notes.contains("Statement #${debit.id}") ||
-                        (it.date == debit.transactionDate && Math.abs(it.amount - debitAmt) < 0.01 && (it.reason.equals(debit.description, ignoreCase = true) || it.notes.contains("Statement #${debit.id}")))
+                        it.date == debit.transactionDate && Math.abs(it.amount - debitAmt) < 0.01 && it.reason.equals(debit.description, ignoreCase = true)
                     }
                 }.map { debit ->
                     val debitAmt = if (debit.debitAmount > 0.0) debit.debitAmount else debit.amount
@@ -107,8 +112,7 @@ class CompanyExpenseCoordinator(
                 var loggedCount = 0
                 pending.forEach { prompt ->
                     val existingExp = currentExpenses.find {
-                        it.notes.contains("Statement #${prompt.transactionId}") ||
-                        (it.date == prompt.date && Math.abs(it.amount - prompt.amount) < 0.01 && it.reason.equals(prompt.description, ignoreCase = true))
+                        it.date == prompt.date && Math.abs(it.amount - prompt.amount) < 0.01 && it.reason.equals(prompt.description, ignoreCase = true)
                     }
                     if (existingExp == null) {
                         val expense = CompanyExpenseEntity(
@@ -118,7 +122,7 @@ class CompanyExpenseCoordinator(
                             companyName = "Corporate",
                             category = "Official Expense",
                             paymentMethod = "Corporate Card / UPI",
-                            notes = "Statement #${prompt.transactionId}"
+                            notes = ""
                         )
                         repository.insertCompanyExpense(expense)
                         loggedCount++
@@ -141,8 +145,7 @@ class CompanyExpenseCoordinator(
             try {
                 val currentExpenses = database.companyExpenseDao().getAllCompanyExpensesList()
                 val existingExp = currentExpenses.find {
-                    it.notes.contains("Statement #${prompt.transactionId}") ||
-                    (it.date == prompt.date && Math.abs(it.amount - prompt.amount) < 0.01 && it.reason.equals(prompt.description, ignoreCase = true))
+                    it.date == prompt.date && Math.abs(it.amount - prompt.amount) < 0.01 && it.reason.equals(prompt.description, ignoreCase = true)
                 }
                 if (existingExp == null) {
                     val tx = database.transactionDao().getTransactionById(prompt.transactionId)
@@ -154,7 +157,7 @@ class CompanyExpenseCoordinator(
                         companyName = "Corporate",
                         category = cat,
                         paymentMethod = "Corporate Card / UPI",
-                        notes = "Statement #${prompt.transactionId}"
+                        notes = ""
                     )
                     repository.insertCompanyExpense(expense)
                     showMessage("Official expense of ${prompt.amount} logged")
@@ -315,6 +318,78 @@ class CompanyExpenseCoordinator(
         scope.launch {
             repository.deleteCompanyExpense(id)
             showMessage("Company expense removed")
+        }
+    }
+
+    fun linkTransactionToReimbursement(txId: Long, expenseId: Long?) {
+        scope.launch {
+            try {
+                val tx = repository.getTransactionById(txId) ?: return@launch
+                val allExpenses = database.companyExpenseDao().getAllCompanyExpensesList()
+
+                // If this transaction was previously linked to another expense, unlink that expense
+                val previouslyLinkedExp = allExpenses.find {
+                    it.notes.contains("Statement #$txId") || it.notes.contains("#REIMB-TX-$txId") || tx.advanceId == "REIMB-${it.id}"
+                }
+                if (previouslyLinkedExp != null && previouslyLinkedExp.id != expenseId) {
+                    val cleanNotes = previouslyLinkedExp.notes
+                        .replace("#REIMB-TX-$txId", "")
+                        .replace("Statement #$txId", "")
+                        .trim()
+                    repository.updateCompanyExpense(
+                        previouslyLinkedExp.copy(
+                            isReimbursed = false,
+                            claimStatus = com.example.data.local.entity.ClaimStatus.PENDING,
+                            reimbursedAmount = 0.0,
+                            notes = cleanNotes,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+
+                if (expenseId != null) {
+                    val targetExp = allExpenses.find { it.id == expenseId }
+                    if (targetExp != null) {
+                        val cleanNotes = targetExp.notes.replace("#REIMB-TX-$txId", "").replace("Statement #$txId", "").trim()
+                        val newExpNotes = if (cleanNotes.isBlank()) "#REIMB-TX-$txId Statement #$txId" else "$cleanNotes #REIMB-TX-$txId Statement #$txId"
+                        val creditAmt = if (tx.creditAmount > 0) tx.creditAmount else tx.amount
+                        repository.updateCompanyExpense(
+                            targetExp.copy(
+                                isReimbursed = true,
+                                claimStatus = com.example.data.local.entity.ClaimStatus.APPROVED,
+                                approvedAmount = targetExp.approvedAmount ?: targetExp.amount,
+                                reimbursedAmount = creditAmt.coerceAtMost(targetExp.amount),
+                                notes = newExpNotes,
+                                updatedAt = System.currentTimeMillis()
+                            )
+                        )
+
+                        val cleanTxNotes = tx.notes.replace(Regex("""#REIMB[-_ ]*EXP[-_ ]*\d+""", RegexOption.IGNORE_CASE), "").trim()
+                        val newTxNotes = if (cleanTxNotes.isBlank()) "#REIMB-EXP-$expenseId" else "$cleanTxNotes #REIMB-EXP-$expenseId"
+                        repository.updateTransaction(
+                            tx.copy(
+                                advanceId = "REIMB-$expenseId",
+                                notes = newTxNotes,
+                                updatedAt = System.currentTimeMillis()
+                            )
+                        )
+                        showMessage("Linked to Claim #${targetExp.id} (${targetExp.reason})")
+                    }
+                } else {
+                    val cleanTxNotes = tx.notes.replace(Regex("""#REIMB[-_ ]*EXP[-_ ]*\d+""", RegexOption.IGNORE_CASE), "").trim()
+                    val newAdvanceId = if (tx.advanceId?.startsWith("REIMB", ignoreCase = true) == true) null else tx.advanceId
+                    repository.updateTransaction(
+                        tx.copy(
+                            advanceId = newAdvanceId,
+                            notes = cleanTxNotes,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                    showMessage("Reimbursement link removed")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("YosanDB", "Failed to link reimbursement", e)
+            }
         }
     }
 

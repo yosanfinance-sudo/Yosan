@@ -125,6 +125,10 @@ class AppPreferences(private val context: Context) {
         get() = prefs.getBoolean(KEY_EXTERNAL_INTENT_ACTIVE, false)
         set(value) = prefs.edit().putBoolean(KEY_EXTERNAL_INTENT_ACTIVE, value).apply()
 
+    var isProductTourCompleted: Boolean
+        get() = prefs.getBoolean(KEY_PRODUCT_TOUR_COMPLETED, false)
+        set(value) = prefs.edit().putBoolean(KEY_PRODUCT_TOUR_COMPLETED, value).apply()
+
     var isIntroNoteDismissed: Boolean
         get() = prefs.getBoolean(KEY_INTRO_NOTE_DISMISSED, false)
         set(value) = prefs.edit().putBoolean(KEY_INTRO_NOTE_DISMISSED, value).apply()
@@ -462,7 +466,102 @@ class AppPreferences(private val context: Context) {
         prefs.edit().clear().apply()
     }
 
+    var geminiApiKey: String
+        get() = prefs.getString(KEY_GEMINI_API_KEY, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_GEMINI_API_KEY, value.trim()).apply()
+
+    fun getGeminiApiKeyForUser(userEmail: String?): String {
+        val userKey = if (userEmail.isNullOrBlank() || userEmail.equals("guest", ignoreCase = true) || userEmail.equals("offline", ignoreCase = true)) {
+            "guest"
+        } else {
+            com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+        }
+        val perUser = prefs.getString("${KEY_GEMINI_API_KEY}_$userKey", "") ?: ""
+        return perUser.ifBlank { geminiApiKey }
+    }
+
+    fun setGeminiApiKeyForUser(userEmail: String?, key: String) {
+        val cleanKey = key.trim()
+        val userKey = if (userEmail.isNullOrBlank() || userEmail.equals("guest", ignoreCase = true) || userEmail.equals("offline", ignoreCase = true)) {
+            "guest"
+        } else {
+            com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+        }
+        prefs.edit().putString("${KEY_GEMINI_API_KEY}_$userKey", cleanKey).putString(KEY_GEMINI_API_KEY, cleanKey).apply()
+    }
+
+    var officialExpenseKeyword: String
+        get() = prefs.getString(KEY_OFFICIAL_EXPENSE_KEYWORD, "Company")?.ifBlank { "Company" } ?: "Company"
+        set(value) = prefs.edit().putString(KEY_OFFICIAL_EXPENSE_KEYWORD, value.trim().ifBlank { "Company" }).apply()
+
+    fun getOfficialExpenseKeywordForUser(userEmail: String?): String {
+        val userKey = if (userEmail.isNullOrBlank() || userEmail.equals("guest", ignoreCase = true) || userEmail.equals("offline", ignoreCase = true)) {
+            "guest"
+        } else {
+            com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+        }
+        val perUser = prefs.getString("${KEY_OFFICIAL_EXPENSE_KEYWORD}_$userKey", "") ?: ""
+        return perUser.ifBlank { officialExpenseKeyword }
+    }
+
+    fun setOfficialExpenseKeywordForUser(userEmail: String?, keyword: String) {
+        val clean = keyword.trim().ifBlank { "Company" }
+        val userKey = if (userEmail.isNullOrBlank() || userEmail.equals("guest", ignoreCase = true) || userEmail.equals("offline", ignoreCase = true)) {
+            "guest"
+        } else {
+            com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+        }
+        prefs.edit().putString("${KEY_OFFICIAL_EXPENSE_KEYWORD}_$userKey", clean).putString(KEY_OFFICIAL_EXPENSE_KEYWORD, clean).apply()
+    }
+
+    fun getOfficialExpenseCategoriesForUser(userEmail: String?): List<String> {
+        val userKey = if (userEmail.isNullOrBlank() || userEmail.equals("guest", ignoreCase = true) || userEmail.equals("offline", ignoreCase = true)) {
+            "guest"
+        } else {
+            com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+        }
+        val defaultCategories = listOf("Travel", "Food & Meals", "Lodging & Hotel", "Client Entertainment", "Office Supplies", "Fuel & Transport", "Miscellaneous")
+        val raw = prefs.getString("${KEY_OFFICIAL_EXPENSE_CATEGORIES}_$userKey", null)
+            ?: prefs.getString(KEY_OFFICIAL_EXPENSE_CATEGORIES, null)
+        if (raw.isNullOrBlank()) return defaultCategories
+        return try {
+            val arr = org.json.JSONArray(raw)
+            val list = mutableListOf<String>()
+            for (i in 0 until arr.length()) {
+                val cat = arr.optString(i, "").trim()
+                if (cat.isNotBlank() && !list.contains(cat)) list.add(cat)
+            }
+            if (list.isEmpty()) defaultCategories else list
+        } catch (_: Exception) {
+            defaultCategories
+        }
+    }
+
+    fun addOfficialExpenseCategoryForUser(userEmail: String?, category: String) {
+        val cleanCat = category.trim()
+        if (cleanCat.isBlank()) return
+        val current = getOfficialExpenseCategoriesForUser(userEmail).toMutableList()
+        if (!current.any { it.equals(cleanCat, ignoreCase = true) }) {
+            current.add(cleanCat)
+            val jsonArr = org.json.JSONArray(current)
+            val userKey = if (userEmail.isNullOrBlank() || userEmail.equals("guest", ignoreCase = true) || userEmail.equals("offline", ignoreCase = true)) {
+                "guest"
+            } else {
+                com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
+            }
+            prefs.edit()
+                .putString("${KEY_OFFICIAL_EXPENSE_CATEGORIES}_$userKey", jsonArr.toString())
+                .putString(KEY_OFFICIAL_EXPENSE_CATEGORIES, jsonArr.toString())
+                .apply()
+        }
+    }
+
+
     companion object {
+        private const val KEY_GEMINI_API_KEY = "gemini_api_key"
+        private const val KEY_OFFICIAL_EXPENSE_KEYWORD = "official_expense_keyword"
+        private const val KEY_OFFICIAL_EXPENSE_CATEGORIES = "official_expense_categories"
+
         private const val PREFS_NAME = "yosan_app_preferences"
         private const val KEY_ONBOARDING_COMPLETED = "is_onboarding_completed"
         private const val KEY_DARK_MODE = "is_dark_mode"
@@ -470,6 +569,7 @@ class AppPreferences(private val context: Context) {
         private const val KEY_BIOMETRIC_ENABLED = "is_biometric_enabled"
         private const val KEY_APP_LOCK_TIMEOUT_SECONDS = "app_lock_timeout_seconds"
         private const val KEY_EXTERNAL_INTENT_ACTIVE = "external_intent_active"
+        private const val KEY_PRODUCT_TOUR_COMPLETED = "is_product_tour_completed"
         private const val KEY_INTRO_NOTE_DISMISSED = "is_intro_note_dismissed"
         private const val KEY_WALKTHROUGH_COMPLETED = "is_walkthrough_completed"
         private const val KEY_AUTO_CHECK_UPDATES = "auto_check_updates_enabled"

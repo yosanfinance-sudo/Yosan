@@ -84,6 +84,7 @@ fun OnboardingScreen(
     var accountTypeSelected by remember { mutableStateOf("Savings") }
 
     var emailInput by remember { mutableStateOf(appPreferences.lastUserEmail) }
+    var officialExpenseKeywordInput by remember { mutableStateOf(appPreferences.officialExpenseKeyword.ifBlank { "Company" }) }
     val rememberedAccounts by authViewModel.rememberedAccounts.collectAsState()
     var accountToRemove by remember { mutableStateOf<com.example.utils.RememberedAccount?>(null) }
     var showSwitchAccountDialog by remember { mutableStateOf(false) }
@@ -122,46 +123,52 @@ fun OnboardingScreen(
         }
     }
 
-    val accountPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+    val googleSignInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
-            val selectedEmail = result.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME)
+            val googleAuthManager = GoogleAuthManager(context)
+            val claims = googleAuthManager.getSignedInAccountFromIntent(result.data)
+            val selectedEmail = claims?.email
+                ?: result.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME)
             if (!selectedEmail.isNullOrBlank()) {
                 val cleanEmail = selectedEmail.trim().lowercase()
                 val currentBank = appPreferences.lastBankName.ifBlank {
                     accounts.firstOrNull()?.bankName ?: "Indian Bank"
                 }
-                val realName = GoogleAuthManager.resolveDisplayName(context, cleanEmail)?.takeIf { it.isNotBlank() }
+                val realName = claims?.name?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) }
+                    ?: GoogleAuthManager.resolveDisplayName(context, cleanEmail)?.takeIf { it.isNotBlank() && !it.contains("@") }
                     ?: rememberedAccounts.firstOrNull { it.email.equals(cleanEmail, ignoreCase = true) }?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
                     ?: GoogleAuthManager.formatEmailAsReadableName(cleanEmail).ifBlank { "User" }
                 val autoName = realName
 
-
+                userName = autoName
+                emailInput = cleanEmail
+                officialExpenseKeywordInput = appPreferences.getOfficialExpenseKeywordForUser(cleanEmail).ifBlank { "Company" }
 
                 authViewModel.signInWithGoogleAccount(
                     email = cleanEmail,
                     name = autoName,
                     bankName = currentBank
-                ) { claims ->
-                    val resolvedName = claims.name.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) && !it.equals(claims.email.substringBefore("@"), ignoreCase = true) }
-                        ?: GoogleAuthManager.resolveDisplayName(context, claims.email)?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals(claims.email.substringBefore("@"), ignoreCase = true) }
-                        ?: GoogleAuthManager.formatEmailAsReadableName(claims.email).ifBlank { "User" }
+                ) { finalClaims ->
+                    val resolvedName = finalClaims.name.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) && !it.equals(finalClaims.email.substringBefore("@"), ignoreCase = true) }
+                        ?: GoogleAuthManager.resolveDisplayName(context, finalClaims.email)?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals(finalClaims.email.substringBefore("@"), ignoreCase = true) }
+                        ?: GoogleAuthManager.formatEmailAsReadableName(finalClaims.email).ifBlank { "User" }
                     userName = resolvedName
-                    emailInput = claims.email
+                    emailInput = finalClaims.email
                     financeViewModel.updateUserProfile(userName, currencySymbol)
                     val hasBankAccount = accounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
                     if (hasBankAccount) {
                         appPreferences.isLoggedOut = false
-                        appPreferences.setLoggedOutForUser(claims.email, false)
-                        appPreferences.setOnboardingCompletedForUser(claims.email, true)
+                        appPreferences.setLoggedOutForUser(finalClaims.email, false)
+                        appPreferences.setOnboardingCompletedForUser(finalClaims.email, true)
                         appPreferences.isOnboardingCompleted = true
                         authViewModel.completeOnboarding()
                         onComplete()
                     } else {
                         isCheckingBackup = true
                         authViewModel.checkDriveOrCloudBackup(
-                            email = claims.email,
+                            email = finalClaims.email,
                             onNeedsConsent = { intent ->
                                 isCheckingBackup = false
                                 driveConsentLauncher.launch(intent)
@@ -754,52 +761,15 @@ fun OnboardingScreen(
                                 Button(
                                     onClick = {
                                         HapticHelper.vibrateClick(context)
-                                        authViewModel.signInWithGoogle(
-                                            context = context,
-                                            onFallbackPicker = {
-                                                val googleAuthManager = GoogleAuthManager(context)
+                                        val googleAuthManager = GoogleAuthManager(context)
+                                        googleAuthManager.signOut {
+                                            try {
+                                                val signInIntent = googleAuthManager.getGoogleSignInIntent()
+                                                googleSignInLauncher.launch(signInIntent)
+                                            } catch (_: Exception) {
                                                 val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
                                                 if (pickerIntent != null) {
-                                                    try {
-                                                        accountPickerLauncher.launch(pickerIntent)
-                                                    } catch (_: Exception) {
-                                                        googleAuthManager.launchOAuth2Browser(context)
-                                                    }
-                                                } else {
-                                                    googleAuthManager.launchOAuth2Browser(context)
-                                                }
-                                            }
-                                        ) { claims ->
-                                            val resolvedName = claims.name.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) && !it.equals(claims.email.substringBefore("@"), ignoreCase = true) }
-                                                ?: GoogleAuthManager.resolveDisplayName(context, claims.email)?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals(claims.email.substringBefore("@"), ignoreCase = true) }
-                                                ?: GoogleAuthManager.formatEmailAsReadableName(claims.email).ifBlank { "User" }
-                                            userName = resolvedName
-                                            emailInput = claims.email
-                                            financeViewModel.updateUserProfile(userName, currencySymbol)
-                                            val hasBankAccount = accounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                                            if (hasBankAccount) {
-                                                appPreferences.isLoggedOut = false
-                                                appPreferences.setLoggedOutForUser(claims.email, false)
-                                                appPreferences.setOnboardingCompletedForUser(claims.email, true)
-                                                appPreferences.isOnboardingCompleted = true
-                                                authViewModel.completeOnboarding()
-                                                onComplete()
-                                            } else {
-                                                isCheckingBackup = true
-                                                authViewModel.checkDriveOrCloudBackup(
-                                                    email = claims.email,
-                                                    onNeedsConsent = { intent ->
-                                                        isCheckingBackup = false
-                                                        driveConsentLauncher.launch(intent)
-                                                    }
-                                                ) { hasBackup, backupResp ->
-                                                    isCheckingBackup = false
-                                                    if (hasBackup && backupResp != null) {
-                                                        foundBackupInfo = backupResp
-                                                        showBackupFoundDialog = true
-                                                    } else {
-                                                        step = 2
-                                                    }
+                                                    googleSignInLauncher.launch(pickerIntent)
                                                 }
                                             }
                                         }
@@ -946,15 +916,16 @@ fun OnboardingScreen(
                                                     Button(
                                                         onClick = {
                                                             val googleAuthManager = GoogleAuthManager(context)
-                                                            val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
-                                                            if (pickerIntent != null) {
+                                                            googleAuthManager.signOut {
                                                                 try {
-                                                                    accountPickerLauncher.launch(pickerIntent)
+                                                                    val signInIntent = googleAuthManager.getGoogleSignInIntent()
+                                                                    googleSignInLauncher.launch(signInIntent)
                                                                 } catch (_: Exception) {
-                                                                    googleAuthManager.launchOAuth2Browser(context)
+                                                                    val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
+                                                                    if (pickerIntent != null) {
+                                                                        googleSignInLauncher.launch(pickerIntent)
+                                                                    }
                                                                 }
-                                                            } else {
-                                                                googleAuthManager.launchOAuth2Browser(context)
                                                             }
                                                         },
                                                         modifier = Modifier.weight(1f),
@@ -1126,6 +1097,31 @@ fun OnboardingScreen(
                                         )
                                     }
                                 }
+
+                                Spacer(modifier = Modifier.height(14.dp))
+
+                                Text(
+                                    text = "Official Expense Keyword",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                OutlinedTextField(
+                                    value = officialExpenseKeywordInput,
+                                    onValueChange = { officialExpenseKeywordInput = it },
+                                    label = { Text("Official Expense Keyword *") },
+                                    placeholder = { Text("e.g. Company, Work, Office, Corp") },
+                                    supportingText = {
+                                        Text(
+                                            text = "Keyword assigned to identify official claimable expenses and reimbursements",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
 
                             3 -> {
@@ -1413,6 +1409,9 @@ fun OnboardingScreen(
                                     prefs.isOnboardingCompleted = true
                                     prefs.setOnboardingCompletedForUser(targetEmail, true)
                                     prefs.lastBankName = bank
+                                    val customKeyword = officialExpenseKeywordInput.trim().ifBlank { "Company" }
+                                    prefs.officialExpenseKeyword = customKeyword
+                                    prefs.setOfficialExpenseKeywordForUser(targetEmail, customKeyword)
                                     if (isOfflineModeSelected) {
                                         prefs.lastUserName = finalName
                                         prefs.lastUserEmail = "guest"
@@ -1699,14 +1698,23 @@ fun OnboardingScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            val backupName = backup.fileName?.ifBlank { null }
+                                ?: emailInput.takeIf { it.isNotBlank() }?.let { "${it.substringBefore("@")}_backup.json" }
+                                ?: "Cloud Backup"
                             Text(
-                                text = "📧 ${emailInput.ifBlank { authViewModel.user.value?.email ?: "your account" }}",
+                                text = "📁 Backup File: $backupName",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "📧 Account: ${emailInput.ifBlank { authViewModel.user.value?.email ?: "your account" }}",
                                 fontWeight = FontWeight.SemiBold,
                                 style = MaterialTheme.typography.bodySmall
                             )
                             backup.backupDate?.let { dateStr ->
                                 Text(
-                                    text = "📅 Last Backup: $dateStr",
+                                    text = "📅 Backup Time: $dateStr",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

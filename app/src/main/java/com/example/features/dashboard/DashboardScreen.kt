@@ -1,10 +1,19 @@
 package com.example.features.dashboard
 
+import com.example.features.walkthrough.SpotlightTourManager
+import com.example.features.walkthrough.SpotlightStep
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.text.style.TextOverflow
+import com.example.data.local.entity.AccountType
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -174,7 +183,11 @@ fun DashboardScreen(
 
                         IconButton(
                             onClick = onOpenAddSheet,
-                            modifier = Modifier.size(40.dp)
+                            modifier = Modifier
+                                .size(40.dp)
+                                .onGloballyPositioned { coords ->
+                                    SpotlightTourManager.targetBoundsMap[SpotlightStep.DASHBOARD_CASHFLOW] = coords.boundsInRoot()
+                                }
                         ) {
                             Icon(
                                 imageVector = Icons.Default.AddCircleOutline,
@@ -182,6 +195,168 @@ fun DashboardScreen(
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(24.dp)
                             )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Account-wise Balance Section (Positioned at the very top of Dashboard)
+        item(key = "account_wise_balance_section") {
+            val accountsList by viewModel.accounts.collectAsState()
+            val totalAccountsBalance = remember(accountsList) {
+                accountsList.sumOf { it.currentBalance }
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(20.dp)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                elevation = CardDefaults.cardElevation(defaultElevation = if (LocalFloatingEffectEnabled.current) 3.dp else 0.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccountBalance,
+                                        contentDescription = "Account Balances",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Account Balances",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "${accountsList.size} Accounts",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "Total Net Balance",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            PrivacyAmountText(
+                                amount = totalAccountsBalance,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (totalAccountsBalance >= 0) IncomeGreen else ExpenseRed,
+                                isRevealed = isRevealed,
+                                isPrivacyEnabled = privacyEnabled,
+                                onTap = { viewModel.revealAmountsTemporarily() }
+                            )
+                        }
+                    }
+
+                    if (accountsList.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(accountsList, key = { it.id }) { acc ->
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    shape = RoundedCornerShape(14.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                                    modifier = Modifier
+                                        .width(160.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .clickable {
+                                            com.example.utils.HapticHelper.vibrateClick(context)
+                                            viewModel.setAccountFilter(acc.id)
+                                            onNavigateToTransactions()
+                                        }
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Surface(
+                                                color = when (acc.accountType) {
+                                                    AccountType.CASH -> IncomeGreen.copy(alpha = 0.15f)
+                                                    AccountType.WALLET -> OutstandingAmber.copy(alpha = 0.15f)
+                                                    AccountType.CREDIT_CARD -> ExpenseRed.copy(alpha = 0.15f)
+                                                    else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                },
+                                                shape = RoundedCornerShape(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = acc.accountType.name,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 9.sp,
+                                                    color = when (acc.accountType) {
+                                                        AccountType.CASH -> IncomeGreen
+                                                        AccountType.WALLET -> OutstandingAmber
+                                                        AccountType.CREDIT_CARD -> ExpenseRed
+                                                        else -> MaterialTheme.colorScheme.primary
+                                                    },
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+
+                                            if (acc.accountNumberMasked.isNotBlank() && acc.accountNumberMasked != "••••") {
+                                                Text(
+                                                    text = acc.accountNumberMasked,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = acc.bankName.ifBlank { acc.accountName },
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        PrivacyAmountText(
+                                            amount = acc.currentBalance,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (acc.currentBalance >= 0) IncomeGreen else ExpenseRed,
+                                            isRevealed = isRevealed,
+                                            isPrivacyEnabled = privacyEnabled,
+                                            onTap = { viewModel.revealAmountsTemporarily() }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -227,6 +402,7 @@ fun DashboardScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
+
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
                                             com.example.utils.HapticHelper.vibrateClick(context)

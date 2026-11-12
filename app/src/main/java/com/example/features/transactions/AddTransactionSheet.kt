@@ -55,6 +55,11 @@ fun AddTransactionSheet(
     val advanceSummaries by viewModel.advanceSummaries.collectAsState()
     val activeLoans = remember(loans) { loans.filter { it.remainingAmount > 0 } }
 
+    val defaultAccount = remember(accounts) {
+        accounts.firstOrNull { it.isDefault }
+            ?: accounts.firstOrNull { it.accountType != com.example.data.local.entity.AccountType.CASH }
+            ?: accounts.firstOrNull()
+    }
     val handCashAccount = remember(accounts) {
         accounts.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
             ?: accounts.firstOrNull()
@@ -82,7 +87,7 @@ fun AddTransactionSheet(
             selectedCategory = categories.firstOrNull { it.id == draft.categoryId }
         }
     }
-    var selectedAccountId by remember { mutableStateOf(draft.selectedAccountId ?: handCashAccount?.id ?: 1L) }
+    var selectedAccountId by remember { mutableStateOf(draft.selectedAccountId ?: defaultAccount?.id ?: handCashAccount?.id ?: 1L) }
     var targetAccountId by remember { mutableStateOf(draft.targetAccountId ?: accounts.getOrNull(1)?.id ?: accounts.firstOrNull()?.id ?: 1L) }
     var notes by remember { mutableStateOf(draft.notes) }
     var advanceId by remember { mutableStateOf(draft.advanceId) }
@@ -134,13 +139,11 @@ fun AddTransactionSheet(
 
     LaunchedEffect(accounts, selectedTab) {
         if (accounts.isNotEmpty()) {
-            val defaultAccId = if (selectedTab == AddTab.TRANSFER) {
-                accounts.firstOrNull { it.accountType != com.example.data.local.entity.AccountType.CASH }?.id ?: accounts.first().id
-            } else {
-                handCashAccount?.id ?: accounts.first().id
-            }
-            if (selectedTab != AddTab.TRANSFER || accounts.none { it.id == selectedAccountId }) {
-                selectedAccountId = defaultAccId
+            val defaultAcc = accounts.firstOrNull { it.isDefault }
+                ?: accounts.firstOrNull { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                ?: accounts.first()
+            if (accounts.none { it.id == selectedAccountId }) {
+                selectedAccountId = defaultAcc.id
             }
             if (accounts.none { it.id == targetAccountId }) {
                 targetAccountId = accounts.getOrNull(1)?.id ?: accounts.first().id
@@ -839,7 +842,7 @@ fun AddTransactionSheet(
                         HapticHelper.vibrateError(context)
                         return@Button
                     }
-                    val manualAccId = handCashAccount?.id ?: selectedAccountId
+                    val manualAccId = selectedAccountId
                     when (selectedTab) {
                         AddTab.EXPENSE -> {
                             val cat = selectedCategory ?: categories.firstOrNull { it.type == com.example.data.local.entity.CategoryType.EXPENSE }

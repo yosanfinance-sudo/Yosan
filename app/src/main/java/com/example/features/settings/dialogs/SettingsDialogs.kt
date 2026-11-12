@@ -80,25 +80,31 @@ fun CustomizeDashboardDialog(
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    text = "Reorder cards using the arrows or toggle switches to customize your Dashboard.",
+                    text = "Drag the handle to reorder cards, or use switches to show/hide sections on your Dashboard.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(14.dp))
 
                 cards.forEachIndexed { index, item ->
+                    val isDragging = draggingIndex == index
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 4.dp)
+                            .scale(if (isDragging) 1.02f else 1.0f),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (item.isEnabled) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                            containerColor = when {
+                                isDragging -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                item.isEnabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                            }
                         ),
                         shape = RoundedCornerShape(14.dp),
                         border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (item.isEnabled) MaterialTheme.colorScheme.outlineVariant
+                            width = if (isDragging) 1.5.dp else 1.dp,
+                            color = if (isDragging) MaterialTheme.colorScheme.primary
+                            else if (item.isEnabled) MaterialTheme.colorScheme.outlineVariant
                             else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                         )
                     ) {
@@ -109,6 +115,66 @@ fun CustomizeDashboardDialog(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
+                            // Drag Handle to reorder directly
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .pointerInput(cards) {
+                                        detectDragGestures(
+                                            onDragStart = {
+                                                draggingIndex = index
+                                                dragAccumulator = 0f
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                dragAccumulator += dragAmount.y
+                                                val threshold = 65f
+                                                val curIdx = draggingIndex ?: return@detectDragGestures
+                                                if (dragAccumulator > threshold && curIdx < cards.size - 1) {
+                                                    val mutable = cards.toMutableList()
+                                                    val target = curIdx + 1
+                                                    val temp = mutable[curIdx]
+                                                    mutable[curIdx] = mutable[target]
+                                                    mutable[target] = temp
+                                                    cards = mutable
+                                                    draggingIndex = target
+                                                    dragAccumulator = 0f
+                                                    onSave(DashboardCardConfigManager.serialize(mutable))
+                                                } else if (dragAccumulator < -threshold && curIdx > 0) {
+                                                    val mutable = cards.toMutableList()
+                                                    val target = curIdx - 1
+                                                    val temp = mutable[curIdx]
+                                                    mutable[curIdx] = mutable[target]
+                                                    mutable[target] = temp
+                                                    cards = mutable
+                                                    draggingIndex = target
+                                                    dragAccumulator = 0f
+                                                    onSave(DashboardCardConfigManager.serialize(mutable))
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                draggingIndex = null
+                                                dragAccumulator = 0f
+                                            },
+                                            onDragCancel = {
+                                                draggingIndex = null
+                                                dragAccumulator = 0f
+                                            }
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DragHandle,
+                                    contentDescription = "Drag to reorder",
+                                    tint = if (isDragging) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(6.dp))
+
                             // Card Title & Icon
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -151,66 +217,17 @@ fun CustomizeDashboardDialog(
 
                             Spacer(modifier = Modifier.width(6.dp))
 
-                            // Up/Down reorder controls
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(
-                                    onClick = {
-                                        if (index > 0) {
-                                            val mutable = cards.toMutableList()
-                                            val temp = mutable[index]
-                                            mutable[index] = mutable[index - 1]
-                                            mutable[index - 1] = temp
-                                            cards = mutable
-                                            onSave(DashboardCardConfigManager.serialize(mutable))
-                                        }
-                                    },
-                                    enabled = index > 0,
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.KeyboardArrowUp,
-                                        contentDescription = "Move Up",
-                                        tint = if (index > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = {
-                                        if (index < cards.size - 1) {
-                                            val mutable = cards.toMutableList()
-                                            val temp = mutable[index]
-                                            mutable[index] = mutable[index + 1]
-                                            mutable[index + 1] = temp
-                                            cards = mutable
-                                            onSave(DashboardCardConfigManager.serialize(mutable))
-                                        }
-                                    },
-                                    enabled = index < cards.size - 1,
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.KeyboardArrowDown,
-                                        contentDescription = "Move Down",
-                                        tint = if (index < cards.size - 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(4.dp))
-
-                                // Toggle Switch
-                                Switch(
-                                    checked = item.isEnabled,
-                                    onCheckedChange = { checked ->
-                                        val newList = cards.toMutableList()
-                                        newList[index] = item.copy(isEnabled = checked)
-                                        cards = newList
-                                        onSave(DashboardCardConfigManager.serialize(newList))
-                                    },
-                                    modifier = Modifier.scale(0.8f)
-                                )
-                            }
+                            // Toggle Switch
+                            Switch(
+                                checked = item.isEnabled,
+                                onCheckedChange = { checked ->
+                                    val newList = cards.toMutableList()
+                                    newList[index] = item.copy(isEnabled = checked)
+                                    cards = newList
+                                    onSave(DashboardCardConfigManager.serialize(newList))
+                                },
+                                modifier = Modifier.scale(0.8f)
+                            )
                         }
                     }
                 }
