@@ -363,23 +363,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         AppDatabase.setActiveUserKey(email)
 
                         val prefs = com.example.utils.AppPreferences(app)
-                        var activeAccounts = database.accountDao().getAllAccountsList()
-                        if (activeAccounts.isEmpty()) {
-                            try {
-                                val driveAuth = GoogleDriveAuthManager(app)
-                                val tokenRes = driveAuth.fetchAccessTokenForEmail(email)
-                                if (tokenRes is DriveAuthTokenResult.Success) {
-                                    tokenManager.saveDriveTokens(tokenRes.token, driveEmail = email)
-                                    val restoreRes = driveService.restoreLatestFromDrive(database, email)
-                                    if (restoreRes is DriveOperationResult.Success) {
-                                        Log.i(TAG, "Cross-device auto-restored Google Drive data on login for $email")
-                                        activeAccounts = database.accountDao().getAllAccountsList()
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Drive auto-restore on login note: ${e.message}")
-                            }
-                        }
+                        val userDb = com.example.data.local.AppDatabase.getDatabaseForUser(app, email)
+                        var activeAccounts = userDb.accountDao().getAllAccountsList()
 
                         val primaryBank = activeAccounts.firstOrNull { it.isDefault }?.bankName
                             ?: activeAccounts.firstOrNull()?.bankName
@@ -398,11 +383,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         prefs.isLoggedOut = false
 
                         // Update Room profile
-                        val existing = authRepository.getProfileOnce()
+                        val existing = userDb.userProfileDao().getUserProfileOnce()
                         val hasBankAccount = activeAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                        val isReturningUser = (existing?.isOnboardingCompleted == true) ||
-                            prefs.isOnboardingCompletedForUser(email) ||
-                            hasBankAccount
+                        val isReturningUser = hasBankAccount && (
+                            (existing?.isOnboardingCompleted == true) ||
+                            prefs.isOnboardingCompletedForUser(email)
+                        )
 
                         val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
                             googleSub = sub,
@@ -611,7 +597,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     ?: prefs.getRememberedAccounts().firstOrNull { it.email.equals(cleanEmail, ignoreCase = true) }?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
                     ?: GoogleAuthManager.formatEmailAsReadableName(cleanEmail).ifBlank { "User" }
                 val sub = "google_${cleanEmail.replace("@", "_").replace(".", "_")}"
-                val existingAccounts = database.accountDao().getAllAccountsList()
+                val userDb = com.example.data.local.AppDatabase.getDatabaseForUser(app, cleanEmail)
+                val existingAccounts = userDb.accountDao().getAllAccountsList()
                 val primaryBank = bankName?.ifBlank { null }
                     ?: existingAccounts.firstOrNull { it.isDefault }?.bankName
                     ?: existingAccounts.firstOrNull()?.bankName
@@ -651,11 +638,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 prefs.saveRememberedAccount(remembered)
                 prefs.isLoggedOut = false
 
-                val existing = authRepository.getProfileOnce()
+                val existing = userDb.userProfileDao().getUserProfileOnce()
                 val hasBankAccount = existingAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                val isReturningUser = (existing?.isOnboardingCompleted == true) ||
-                    prefs.isOnboardingCompletedForUser(cleanEmail) ||
-                    hasBankAccount
+                val isReturningUser = hasBankAccount && (
+                    (existing?.isOnboardingCompleted == true) ||
+                    prefs.isOnboardingCompletedForUser(cleanEmail)
+                )
                 prefs.isOnboardingCompleted = isReturningUser
                 prefs.setOnboardingCompletedForUser(cleanEmail, isReturningUser)
 
@@ -1185,7 +1173,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val driveAuth = GoogleDriveAuthManager(app)
                 when (val res = driveAuth.fetchAccessTokenForEmail(email)) {
                     is DriveAuthTokenResult.Success -> {
-                        tokenManager.saveDriveTokens(res.token, driveEmail = email)
                         val backupDetails = driveService.getLatestBackupDetails(res.token, email)
                         if (backupDetails != null && backupDetails.json.isNotBlank()) {
                             val jsonObj = org.json.JSONObject(backupDetails.json)
@@ -1975,14 +1962,16 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     onComplete?.invoke()
                 }
                 return@launch
-            } else {
                 AppDatabase.setActiveUserKey("guest")
                 prefs.isLoggedOut = true
                 prefs.isOfflineMode = false
+                prefs.isOnboardingCompleted = false
+                prefs.lastBankName = ""
                 _user.value = null
                 _isNewUser.value = true
                 _isEmailVerified.value = false
                 _authState.value = AuthState.Unauthenticated
+                _driveStatus.value = DriveStatusResponse(isConnected = false)
                 _isLoading.value = false
                 onComplete?.invoke()
             }

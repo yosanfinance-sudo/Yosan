@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">Yosan</string>
+    <string name="widget_quick_cash_title">Log Hand Cash</string>
+    <string name="widget_quick_cash_desc">Quickly log cash expenses via voice or typing with instant confirmation</string>
+    <string name="widget_quick_cash_hint">Tap to type or speak</string>
+    <string name="widget_quick_cash_type_desc">Type cash expense</string>
+    <string name="widget_quick_cash_voice_desc">Speak cash expense</string>
 </resources>

@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <queries>
         <intent>
@@ -90,6 +91,33 @@
         <receiver
             android:name=".features.updater.UpdateAlarmReceiver"
             android:exported="false" />
+
+        <!-- Hand Cash Quick Log Widget -->
+        <receiver
+            android:name=".widget.QuickCashWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_quick_cash_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quick_cash_widget_info" />
+        </receiver>
+
+        <!-- Quick Cash Voice & Text Interactive Dialog Activity -->
+        <activity
+            android:name=".widget.QuickCashEntryActivity"
+            android:exported="true"
+            android:theme="@style/Theme.QuickCashDialog"
+            android:windowSoftInputMode="adjustResize"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="com.example.action.QUICK_CASH_TEXT" />
+                <action android:name="com.example.action.QUICK_CASH_VOICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
     </application>
 
 </manifest>

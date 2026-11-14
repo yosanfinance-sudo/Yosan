@@ -101,10 +101,9 @@ fun ImportStatementScreen(
     LaunchedEffect(previewResult?.detectedBank) {
         val bank = previewResult?.detectedBank
         if (bank != null && bank != SupportedBank.UNKNOWN) {
-            viewModel.ensureAccountForBank(bank.displayName) { createdId ->
-                if (selectedAccountId == null) {
-                    selectedAccountId = createdId
-                }
+            val existing = accounts.firstOrNull { it.bankName.equals(bank.displayName, ignoreCase = true) }
+            if (existing != null && selectedAccountId == null) {
+                selectedAccountId = existing.id
             }
         }
     }
@@ -663,9 +662,8 @@ fun ImportStatementScreen(
                                                 onClick = {
                                                     HapticHelper.vibrateClick(context)
                                                     viewModel.setManualBankOverride(bankEnum)
-                                                    viewModel.ensureAccountForBank(bankLabel) { createdId ->
-                                                        selectedAccountId = createdId
-                                                    }
+                                                    val matched = accounts.firstOrNull { it.bankName.equals(bankLabel, ignoreCase = true) }
+                                                    selectedAccountId = matched?.id
                                                 },
                                                 label = { Text(bankLabel) },
                                                 leadingIcon = if (isSelected) {
@@ -699,25 +697,31 @@ fun ImportStatementScreen(
 
                             Button(
                                 onClick = {
-                                    val defaultBankAccountId = accounts.firstOrNull { it.isDefault && it.accountType != com.example.data.local.entity.AccountType.CASH }?.id
-                                        ?: accounts.firstOrNull { it.accountType != com.example.data.local.entity.AccountType.CASH }?.id
-                                        ?: accounts.firstOrNull()?.id
-                                        ?: 1L
-                                    val accountId = selectedAccountId ?: defaultBankAccountId
-                                    viewModel.confirmImport(
-                                        skipDuplicates = skipDuplicates,
-                                        targetAccountId = accountId,
-                                        onComplete = onImportSuccess
-                                    )
+                                    val currentBankLabel = preview.detectedBank.displayName
+                                    if (selectedAccountId != null) {
+                                        viewModel.confirmImport(
+                                            skipDuplicates = skipDuplicates,
+                                            targetAccountId = selectedAccountId!!,
+                                            onComplete = onImportSuccess
+                                        )
+                                    } else {
+                                        viewModel.ensureAccountForBank(currentBankLabel) { newAccId ->
+                                            viewModel.confirmImport(
+                                                skipDuplicates = skipDuplicates,
+                                                targetAccountId = newAccId,
+                                                onComplete = onImportSuccess
+                                            )
+                                        }
+                                    }
                                 },
                                 enabled = !isImporting && preview.validRows.isNotEmpty(),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(48.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = IncomeGreen)
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                             ) {
                                 if (isImporting) {
-                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp))
+                                    CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
                                 } else {
                                     Icon(Icons.Default.Check, contentDescription = null)
                                     Spacer(modifier = Modifier.width(8.dp))

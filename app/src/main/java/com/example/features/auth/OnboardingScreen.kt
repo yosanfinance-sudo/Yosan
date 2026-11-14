@@ -16,8 +16,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -34,7 +36,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entity.AccountEntity
 import com.example.data.local.entity.AccountType
-import com.example.ui.theme.IncomeGreen
 import com.example.ui.theme.LendingIndigo
 import com.example.features.auth.AuthViewModel
 import com.example.features.transactions.FinanceViewModel
@@ -61,6 +62,7 @@ fun OnboardingScreen(
     initialStep: Int = 1
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
     val appPreferences = remember { com.example.utils.AppPreferences(context) }
     val accounts by financeViewModel.accounts.collectAsState()
@@ -84,6 +86,7 @@ fun OnboardingScreen(
     var accountTypeSelected by remember { mutableStateOf("Savings") }
 
     var emailInput by remember { mutableStateOf(appPreferences.lastUserEmail) }
+    var emailError by remember { mutableStateOf<String?>(null) }
     var officialExpenseKeywordInput by remember { mutableStateOf(appPreferences.officialExpenseKeyword.ifBlank { "Company" }) }
     val rememberedAccounts by authViewModel.rememberedAccounts.collectAsState()
     var accountToRemove by remember { mutableStateOf<com.example.utils.RememberedAccount?>(null) }
@@ -123,66 +126,88 @@ fun OnboardingScreen(
         }
     }
 
+    val handleSelectedEmail: (String, String?) -> Unit = { rawEmail, explicitName ->
+        val cleanEmail = rawEmail.trim().lowercase()
+        if (cleanEmail.isNotBlank()) {
+            val currentBank = appPreferences.lastBankName.ifBlank {
+                accounts.firstOrNull()?.bankName ?: "Indian Bank"
+            }
+            val realName = explicitName?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) }
+                ?: GoogleAuthManager.resolveDisplayName(context, cleanEmail)?.takeIf { it.isNotBlank() && !it.contains("@") }
+                ?: rememberedAccounts.firstOrNull { it.email.equals(cleanEmail, ignoreCase = true) }?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
+                ?: GoogleAuthManager.formatEmailAsReadableName(cleanEmail).ifBlank { "User" }
+            val autoName = realName
+
+            userName = autoName
+            emailInput = cleanEmail
+            officialExpenseKeywordInput = appPreferences.getOfficialExpenseKeywordForUser(cleanEmail).ifBlank { "Company" }
+
+            authViewModel.signInWithGoogleAccount(
+                email = cleanEmail,
+                name = autoName,
+                bankName = currentBank
+            ) { finalClaims ->
+                val resolvedName = finalClaims.name.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) && !it.equals(finalClaims.email.substringBefore("@"), ignoreCase = true) }
+                    ?: GoogleAuthManager.resolveDisplayName(context, finalClaims.email)?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals(finalClaims.email.substringBefore("@"), ignoreCase = true) }
+                    ?: GoogleAuthManager.formatEmailAsReadableName(finalClaims.email).ifBlank { "User" }
+                userName = resolvedName
+                emailInput = finalClaims.email
+                financeViewModel.updateUserProfile(userName, currencySymbol)
+                coroutineScope.launch(Dispatchers.IO) {
+                    val userDb = com.example.data.local.AppDatabase.getDatabaseForUser(context, finalClaims.email)
+                    val dbAccounts = userDb.accountDao().getAllAccountsList()
+                    val hasBankAccount = dbAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                    val isCompleted = hasBankAccount && appPreferences.isOnboardingCompletedForUser(finalClaims.email)
+                    withContext(Dispatchers.Main) {
+                        if (isCompleted) {
+                            appPreferences.isLoggedOut = false
+                            appPreferences.setLoggedOutForUser(finalClaims.email, false)
+                            appPreferences.setOnboardingCompletedForUser(finalClaims.email, true)
+                            appPreferences.isOnboardingCompleted = true
+                            authViewModel.completeOnboarding()
+                            onComplete()
+                        } else {
+                            // Deleted account or first time user: prompt bank selection
+                            step = 2
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val systemAccountPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val selectedEmail = result.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME)
+        if (result.resultCode == android.app.Activity.RESULT_OK && !selectedEmail.isNullOrBlank()) {
+            handleSelectedEmail(selectedEmail, null)
+        }
+    }
+
     val googleSignInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        var emailHandled = false
         if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
             val googleAuthManager = GoogleAuthManager(context)
             val claims = googleAuthManager.getSignedInAccountFromIntent(result.data)
             val selectedEmail = claims?.email
                 ?: result.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME)
             if (!selectedEmail.isNullOrBlank()) {
-                val cleanEmail = selectedEmail.trim().lowercase()
-                val currentBank = appPreferences.lastBankName.ifBlank {
-                    accounts.firstOrNull()?.bankName ?: "Indian Bank"
-                }
-                val realName = claims?.name?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) }
-                    ?: GoogleAuthManager.resolveDisplayName(context, cleanEmail)?.takeIf { it.isNotBlank() && !it.contains("@") }
-                    ?: rememberedAccounts.firstOrNull { it.email.equals(cleanEmail, ignoreCase = true) }?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
-                    ?: GoogleAuthManager.formatEmailAsReadableName(cleanEmail).ifBlank { "User" }
-                val autoName = realName
-
-                userName = autoName
-                emailInput = cleanEmail
-                officialExpenseKeywordInput = appPreferences.getOfficialExpenseKeywordForUser(cleanEmail).ifBlank { "Company" }
-
-                authViewModel.signInWithGoogleAccount(
-                    email = cleanEmail,
-                    name = autoName,
-                    bankName = currentBank
-                ) { finalClaims ->
-                    val resolvedName = finalClaims.name.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) && !it.equals(finalClaims.email.substringBefore("@"), ignoreCase = true) }
-                        ?: GoogleAuthManager.resolveDisplayName(context, finalClaims.email)?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals(finalClaims.email.substringBefore("@"), ignoreCase = true) }
-                        ?: GoogleAuthManager.formatEmailAsReadableName(finalClaims.email).ifBlank { "User" }
-                    userName = resolvedName
-                    emailInput = finalClaims.email
-                    financeViewModel.updateUserProfile(userName, currencySymbol)
-                    val hasBankAccount = accounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                    if (hasBankAccount) {
-                        appPreferences.isLoggedOut = false
-                        appPreferences.setLoggedOutForUser(finalClaims.email, false)
-                        appPreferences.setOnboardingCompletedForUser(finalClaims.email, true)
-                        appPreferences.isOnboardingCompleted = true
-                        authViewModel.completeOnboarding()
-                        onComplete()
-                    } else {
-                        isCheckingBackup = true
-                        authViewModel.checkDriveOrCloudBackup(
-                            email = finalClaims.email,
-                            onNeedsConsent = { intent ->
-                                isCheckingBackup = false
-                                driveConsentLauncher.launch(intent)
-                            }
-                        ) { hasBackup, backupResp ->
-                            isCheckingBackup = false
-                            if (hasBackup && backupResp != null) {
-                                foundBackupInfo = backupResp
-                                showBackupFoundDialog = true
-                            } else {
-                                step = 2
-                            }
-                        }
-                    }
+                emailHandled = true
+                handleSelectedEmail(selectedEmail, claims?.name)
+            }
+        }
+        if (!emailHandled) {
+            // Fall back cleanly to Android system account chooser so developer console SHA-1 issue never blocks login
+            val googleAuthManager = GoogleAuthManager(context)
+            val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
+            if (pickerIntent != null) {
+                try {
+                    systemAccountPickerLauncher.launch(pickerIntent)
+                } catch (e: Exception) {
+                    android.util.Log.e("Onboarding", "Picker fallback error: ${e.message}")
                 }
             }
         }
@@ -343,7 +368,7 @@ fun OnboardingScreen(
                                                 Icon(
                                                     imageVector = Icons.Default.CheckCircle,
                                                     contentDescription = null,
-                                                    tint = IncomeGreen,
+                                                    tint = MaterialTheme.colorScheme.primary,
                                                     modifier = Modifier.size(16.dp).padding(top = 2.dp)
                                                 )
                                                 Spacer(modifier = Modifier.width(8.dp))
@@ -810,6 +835,133 @@ fun OnboardingScreen(
 
                                 Spacer(modifier = Modifier.height(14.dp))
 
+                                // Divider OR ENTER EMAIL
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.weight(1f),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                    )
+                                    Text(
+                                        text = "OR ENTER GOOGLE EMAIL",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 10.dp)
+                                    )
+                                    HorizontalDivider(
+                                        modifier = Modifier.weight(1f),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                val validateAndEnterWithEmail: () -> Unit = {
+                                    val cleanEmail = emailInput.trim().lowercase()
+                                    if (cleanEmail.isBlank()) {
+                                        emailError = "Please enter your Google email address"
+                                    } else if (!android.util.Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
+                                        emailError = "Please enter a valid email format (e.g. name@gmail.com)"
+                                    } else {
+                                        emailError = null
+                                        HapticHelper.vibrateClick(context)
+                                        handleSelectedEmail(cleanEmail, null)
+                                    }
+                                }
+
+                                OutlinedTextField(
+                                    value = emailInput,
+                                    onValueChange = {
+                                        emailInput = it
+                                        emailError = null
+                                    },
+                                    label = { Text("Google Account / Email") },
+                                    placeholder = { Text("e.g. yourname@gmail.com") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Email,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    },
+                                    trailingIcon = {
+                                        if (emailInput.isNotBlank()) {
+                                            IconButton(onClick = { emailInput = ""; emailError = null }) {
+                                                Icon(Icons.Default.Clear, contentDescription = "Clear input")
+                                            }
+                                        }
+                                    },
+                                    isError = emailError != null,
+                                    supportingText = {
+                                        emailError?.let {
+                                            Text(
+                                                text = it,
+                                                color = MaterialTheme.colorScheme.error,
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                    },
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
+                                        imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(
+                                        onDone = {
+                                            focusManager.clearFocus()
+                                            validateAndEnterWithEmail()
+                                        }
+                                    ),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Button(
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        validateAndEnterWithEmail()
+                                    },
+                                    enabled = !authLoading && emailInput.trim().isNotBlank(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    if (authLoading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(20.dp),
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Signing In...",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "Enter with Email",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(14.dp))
+
                                 // Divider OR
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -916,23 +1068,16 @@ fun OnboardingScreen(
                                                     Button(
                                                         onClick = {
                                                             val googleAuthManager = GoogleAuthManager(context)
-                                                            googleAuthManager.signOut {
-                                                                try {
-                                                                    val signInIntent = googleAuthManager.getGoogleSignInIntent()
-                                                                    googleSignInLauncher.launch(signInIntent)
-                                                                } catch (_: Exception) {
-                                                                    val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
-                                                                    if (pickerIntent != null) {
-                                                                        googleSignInLauncher.launch(pickerIntent)
-                                                                    }
-                                                                }
+                                                            val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
+                                                            if (pickerIntent != null) {
+                                                                systemAccountPickerLauncher.launch(pickerIntent)
                                                             }
                                                         },
                                                         modifier = Modifier.weight(1f),
                                                         shape = RoundedCornerShape(8.dp),
-                                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                                                     ) {
-                                                        Text("Select Account", style = MaterialTheme.typography.labelMedium)
+                                                        Text("Choose Account", style = MaterialTheme.typography.labelMedium)
                                                     }
                                                     OutlinedButton(
                                                         onClick = {
@@ -1321,7 +1466,7 @@ fun OnboardingScreen(
                                 Icon(
                                     imageVector = Icons.Default.CheckCircle,
                                     contentDescription = null,
-                                    tint = IncomeGreen,
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(64.dp)
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
@@ -1660,7 +1805,7 @@ fun OnboardingScreen(
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(
-                        color = IncomeGreen.copy(alpha = 0.15f),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                         shape = CircleShape,
                         modifier = Modifier.size(38.dp)
                     ) {
@@ -1668,7 +1813,7 @@ fun OnboardingScreen(
                             Icon(
                                 imageVector = Icons.Default.CloudDone,
                                 contentDescription = null,
-                                tint = IncomeGreen,
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
@@ -1771,7 +1916,7 @@ fun OnboardingScreen(
                         }
                     },
                     enabled = !isRestoringFromBackup,
-                    colors = ButtonDefaults.buttonColors(containerColor = IncomeGreen),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     if (isRestoringFromBackup) {

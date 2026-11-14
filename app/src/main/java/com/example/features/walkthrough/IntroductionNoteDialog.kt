@@ -21,7 +21,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.example.ui.theme.IncomeGreen
 import com.example.ui.theme.LendingIndigo
 
 @Composable
@@ -149,7 +148,7 @@ fun IntroductionNoteDialog(
                                     Icon(
                                         imageVector = Icons.Default.CheckCircle,
                                         contentDescription = null,
-                                        tint = IncomeGreen,
+                                        tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(16.dp).padding(top = 2.dp)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))

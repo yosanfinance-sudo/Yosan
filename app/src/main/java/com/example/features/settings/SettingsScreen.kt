@@ -640,7 +640,10 @@ fun SettingsScreen(
                 val appPrefs = remember { com.example.utils.AppPreferences(context) }
                 val currentEmail = userProfile?.email ?: authUser?.email ?: appPrefs.lastUserEmail
                 val currentGeminiKey = appPrefs.getGeminiApiKeyForUser(currentEmail).ifBlank { appPrefs.geminiApiKey }
-                AppleSettingsGroup(title = "Google Gemini AI") {
+                AppleSettingsGroup(
+                    title = "Google Gemini AI",
+                    footer = "Used for natural language financial queries, smart categorization, and chat assistance."
+                ) {
                     AppleSettingsRow(
                         title = "Gemini API Key",
                         subtitle = if (currentGeminiKey.isNotBlank()) "Configured • AI Financial Assistant is active" else "Not configured • Tap to enter your Google Gemini API key",
@@ -650,6 +653,7 @@ fun SettingsScreen(
                         onClick = { showGeminiConfigDialog = true }
                     )
                 }
+                Spacer(modifier = Modifier.height(10.dp))
             }
 
             item {
@@ -796,7 +800,7 @@ fun SettingsScreen(
                         title = "Google Drive Cloud Backup",
                         subtitle = if (isDriveConnected) "Synced with $connectedDriveEmail" else "Connect Google Drive for automated sync",
                         icon = if (isDriveConnected) Icons.Default.CloudDone else Icons.Default.CloudSync,
-                        iconBgColor = IncomeGreen,
+                        iconBgColor = MaterialTheme.colorScheme.primary,
                         valueText = if (isDriveConnected) "Connected" else "Not Connected",
                         onClick = {
                             driveMismatchError = null
@@ -2260,7 +2264,7 @@ fun SettingsScreen(
                     Icon(
                         imageVector = if (isConnected) Icons.Default.CloudDone else Icons.Default.Cloud,
                         contentDescription = null,
-                        tint = if (isConnected) IncomeGreen else MaterialTheme.colorScheme.primary,
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
@@ -2279,7 +2283,7 @@ fun SettingsScreen(
                 ) {
                     if (isConnected) {
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = IncomeGreen.copy(alpha = 0.1f)),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -2289,7 +2293,7 @@ fun SettingsScreen(
                                     text = "Current Version: v${String.format(Locale.getDefault(), "%04d", currentVer)} (detailsaboutbackup.json)",
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = IncomeGreen
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
@@ -2326,7 +2330,7 @@ fun SettingsScreen(
                             },
                             enabled = !isDriveBackingUp && !isDriveRestoring,
                             shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = IncomeGreen),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             if (isDriveBackingUp) {
@@ -3388,12 +3392,14 @@ fun SettingsScreen(
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text(
                         text = "Enter your Google Gemini API key to activate the AI Financial Advisor. Your key is stored securely on your device.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 20.sp
                     )
+                    Spacer(modifier = Modifier.height(2.dp))
                     OutlinedTextField(
                         value = keyInput,
                         onValueChange = { keyInput = it },
@@ -3490,13 +3496,14 @@ fun SettingsScreen(
 @Composable
 fun AppleSettingsGroup(
     title: String? = null,
+    footer: String? = null,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
         if (!title.isNullOrBlank()) {
             Text(
@@ -3505,7 +3512,7 @@ fun AppleSettingsGroup(
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 letterSpacing = 0.8.sp,
-                modifier = Modifier.padding(start = 12.dp, bottom = 6.dp)
+                modifier = Modifier.padding(start = 12.dp, bottom = 8.dp)
             )
         }
         Card(
@@ -3521,6 +3528,17 @@ fun AppleSettingsGroup(
             Column(modifier = Modifier.fillMaxWidth()) {
                 content()
             }
+        }
+        if (!footer.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = footer,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                modifier = Modifier.padding(horizontal = 12.dp)
+            )
         }
     }
 }
@@ -3541,7 +3559,7 @@ fun AppleSettingsRow(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Surface(
@@ -3569,12 +3587,13 @@ fun AppleSettingsRow(
                 color = MaterialTheme.colorScheme.onSurface
             )
             if (!subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.5.sp,
-                    lineHeight = 14.sp
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                    fontSize = 12.sp,
+                    lineHeight = 16.5.sp
                 )
             }
         }

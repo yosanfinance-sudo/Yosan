@@ -316,7 +316,7 @@ fun ExcelSyncScreen(
                             enabled = !isSyncing,
                             modifier = Modifier.weight(1.2f),
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = IncomeGreen)
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                         ) {
                             Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
@@ -729,7 +729,7 @@ fun ConflictResolutionCard(
                         onClick = onKeepExcel,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = IncomeGreen),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         contentPadding = PaddingValues(vertical = 4.dp)
                     ) {
                         Text("Keep Excel", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)

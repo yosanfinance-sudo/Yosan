@@ -50,8 +50,12 @@ import com.example.features.walkthrough.SpotlightTourManager
 import com.example.features.walkthrough.SpotlightTourOverlay
 import com.example.features.walkthrough.SpotlightStep
 import com.example.features.walkthrough.UserWalkthroughDialog
-import com.example.utils.AppPreferences
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import com.example.utils.AppPreferences
 import kotlinx.coroutines.launch
 
 enum class MainTab(
@@ -60,7 +64,7 @@ enum class MainTab(
     val selectedIcon: ImageVector,
     val testTag: String
 ) {
-    DASHBOARD("Dashboard", Icons.Outlined.Dashboard, Icons.Default.Dashboard, "tab_dashboard"),
+    DASHBOARD("Home", Icons.Outlined.Home, Icons.Default.Home, "tab_dashboard"),
     TRANSACTIONS("Statement", Icons.Outlined.ReceiptLong, Icons.Default.ReceiptLong, "tab_transactions"),
     REPORTS("Reports", Icons.Outlined.Assessment, Icons.Default.Assessment, "tab_reports"),
     SETTINGS("Settings", Icons.Outlined.Settings, Icons.Default.Settings, "tab_settings")
@@ -246,42 +250,76 @@ fun MainContainerScreen(
         },
         bottomBar = {
             if (currentSubScreen == SubScreen.NONE) {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    tonalElevation = 0.dp
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(start = 20.dp, end = 20.dp, bottom = 12.dp, top = 2.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    MainTab.values().forEach { tab ->
-                        val isSelected = currentTab == tab
-                        NavigationBarItem(
-                            selected = isSelected,
-                            onClick = {
-                                com.example.utils.HapticHelper.vibrateTick(context)
-                                currentTab = tab
-                            },
-                            icon = {
-                                Icon(
-                                    imageVector = if (isSelected) tab.selectedIcon else tab.icon,
-                                    contentDescription = tab.title,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            },
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(64.dp),
+                        shape = RoundedCornerShape(32.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                        border = BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)
+                        ),
+                        shadowElevation = 8.dp,
+                        tonalElevation = 2.dp
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            MainTab.values().forEach { tab ->
+                                val isSelected = currentTab == tab
+                                val activeColor = MaterialTheme.colorScheme.primary
+                                val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                val itemColor = if (isSelected) activeColor else inactiveColor
 
-                            label = {
-                                Text(
-                                    text = tab.title,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    fontSize = 11.sp
-                                )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
-                                selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                selectedTextColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            modifier = Modifier.testTag(tab.testTag)
-                        )
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) {
+                                            com.example.utils.HapticHelper.vibrateTick(context)
+                                            currentTab = tab
+                                        }
+                                        .testTag(tab.testTag),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isSelected) tab.selectedIcon else tab.icon,
+                                            contentDescription = tab.title,
+                                            tint = itemColor,
+                                            modifier = Modifier.size(23.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = tab.title,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                            fontSize = 11.sp,
+                                            color = itemColor
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

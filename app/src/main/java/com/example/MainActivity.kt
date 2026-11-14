@@ -15,7 +15,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.screens.MainContainerScreen
 import com.example.ui.screens.GPayLockScreen
-import com.example.ui.screens.LaunchAnimationScreen
 import com.example.features.auth.OnboardingScreen
 import com.example.ui.theme.FinanceManagerTheme
 import com.example.features.auth.AuthViewModel
@@ -25,6 +24,7 @@ import com.example.features.transactions.FinanceViewModel
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import com.example.ui.screens.LaunchAnimationScreen
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.utils.AppPreferences
 import com.example.data.remote.ApiClient
@@ -320,8 +320,8 @@ class MainActivity : FragmentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val hasBankAccount = userAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                    val isUserOnboardingDone = appPreferences.isOnboardingCompletedForUser(currentEmail) ||
-                        userProfile?.isOnboardingCompleted == true ||
+                    val isUserOnboardingDone = appPreferences.isOnboardingCompletedForUser(currentEmail) &&
+                        (userProfile?.isOnboardingCompleted == true || hasBankAccount) &&
                         hasBankAccount
 
                     val targetScreen = when {

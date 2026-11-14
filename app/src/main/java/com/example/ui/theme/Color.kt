@@ -2,19 +2,24 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Apple-Grade Minimalist Primary Brand (Monochrome Titanium Polish & Punchy Mint)
-val PurplePrimary = Color(0xFFF2F4F8)
+// Apple-Grade Minimalist Primary Brand (Cobalt & Royal Blue Polish)
+val CobaltBlue = Color(0xFF0A84FF)          // Apple System Blue / Electric Cobalt
+val CobaltBluePrimary = Color(0xFF007AFF)   // Vibrant Royal Blue
+val CobaltBlueDark = Color(0xFF0056B3)
+val CobaltContainerDark = Color(0xFF14243B) // Deep Navy Slate
+val CobaltContainerLight = Color(0xFFEBF5FF)// Crisp Airy Blue Surface
+val PurplePrimary = CobaltBlue
 val PurpleLight = Color(0xFFFFFFFF)
 val PurpleDark = Color(0xFF0A0C10)
-val PurpleContainer = Color(0xFF1E222D)
-val EmeraldPrimary = Color(0xFF00E676) // Punchy Vibrant Mint Green
+val PurpleContainer = CobaltContainerDark
+val EmeraldPrimary = CobaltBlue // Replaced with Cobalt Blue for overall theme
 val PunchyMint = Color(0xFF00E676)
 val PunchyRed = Color(0xFFFF3B30)
 val PunchyAmber = Color(0xFFFF9F0A)
 
 // Financial Semantic Colors (Apple HIG Refined Palette)
-val IncomeGreen = Color(0xFF00E676)       // Punchy Mint
-val ExpenseRed = Color(0xFFFF3B30)        // Punchy Apple Coral Rose
+val IncomeGreen = Color(0xFF00E676)       // Financial Credit/Inflow Green
+val ExpenseRed = Color(0xFFFF3B30)        // Financial Debit/Expense Coral Red
 val LendingIndigo = Color(0xFFAF52DE)     // Apple Purple
 val OutstandingAmber = Color(0xFFFF9F0A)  // Apple Amber
 val CompanySky = Color(0xFF64D2FF)        // Apple Cyan
