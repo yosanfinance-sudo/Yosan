@@ -15,6 +15,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.screens.MainContainerScreen
 import com.example.ui.screens.GPayLockScreen
+import com.example.ui.screens.LaunchAnimationScreen
 import com.example.features.auth.OnboardingScreen
 import com.example.ui.theme.FinanceManagerTheme
 import com.example.features.auth.AuthViewModel
@@ -24,10 +25,12 @@ import com.example.features.transactions.FinanceViewModel
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.utils.AppPreferences
 import com.example.data.remote.ApiClient
 
 private enum class RootScreenState {
+    SPLASH,
     LOCKED,
     MAIN,
     ONBOARDING_STEP_2,
@@ -93,6 +96,9 @@ class MainActivity : FragmentActivity() {
             val userAccounts by financeViewModel.accounts.collectAsState()
 
             val isBiometricEnabled = userProfile?.isBiometricEnabled ?: appPreferences.isBiometricEnabledForUser(currentEmail)
+
+            // Cold-start launch animation state
+            var isSplashActive by rememberSaveable { mutableStateOf(true) }
 
             // GPay-Style Security Gatekeeper state
             var isAppLocked by remember { mutableStateOf(appPreferences.isBiometricEnabledForUser(currentEmail)) }
@@ -225,9 +231,9 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
-            // Automatically challenge user with biometric prompt when app is in locked state (unless PIN mode was selected)
-            LaunchedEffect(isAppLocked, isBiometricEnabled, isAuthenticated, isPinUnlockPreferred) {
-                if (isAppLocked && isBiometricEnabled && isAuthenticated && !isAuthenticatingScreenLock && !isPinUnlockPreferred) {
+            // Automatically challenge user with biometric prompt when app is in locked state (unless PIN mode was selected or splash is active)
+            LaunchedEffect(isAppLocked, isBiometricEnabled, isAuthenticated, isPinUnlockPreferred, isSplashActive) {
+                if (!isSplashActive && isAppLocked && isBiometricEnabled && isAuthenticated && !isAuthenticatingScreenLock && !isPinUnlockPreferred) {
                     kotlinx.coroutines.delay(100)
                     triggerBiometricUnlock()
                 }
@@ -319,6 +325,7 @@ class MainActivity : FragmentActivity() {
                         hasBankAccount
 
                     val targetScreen = when {
+                        isSplashActive -> RootScreenState.SPLASH
                         isAppLocked && isBiometricEnabled && isAuthenticated -> RootScreenState.LOCKED
                         isAuthenticated && isUserOnboardingDone -> RootScreenState.MAIN
                         isAuthenticated && !isUserOnboardingDone -> RootScreenState.ONBOARDING_STEP_2
@@ -338,6 +345,13 @@ class MainActivity : FragmentActivity() {
                         label = "RootScreenTransition"
                     ) { screenState ->
                         when (screenState) {
+                            RootScreenState.SPLASH -> {
+                                LaunchAnimationScreen(
+                                    onAnimationFinished = {
+                                        isSplashActive = false
+                                    }
+                                )
+                            }
                             RootScreenState.LOCKED -> {
                                 GPayLockScreen(
                                     userName = userProfile?.name ?: "User",
