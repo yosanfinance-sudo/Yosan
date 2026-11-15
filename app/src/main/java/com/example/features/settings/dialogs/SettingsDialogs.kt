@@ -577,21 +577,6 @@ fun CategoryManagementDialog(
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
-                                            if (cat.isSystem) {
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Surface(
-                                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                                    shape = RoundedCornerShape(4.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "System",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                                        fontSize = 10.sp
-                                                    )
-                                                }
-                                            }
                                         }
                                         Text(
                                             text = "${cat.type.name} • $txCount transactions",
@@ -615,22 +600,19 @@ fun CategoryManagementDialog(
                                     }
                                     IconButton(
                                         onClick = {
-                                            if (!cat.isSystem) {
-                                                if (txCount > 0) {
-                                                    categoryToDeleteWithReassign = cat
-                                                } else {
-                                                    onDeleteCategory(cat.id)
-                                                }
+                                            if (txCount > 0) {
+                                                categoryToDeleteWithReassign = cat
+                                            } else {
+                                                onDeleteCategory(cat.id)
                                             }
                                         },
-                                        enabled = !cat.isSystem,
                                         modifier = Modifier.size(32.dp)
                                     ) {
                                         Icon(
                                             Icons.Default.DeleteOutline,
                                             contentDescription = "Delete Category",
                                             modifier = Modifier.size(16.dp),
-                                            tint = if (cat.isSystem) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.error
+                                            tint = MaterialTheme.colorScheme.error
                                         )
                                     }
                                 }

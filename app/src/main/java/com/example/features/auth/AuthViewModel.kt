@@ -577,6 +577,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         email: String,
         name: String? = null,
         bankName: String? = null,
+        markOnboardingCompleted: Boolean = true,
         onComplete: ((GoogleClaims) -> Unit)? = null
     ) {
         viewModelScope.launch {
@@ -588,10 +589,17 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     _errorMessage.value = "Please enter a valid Google Account email."
                     return@launch
                 }
-                // Switch database partition for this Google account
-                AppDatabase.setActiveUserKey(cleanEmail)
                 val app = getApplication<Application>()
                 val prefs = com.example.utils.AppPreferences(app)
+
+                // Preserve existing session but clear active session slot when switching accounts
+                val currentEmail = tokenManager.getUserEmail()?.trim()?.lowercase()
+                if (!currentEmail.isNullOrBlank() && !currentEmail.equals(cleanEmail, ignoreCase = true)) {
+                    tokenManager.clearActiveSession(preserveSavedSession = true)
+                }
+
+                // Switch database partition for this Google account
+                AppDatabase.setActiveUserKey(cleanEmail)
                 val resolvedName = name?.trim()?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) }
                     ?: GoogleAuthManager.resolveDisplayName(app, cleanEmail)?.takeIf { it.isNotBlank() }
                     ?: prefs.getRememberedAccounts().firstOrNull { it.email.equals(cleanEmail, ignoreCase = true) }?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
@@ -636,35 +644,47 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     sessionToken = sessionToken
                 )
                 prefs.saveRememberedAccount(remembered)
-                prefs.isLoggedOut = false
+                if (markOnboardingCompleted) {
+                    prefs.isLoggedOut = false
+                }
 
                 val existing = userDb.userProfileDao().getUserProfileOnce()
-                val hasBankAccount = existingAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                val isReturningUser = hasBankAccount && (
-                    (existing?.isOnboardingCompleted == true) ||
-                    prefs.isOnboardingCompletedForUser(cleanEmail)
-                )
-                prefs.isOnboardingCompleted = isReturningUser
-                prefs.setOnboardingCompletedForUser(cleanEmail, isReturningUser)
+                if (existingAccounts.isEmpty()) {
+                    val defaultCash = com.example.data.local.entity.AccountEntity(
+                        accountName = "Cash in Hand",
+                        bankName = "Hand Cash",
+                        accountNumberMasked = "CASH-001",
+                        accountType = com.example.data.local.entity.AccountType.CASH,
+                        openingBalance = 0.0,
+                        currentBalance = 0.0,
+                        isDefault = true
+                    )
+                    userDb.accountDao().insertAccount(defaultCash)
+                }
+
+                if (markOnboardingCompleted) {
+                    prefs.isOnboardingCompleted = true
+                    prefs.setOnboardingCompletedForUser(cleanEmail, true)
+                }
 
                 val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
                     googleSub = sub,
                     name = resolvedName,
                     email = cleanEmail,
                     emailVerified = true,
-                    isOnboardingCompleted = isReturningUser,
+                    isOnboardingCompleted = if (markOnboardingCompleted) true else (existing?.isOnboardingCompleted ?: false),
                     updatedAt = System.currentTimeMillis()
                 )
                 authRepository.updateProfile(updatedProfile)
-                if (isReturningUser) {
+                if (markOnboardingCompleted) {
                     withContext(Dispatchers.IO) {
-                        database.userProfileDao().updateOnboardingCompleted(true)
+                        userDb.userProfileDao().updateOnboardingCompleted(true)
                     }
                 }
 
                 syncManager.loadInitialStatus()
                 _user.value = buildLocalUser(updatedProfile)
-                _authState.value = AuthState.Authenticated(isNewUser = !isReturningUser)
+                _authState.value = AuthState.Authenticated(isNewUser = !markOnboardingCompleted)
 
                 val claims = GoogleClaims(
                     sub = sub,
@@ -1040,9 +1060,23 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     fun getBackupHistory(onResult: (Boolean, List<DriveBackupVersionDto>, String?) -> Unit) {
         viewModelScope.launch {
             try {
+                // 1. Direct Google Drive version listing
+                val driveToken = driveService.getValidDriveToken() ?: tokenManager.getDriveAccessToken()
+                if (!driveToken.isNullOrBlank()) {
+                    val targetEmail = tokenManager.getDriveEmail() ?: tokenManager.getUserEmail() ?: _user.value?.email
+                    val driveBackups = withContext(Dispatchers.IO) {
+                        driveService.listAllDriveBackups(driveToken, targetEmail)
+                    }
+                    if (driveBackups.isNotEmpty()) {
+                        onResult(true, driveBackups, null)
+                        return@launch
+                    }
+                }
+
+                // 2. Fallback to API if Drive token not found or returns empty
                 val api = ApiClient.getAuthApi(getApplication())
                 val response = api.getBackupHistory()
-                if (response.isSuccessful && response.body() != null) {
+                if (response.isSuccessful && response.body() != null && response.body()!!.backups.isNotEmpty()) {
                     onResult(true, response.body()!!.backups, null)
                 } else {
                     val versionStr = database.syncDao().getMetadataValue("current_backup_version")
@@ -1070,32 +1104,63 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun restoreBackupVersion(version: Int, onResult: (Boolean, String?) -> Unit) {
+    fun restoreBackupVersion(version: Int? = null, fileId: String? = null, onResult: (Boolean, String?) -> Unit) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val api = ApiClient.getAuthApi(getApplication())
-                val response = api.getBackupVersion(version)
-                if (response.isSuccessful && response.body() != null && response.body()!!.backupJson.isNotBlank()) {
-                    val jsonStr = response.body()!!.backupJson
-                    val restoreResult = withContext(Dispatchers.IO) {
-                        BackupService.restoreBackupJson(jsonStr, database, clearExisting = true)
+                val targetEmail = tokenManager.getDriveEmail() ?: tokenManager.getUserEmail() ?: _user.value?.email
+                val driveToken = driveService.getValidDriveToken() ?: tokenManager.getDriveAccessToken()
+
+                // If fileId is provided and Drive is connected, restore directly from Drive!
+                if (!fileId.isNullOrBlank() && !driveToken.isNullOrBlank()) {
+                    val driveRes = driveService.restoreFileFromDrive(database, fileId, targetEmail)
+                    when (driveRes) {
+                        is DriveOperationResult.Success -> {
+                            version?.let { v ->
+                                database.syncDao().setMetadata(
+                                    com.example.data.local.entity.SyncMetadataEntity(
+                                        key = "current_backup_version",
+                                        value = v.toString(),
+                                        updatedAt = System.currentTimeMillis()
+                                    )
+                                )
+                            }
+                            onResult(true, driveRes.message)
+                            return@launch
+                        }
+                        is DriveOperationResult.Error -> {
+                            Log.w(TAG, "Direct Drive restore error: ${driveRes.message}")
+                        }
                     }
-                    if (restoreResult.success) {
-                        database.syncDao().setMetadata(
-                            com.example.data.local.entity.SyncMetadataEntity(
-                                key = "current_backup_version",
-                                value = version.toString(),
-                                updatedAt = System.currentTimeMillis()
-                            )
-                        )
-                        onResult(true, "Restored snapshot v$version successfully! ${restoreResult.message}")
-                    } else {
-                        onResult(false, restoreResult.message)
-                    }
-                } else {
-                    onResult(false, "Could not download snapshot for version $version")
                 }
+
+                // If version is provided, try backend route
+                if (version != null) {
+                    val api = ApiClient.getAuthApi(getApplication())
+                    val response = api.getBackupVersion(version)
+                    if (response.isSuccessful && response.body() != null && response.body()!!.backupJson.isNotBlank()) {
+                        val jsonStr = response.body()!!.backupJson
+                        val restoreResult = withContext(Dispatchers.IO) {
+                            BackupService.restoreBackupJson(jsonStr, database, clearExisting = true)
+                        }
+                        if (restoreResult.success) {
+                            database.syncDao().setMetadata(
+                                com.example.data.local.entity.SyncMetadataEntity(
+                                    key = "current_backup_version",
+                                    value = version.toString(),
+                                    updatedAt = System.currentTimeMillis()
+                                )
+                            )
+                            onResult(true, "Restored snapshot v$version successfully! ${restoreResult.message}")
+                            return@launch
+                        } else {
+                            onResult(false, restoreResult.message)
+                            return@launch
+                        }
+                    }
+                }
+
+                onResult(false, "Could not restore the selected backup from Google Drive.")
             } catch (e: Exception) {
                 onResult(false, e.localizedMessage ?: "Failed to restore version snapshot")
             } finally {
@@ -1559,12 +1624,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val app = getApplication<Application>()
                 val prefs = com.example.utils.AppPreferences(app)
 
-                // 1. Close current database partition cleanly before switching
-                val currentEmail = tokenManager.getUserEmail()?.trim()?.lowercase()
-                if (!currentEmail.isNullOrBlank() && !currentEmail.equals(cleanEmail, ignoreCase = true)) {
-                    AppDatabase.closeDatabaseForUser(app, currentEmail)
-                }
-
                 if (isTargetOffline) {
                     tokenManager.clearActiveSession(preserveSavedSession = true)
                     _driveStatus.value = DriveStatusResponse(isConnected = false)
@@ -1572,14 +1631,27 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                     val guestDb = AppDatabase.getDatabaseForUser(app, viewModelScope, "guest")
                     val guestProfile = guestDb.userProfileDao().getUserProfileOnce()
-                    val guestAccounts = guestDb.accountDao().getAllAccountsList()
+                    var guestAccounts = guestDb.accountDao().getAllAccountsList()
+                    if (guestAccounts.isEmpty()) {
+                        val defaultCash = com.example.data.local.entity.AccountEntity(
+                            accountName = "Cash in Hand",
+                            bankName = "Hand Cash",
+                            accountNumberMasked = "CASH-001",
+                            accountType = com.example.data.local.entity.AccountType.CASH,
+                            openingBalance = 0.0,
+                            currentBalance = 0.0,
+                            isDefault = true
+                        )
+                        guestDb.accountDao().insertAccount(defaultCash)
+                        guestAccounts = listOf(defaultCash)
+                    }
 
                     val resolvedName = guestProfile?.name?.ifBlank { null }
                         ?: prefs.lastUserName.takeIf { prefs.isOfflineMode && it.isNotBlank() }
                         ?: "Offline User"
                     val primaryBank = guestAccounts.firstOrNull { it.isDefault }?.bankName
                         ?: guestAccounts.firstOrNull()?.bankName
-                        ?: prefs.lastBankName.ifBlank { "Indian Bank" }
+                        ?: prefs.lastBankName.ifBlank { "Hand Cash" }
 
                     val isGuestConfigured = prefs.isOnboardingCompletedForUser("guest") ||
                         guestProfile?.isOnboardingCompleted == true ||
@@ -1652,7 +1724,20 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 // 4. Load target user's isolated profile
                 val userDb = AppDatabase.getDatabaseForUser(app, viewModelScope, cleanEmail)
                 val targetProfile = userDb.userProfileDao().getUserProfileOnce()
-                val targetAccounts = userDb.accountDao().getAllAccountsList()
+                var targetAccounts = userDb.accountDao().getAllAccountsList()
+                if (targetAccounts.isEmpty()) {
+                    val defaultCash = com.example.data.local.entity.AccountEntity(
+                        accountName = "Cash in Hand",
+                        bankName = "Hand Cash",
+                        accountNumberMasked = "CASH-001",
+                        accountType = com.example.data.local.entity.AccountType.CASH,
+                        openingBalance = 0.0,
+                        currentBalance = 0.0,
+                        isDefault = true
+                    )
+                    userDb.accountDao().insertAccount(defaultCash)
+                    targetAccounts = listOf(defaultCash)
+                }
 
                 val resolvedName = tokenManager.getUserName()
                     ?: targetProfile?.name
@@ -1685,7 +1770,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 val primaryBank = targetAccounts.firstOrNull { it.isDefault }?.bankName
                     ?: targetAccounts.firstOrNull()?.bankName
-                    ?: "Indian Bank"
+                    ?: "Hand Cash"
                 prefs.lastBankName = primaryBank
                 prefs.isOnboardingCompleted = activeProfile.isOnboardingCompleted
                 prefs.setOnboardingCompletedForUser(cleanEmail, activeProfile.isOnboardingCompleted)
@@ -1741,10 +1826,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val app = getApplication<Application>()
                 val prefs = com.example.utils.AppPreferences(app)
 
-                // Close active user's database cleanly
                 val currentEmail = tokenManager.getUserEmail()?.trim()?.lowercase()
                 if (!currentEmail.isNullOrBlank()) {
-                    AppDatabase.closeDatabaseForUser(app, currentEmail)
                     prefs.setLoggedOutForUser(currentEmail, true)
                 }
 
@@ -1755,6 +1838,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 AppDatabase.setActiveUserKey("guest")
                 prefs.isLoggedOut = true
                 prefs.isOfflineMode = false
+                prefs.lastUserName = ""
+                prefs.lastUserEmail = ""
+                prefs.lastUserProfilePic = ""
+                prefs.lastGoogleSub = ""
+                prefs.lastBankName = ""
 
                 _user.value = null
                 _isNewUser.value = true

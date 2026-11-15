@@ -158,9 +158,16 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                         accountType = com.example.data.local.entity.AccountType.CASH,
                         openingBalance = 0.0,
                         currentBalance = 0.0,
-                        isDefault = false
+                        isDefault = true
                     )
                     database.accountDao().insertAccount(cashAccount)
+                }
+
+                // If only cash exists or no account is default, ensure Cash is marked default
+                val updatedAccs = database.accountDao().getAllAccountsList()
+                if (updatedAccs.isNotEmpty() && updatedAccs.none { it.isDefault }) {
+                    val defaultAcc = updatedAccs.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH } ?: updatedAccs.first()
+                    database.accountDao().updateAccount(defaultAcc.copy(isDefault = true))
                 }
             } catch (e: Exception) { android.util.Log.w("YosanDB", "Operation non-fatal failure", e) }
         }

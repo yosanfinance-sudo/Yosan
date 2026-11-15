@@ -222,9 +222,6 @@ class GoogleAuthManager(private val context: Context) {
             .requestProfile()
             .build()
         val client = GoogleSignIn.getClient(context, gso)
-        try {
-            client.signOut()
-        } catch (_: Exception) {}
         return client.signInIntent
     }
 

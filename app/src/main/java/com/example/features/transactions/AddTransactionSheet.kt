@@ -1,5 +1,11 @@
 package com.example.features.transactions
 
+import android.content.Intent
+import android.speech.RecognizerIntent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -33,6 +39,7 @@ import com.example.features.transactions.FinanceViewModel
 import com.example.utils.CurrencyFormatter
 import com.example.utils.DateUtils
 import com.example.utils.HapticHelper
+import com.example.widget.QuickCashParser
 import androidx.compose.ui.platform.LocalContext
 
 enum class AddTab {
@@ -57,7 +64,7 @@ fun AddTransactionSheet(
 
     val defaultAccount = remember(accounts) {
         accounts.firstOrNull { it.isDefault }
-            ?: accounts.firstOrNull { it.accountType != com.example.data.local.entity.AccountType.CASH }
+            ?: accounts.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
             ?: accounts.firstOrNull()
     }
     val handCashAccount = remember(accounts) {
@@ -85,6 +92,47 @@ fun AddTransactionSheet(
     LaunchedEffect(categories, draft.categoryId) {
         if (selectedCategory == null && draft.categoryId != null) {
             selectedCategory = categories.firstOrNull { it.id == draft.categoryId }
+        }
+    }
+
+    var rawVoiceInput by remember { mutableStateOf("") }
+
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spokenText = matches?.firstOrNull()?.trim().orEmpty()
+            if (spokenText.isNotBlank()) {
+                rawVoiceInput = spokenText
+                val parsed = QuickCashParser.parse(spokenText)
+                if (parsed.amount > 0.0) {
+                    amountText = if (parsed.amount % 1.0 == 0.0) {
+                        parsed.amount.toLong().toString()
+                    } else {
+                        String.format(java.util.Locale.getDefault(), "%.2f", parsed.amount)
+                    }
+                }
+                if (parsed.note.isNotBlank()) {
+                    description = parsed.note
+                }
+                val matched = QuickCashParser.matchCategory(parsed.suggestedCategoryName, categories)
+                if (matched != null) {
+                    selectedCategory = matched
+                }
+            }
+        }
+    }
+
+    val launchVoiceRecognition: () -> Unit = {
+        val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Say expense, e.g. 50 rupees for coffee")
+        }
+        try {
+            speechLauncher.launch(speechIntent)
+        } catch (_: Exception) {
+            Toast.makeText(context, "Voice recognition unavailable", Toast.LENGTH_SHORT).show()
         }
     }
     var selectedAccountId by remember { mutableStateOf(draft.selectedAccountId ?: defaultAccount?.id ?: handCashAccount?.id ?: 1L) }
@@ -140,7 +188,7 @@ fun AddTransactionSheet(
     LaunchedEffect(accounts, selectedTab) {
         if (accounts.isNotEmpty()) {
             val defaultAcc = accounts.firstOrNull { it.isDefault }
-                ?: accounts.firstOrNull { it.accountType != com.example.data.local.entity.AccountType.CASH }
+                ?: accounts.firstOrNull { it.accountType == com.example.data.local.entity.AccountType.CASH }
                 ?: accounts.first()
             if (accounts.none { it.id == selectedAccountId }) {
                 selectedAccountId = defaultAcc.id
@@ -291,7 +339,77 @@ fun AddTransactionSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Quick Voice / Natural Language Typing Field (identical to Widget)
+            OutlinedTextField(
+                value = rawVoiceInput,
+                onValueChange = { newText ->
+                    rawVoiceInput = newText
+                    val parsed = QuickCashParser.parse(newText)
+                    if (parsed.amount > 0.0) {
+                        amountText = if (parsed.amount % 1.0 == 0.0) {
+                            parsed.amount.toLong().toString()
+                        } else {
+                            String.format(java.util.Locale.getDefault(), "%.2f", parsed.amount)
+                        }
+                    }
+                    if (parsed.note.isNotBlank()) {
+                        description = parsed.note
+                    }
+                    val matched = QuickCashParser.matchCategory(parsed.suggestedCategoryName, categories)
+                    if (matched != null) {
+                        selectedCategory = matched
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                placeholder = {
+                    Text(
+                        text = "Say or type: e.g. 50 tea or 200 on petrol",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        fontSize = 13.sp
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                trailingIcon = {
+                    IconButton(
+                        onClick = {
+                            HapticHelper.vibrateClick(context)
+                            launchVoiceRecognition()
+                        }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Speak",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                ),
+                singleLine = true
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Amount Input
             OutlinedTextField(
@@ -299,6 +417,18 @@ fun AddTransactionSheet(
                 onValueChange = { amountText = it.filter { ch -> ch.isDigit() || ch == '.' } },
                 label = { Text("Amount") },
                 prefix = { Text("₹ ", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) },
+                trailingIcon = {
+                    IconButton(onClick = {
+                        HapticHelper.vibrateClick(context)
+                        launchVoiceRecognition()
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Voice Input",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
@@ -819,6 +949,56 @@ fun AddTransactionSheet(
                         }
                     }
                 }
+            }
+
+            if (selectedTab != AddTab.TRANSFER) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Account",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(accounts) { acc ->
+                        val isSelected = selectedAccountId == acc.id
+                        Surface(
+                            modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable {
+                                HapticHelper.vibrateClick(context)
+                                selectedAccountId = acc.id
+                            },
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                if (acc.accountType == com.example.data.local.entity.AccountType.CASH) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccountBalanceWallet,
+                                        contentDescription = null,
+                                        tint = if (isSelected) Color.White else IncomeGreen,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                }
+                                Text(
+                                    text = acc.accountName,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
             }
 
             // Notes

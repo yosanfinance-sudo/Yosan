@@ -233,10 +233,6 @@ class CategoryRuleCoordinator(
             try {
                 val cat = database.categoryDao().getCategoryById(id)
                 if (cat != null) {
-                    if (cat.isSystem) {
-                        showMessage("System categories cannot be deleted as they are required for financial calculations.")
-                        return@launch
-                    }
                     repository.deleteCategory(id)
                     val rulesList = database.categorizationRuleDao().getActiveRulesList()
                     rulesList.forEach { rule ->
@@ -269,10 +265,6 @@ class CategoryRuleCoordinator(
             try {
                 val cat = database.categoryDao().getCategoryById(id)
                 if (cat != null) {
-                    if (cat.isSystem) {
-                        showMessage("System categories cannot be deleted as they are required for financial calculations.")
-                        return@launch
-                    }
                     val list = database.transactionDao().getAllTransactionsList()
                     val affectedAccountIds = mutableSetOf<Long>()
                     var reassignedCount = 0

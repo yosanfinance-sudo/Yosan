@@ -7,17 +7,18 @@
     android:background="@drawable/bg_widget_pill"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:paddingStart="12dp"
+    android:paddingStart="14dp"
     android:paddingTop="6dp"
-    android:paddingEnd="10dp"
+    android:paddingEnd="14dp"
     android:paddingBottom="6dp">
 
-    <!-- Plus / Add Icon Badge (Matching the App's '+' button) -->
+    <!-- Single quick-entry icon badge -->
     <FrameLayout
         android:layout_width="38dp"
         android:layout_height="38dp"
         android:background="@drawable/bg_widget_cash_badge">
         <ImageView
+            android:id="@+id/btn_edit"
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:layout_gravity="center"
@@ -57,18 +58,7 @@
             android:ellipsize="end" />
     </LinearLayout>
 
-    <!-- Type / Edit Button -->
-    <ImageButton
-        android:id="@+id/btn_edit"
-        android:layout_width="36dp"
-        android:layout_height="36dp"
-        android:background="?android:attr/selectableItemBackgroundBorderless"
-        android:src="@drawable/ic_widget_edit"
-        android:padding="7dp"
-        android:scaleType="fitCenter"
-        android:contentDescription="@string/widget_quick_cash_type_desc" />
-
-    <!-- Mic Button (Voice entry trigger) -->
+    <!-- Mic button (hidden; kept for voice entry trigger via widget provider) -->
     <ImageButton
         android:id="@+id/btn_mic"
         android:layout_width="40dp"
@@ -78,6 +68,8 @@
         android:src="@drawable/ic_widget_mic"
         android:padding="8dp"
         android:scaleType="fitCenter"
-        android:contentDescription="@string/widget_quick_cash_voice_desc" />
+        android:contentDescription="@string/widget_quick_cash_voice_desc"
+        android:visibility="gone" />
 
 </LinearLayout>
+

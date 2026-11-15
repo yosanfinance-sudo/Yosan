@@ -520,10 +520,9 @@ class AppPreferences(private val context: Context) {
         } else {
             com.example.data.local.AppDatabase.sanitizeUserKey(userEmail)
         }
-        val defaultCategories = listOf("Travel", "Food & Meals", "Lodging & Hotel", "Client Entertainment", "Office Supplies", "Fuel & Transport", "Miscellaneous")
         val raw = prefs.getString("${KEY_OFFICIAL_EXPENSE_CATEGORIES}_$userKey", null)
             ?: prefs.getString(KEY_OFFICIAL_EXPENSE_CATEGORIES, null)
-        if (raw.isNullOrBlank()) return defaultCategories
+        if (raw.isNullOrBlank()) return emptyList()
         return try {
             val arr = org.json.JSONArray(raw)
             val list = mutableListOf<String>()
@@ -531,9 +530,9 @@ class AppPreferences(private val context: Context) {
                 val cat = arr.optString(i, "").trim()
                 if (cat.isNotBlank() && !list.contains(cat)) list.add(cat)
             }
-            if (list.isEmpty()) defaultCategories else list
+            list
         } catch (_: Exception) {
-            defaultCategories
+            emptyList()
         }
     }
 

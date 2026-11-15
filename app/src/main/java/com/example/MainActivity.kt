@@ -33,7 +33,6 @@ private enum class RootScreenState {
     SPLASH,
     LOCKED,
     MAIN,
-    ONBOARDING_STEP_2,
     ONBOARDING_LOGIN
 }
 
@@ -319,16 +318,18 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    val hasBankAccount = userAccounts.any { it.accountType != com.example.data.local.entity.AccountType.CASH }
-                    val isUserOnboardingDone = appPreferences.isOnboardingCompletedForUser(currentEmail) &&
-                        (userProfile?.isOnboardingCompleted == true || hasBankAccount) &&
-                        hasBankAccount
+                    val isUserOnboardingDone = !appPreferences.isLoggedOut && (
+                        if (!currentEmail.isNullOrBlank()) {
+                            appPreferences.isOnboardingCompletedForUser(currentEmail)
+                        } else {
+                            appPreferences.isOfflineMode && appPreferences.isOnboardingCompletedForUser("guest")
+                        }
+                    )
 
                     val targetScreen = when {
                         isSplashActive -> RootScreenState.SPLASH
                         isAppLocked && isBiometricEnabled && isAuthenticated -> RootScreenState.LOCKED
                         isAuthenticated && isUserOnboardingDone -> RootScreenState.MAIN
-                        isAuthenticated && !isUserOnboardingDone -> RootScreenState.ONBOARDING_STEP_2
                         else -> RootScreenState.ONBOARDING_LOGIN
                     }
 
@@ -374,28 +375,16 @@ class MainActivity : FragmentActivity() {
                                     )
                                 }
                             }
-                            RootScreenState.ONBOARDING_STEP_2 -> {
-                                key(activeUserKey) {
-                                    OnboardingScreen(
-                                        authViewModel = authViewModel,
-                                        financeViewModel = financeViewModel,
-                                        initialStep = 2,
-                                        onComplete = {
-                                            appPreferences.setOnboardingCompletedForUser(currentEmail, true)
-                                            appPreferences.setLoggedOutForUser(currentEmail, false)
-                                            authViewModel.completeOnboarding()
-                                        }
-                                    )
-                                }
-                            }
                             RootScreenState.ONBOARDING_LOGIN -> {
                                 OnboardingScreen(
                                     authViewModel = authViewModel,
                                     financeViewModel = financeViewModel,
                                     initialStep = 1,
                                     onComplete = {
-                                        appPreferences.setOnboardingCompletedForUser(currentEmail, true)
-                                        appPreferences.setLoggedOutForUser(currentEmail, false)
+                                        val email = currentEmail ?: authViewModel.user.value?.email ?: "guest"
+                                        appPreferences.setOnboardingCompletedForUser(email, true)
+                                        appPreferences.setLoggedOutForUser(email, false)
+                                        appPreferences.isOnboardingCompleted = true
                                         authViewModel.completeOnboarding()
                                     }
                                 )

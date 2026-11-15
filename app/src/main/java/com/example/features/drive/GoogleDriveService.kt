@@ -387,23 +387,6 @@ class GoogleDriveService(
         }
 
         try {
-            val lastBackupTimestamp = database.syncDao().getMetadataValue("last_backup_timestamp")?.toLongOrNull() ?: 0L
-            val lastDataChange = database.syncDao().getMetadataValue("last_data_change_timestamp")?.toLongOrNull() ?: 0L
-            if (lastBackupTimestamp > 0L && lastDataChange > 0L && lastBackupTimestamp >= lastDataChange) {
-                Log.d(TAG, "No local changes since last backup. Skipping redundant snapshot upload.")
-                val manifestName = getBackupManifestFileName()
-                val dto = DriveBackupVersionDto(
-                    version = nextVersion,
-                    fileName = manifestName,
-                    fileId = "",
-                    isCurrent = true,
-                    createdTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
-                        timeZone = java.util.TimeZone.getTimeZone("UTC")
-                    }.format(java.util.Date())
-                )
-                return@withContext DriveOperationResult.Success(dto, "Local database unchanged. Backup skipped.")
-            }
-
             val rootFolderId = getOrCreateRootFolder(driveToken)
                 ?: return@withContext DriveOperationResult.Error("Could not access 'Yosan-Backup' folder on Google Drive.")
 
@@ -413,9 +396,8 @@ class GoogleDriveService(
             val backupJson = BackupService.generateBackupJsonObject(database, nextVersion)
             val rawJsonStr = backupJson.toString(2)
 
-            val email = tokenManager.getUserEmail() ?: ""
-            val session = if (email.isNotBlank()) tokenManager.getUserSession(email) else null
-            val encryptionKey = session?.googleSub?.takeIf { it.isNotBlank() } ?: email.ifBlank { "yosan_secure_drive_backup" }
+            val email = (tokenManager.getUserEmail() ?: tokenManager.getDriveEmail() ?: "").trim().lowercase()
+            val encryptionKey = email.ifBlank { "yosan_secure_drive_backup" }
             val jsonStr = BackupEncryptionUtil.encrypt(rawJsonStr, encryptionKey)
 
             val userKey = AppDatabase.sanitizeUserKey(email)
@@ -480,6 +462,168 @@ class GoogleDriveService(
         }
     }
 
+    /**
+     * Lists all backup files from Google Drive (from both root Yosan-Backup and versions/ subfolder).
+     * Returns a sorted list of backups so the user can choose which version to restore.
+     */
+    suspend fun listAllDriveBackups(
+        driveToken: String,
+        userEmail: String? = null
+    ): List<DriveBackupVersionDto> = withContext(Dispatchers.IO) {
+        val backupsList = mutableListOf<DriveBackupVersionDto>()
+        try {
+            val rootFolderId = getOrCreateRootFolder(driveToken) ?: return@withContext emptyList()
+            val versionsFolderId = getOrCreateVersionsFolder(driveToken, rootFolderId)
+
+            val allFiles = mutableListOf<GoogleDriveFileDto>()
+
+            // 1. Fetch version snapshots from 'versions' folder
+            if (versionsFolderId != null) {
+                val qVersions = "'$versionsFolderId' in parents and mimeType = 'application/json' and trashed = false"
+                val res = driveApi.listFiles(
+                    bearerToken = "Bearer $driveToken",
+                    query = qVersions,
+                    fields = "files(id, name, mimeType, parents, size, modifiedTime, createdTime, trashed)",
+                    pageSize = 100
+                )
+                if (res.isSuccessful && res.body()?.files != null) {
+                    allFiles.addAll(res.body()!!.files)
+                }
+            }
+
+            // 2. Fetch root manifest files
+            val qRoot = "'$rootFolderId' in parents and mimeType = 'application/json' and trashed = false"
+            val resRoot = driveApi.listFiles(
+                bearerToken = "Bearer $driveToken",
+                query = qRoot,
+                fields = "files(id, name, mimeType, parents, size, modifiedTime, createdTime, trashed)",
+                pageSize = 50
+            )
+            if (resRoot.isSuccessful && resRoot.body()?.files != null) {
+                allFiles.addAll(resRoot.body()!!.files)
+            }
+
+            // Sort newest first by manifest precedence then modifiedTime / createdTime
+            val distinctFiles = allFiles.distinctBy { it.id }.sortedWith(
+                compareByDescending<GoogleDriveFileDto> { it.name.startsWith("detailsaboutbackup") }
+                    .thenByDescending { it.modifiedTime ?: it.createdTime ?: "" }
+            )
+
+            distinctFiles.forEachIndexed { index, file ->
+                var verNum = distinctFiles.size - index
+                val verMatch = Regex("(?:v|version)[-_]?(\\d+)", RegexOption.IGNORE_CASE).find(file.name)
+                if (verMatch != null) {
+                    verNum = verMatch.groupValues[1].toIntOrNull() ?: verNum
+                }
+
+                backupsList.add(
+                    DriveBackupVersionDto(
+                        version = verNum,
+                        fileName = file.name,
+                        fileId = file.id,
+                        isCurrent = (index == 0),
+                        createdTime = file.modifiedTime ?: file.createdTime,
+                        transactionCount = 0
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error listing Drive backup versions: ${e.message}", e)
+        }
+        backupsList
+    }
+
+    /**
+     * Downloads and restores a specific backup file from Google Drive using its file ID.
+     */
+    suspend fun restoreFileFromDrive(
+        database: AppDatabase,
+        fileId: String,
+        userEmail: String? = null
+    ): DriveOperationResult<RestoreResult> = withContext(Dispatchers.IO) {
+        val driveToken = getValidDriveToken() ?: tokenManager.getDriveAccessToken()
+        if (driveToken.isNullOrBlank()) {
+            return@withContext DriveOperationResult.Error(
+                "Google Drive not connected. Please connect Google Drive first.",
+                "DRIVE_NOT_CONNECTED"
+            )
+        }
+
+        try {
+            val jsonContent = downloadJsonFile(driveToken, fileId)
+                ?: return@withContext DriveOperationResult.Error("Could not download backup file from Google Drive.")
+
+            val targetEmail = userEmail?.takeIf { it.isNotBlank() } ?: tokenManager.getUserEmail() ?: ""
+            val candidateKeys = mutableListOf<String>()
+            targetEmail.takeIf { it.isNotBlank() }?.let {
+                candidateKeys.add(it)
+                candidateKeys.add(it.lowercase())
+            }
+            val session = if (targetEmail.isNotBlank()) tokenManager.getUserSession(targetEmail) else null
+            session?.googleSub?.takeIf { it.isNotBlank() }?.let { candidateKeys.add(it) }
+            tokenManager.getDriveEmail()?.takeIf { it.isNotBlank() }?.let {
+                candidateKeys.add(it)
+                candidateKeys.add(it.lowercase())
+            }
+            tokenManager.getUserEmail()?.takeIf { it.isNotBlank() }?.let {
+                candidateKeys.add(it)
+                candidateKeys.add(it.lowercase())
+            }
+            tokenManager.getAllUserSessions().forEach { s ->
+                s.googleSub?.takeIf { it.isNotBlank() }?.let { candidateKeys.add(it) }
+                s.email?.takeIf { it.isNotBlank() }?.let {
+                    candidateKeys.add(it)
+                    candidateKeys.add(it.lowercase())
+                }
+            }
+            try {
+                val p = database.userProfileDao().getUserProfileOnce()
+                p?.googleSub?.takeIf { it.isNotBlank() }?.let { candidateKeys.add(it) }
+                p?.email?.takeIf { it.isNotBlank() }?.let {
+                    candidateKeys.add(it)
+                    candidateKeys.add(it.lowercase())
+                }
+            } catch (_: Exception) {}
+            candidateKeys.add("yosan_secure_drive_backup")
+            candidateKeys.add("yosan_secure_backup")
+
+            val combinedPassphrase = candidateKeys.distinct().joinToString(":::")
+            val restoreResult = BackupService.restoreBackupJson(jsonContent, database, passphrase = combinedPassphrase, clearExisting = true)
+
+            if (restoreResult.success) {
+                com.example.features.sync.SyncManager.lastRestoredTimeMs = System.currentTimeMillis()
+                try {
+                    val allAccounts = database.accountDao().getAllAccountsList()
+                    val allTransactions = database.transactionDao().getAllTransactionsList()
+                    for (acc in allAccounts) {
+                        val accTxs = allTransactions.filter { it.accountId == acc.id }
+                        var bal = acc.openingBalance
+                        for (tx in accTxs.sortedBy { it.transactionDate }) {
+                            when (tx.transactionType) {
+                                com.example.data.local.entity.TransactionType.INCOME, com.example.data.local.entity.TransactionType.REFUND -> bal += tx.amount
+                                com.example.data.local.entity.TransactionType.EXPENSE, com.example.data.local.entity.TransactionType.LENDING, com.example.data.local.entity.TransactionType.INVESTMENT -> bal -= tx.amount
+                                com.example.data.local.entity.TransactionType.TRANSFER -> {
+                                    if (tx.creditAmount > 0) bal += tx.creditAmount else bal -= tx.debitAmount
+                                }
+                                else -> {}
+                            }
+                        }
+                        database.accountDao().updateBalance(acc.id, bal)
+                    }
+                    database.userProfileDao().updateOnboardingCompleted(true)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Balance recalculation non-fatal failure: ${e.message}")
+                }
+                DriveOperationResult.Success(restoreResult, "Google Drive backup restored successfully! ${restoreResult.message}")
+            } else {
+                DriveOperationResult.Error(restoreResult.message)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Restore from Google Drive file $fileId failed: ${e.message}", e)
+            DriveOperationResult.Error(e.localizedMessage ?: "Failed to restore backup from Google Drive")
+        }
+    }
+
     suspend fun restoreLatestFromDrive(
         database: AppDatabase,
         userEmail: String? = null
@@ -493,14 +637,61 @@ class GoogleDriveService(
         }
 
         try {
+            val allBackups = listAllDriveBackups(driveToken, userEmail)
+            val latest = allBackups.firstOrNull()
+            if (latest != null && latest.fileId.isNotBlank()) {
+                return@withContext restoreFileFromDrive(database, latest.fileId, userEmail)
+            }
+
+            // Fallback to searching manifest/versions content
             val jsonContent = getLatestBackupContent(driveToken, userEmail)
                 ?: return@withContext DriveOperationResult.Error("No backup found in your Google Drive 'Yosan-Backup' folder.")
 
-            val email = userEmail ?: tokenManager.getUserEmail() ?: ""
-            val session = if (email.isNotBlank()) tokenManager.getUserSession(email) else null
-            val encryptionKey = session?.googleSub?.takeIf { it.isNotBlank() } ?: email.ifBlank { "yosan_secure_drive_backup" }
-            val restoreResult = BackupService.restoreBackupJson(jsonContent, database, passphrase = encryptionKey, clearExisting = true)
+            val targetEmail = userEmail ?: tokenManager.getUserEmail() ?: ""
+            val candidateKeys = mutableListOf<String>()
+            targetEmail.takeIf { it.isNotBlank() }?.let {
+                candidateKeys.add(it)
+                candidateKeys.add(it.lowercase())
+            }
+            val session = if (targetEmail.isNotBlank()) tokenManager.getUserSession(targetEmail) else null
+            session?.googleSub?.takeIf { it.isNotBlank() }?.let { candidateKeys.add(it) }
+            tokenManager.getDriveEmail()?.takeIf { it.isNotBlank() }?.let {
+                candidateKeys.add(it)
+                candidateKeys.add(it.lowercase())
+            }
+            tokenManager.getUserEmail()?.takeIf { it.isNotBlank() }?.let {
+                candidateKeys.add(it)
+                candidateKeys.add(it.lowercase())
+            }
+            candidateKeys.add("yosan_secure_drive_backup")
+            candidateKeys.add("yosan_secure_backup")
+
+            val combinedPassphrase = candidateKeys.distinct().joinToString(":::")
+            val restoreResult = BackupService.restoreBackupJson(jsonContent, database, passphrase = combinedPassphrase, clearExisting = true)
             if (restoreResult.success) {
+                com.example.features.sync.SyncManager.lastRestoredTimeMs = System.currentTimeMillis()
+                try {
+                    val allAccounts = database.accountDao().getAllAccountsList()
+                    val allTransactions = database.transactionDao().getAllTransactionsList()
+                    for (acc in allAccounts) {
+                        val accTxs = allTransactions.filter { it.accountId == acc.id }
+                        var bal = acc.openingBalance
+                        for (tx in accTxs.sortedBy { it.transactionDate }) {
+                            when (tx.transactionType) {
+                                com.example.data.local.entity.TransactionType.INCOME, com.example.data.local.entity.TransactionType.REFUND -> bal += tx.amount
+                                com.example.data.local.entity.TransactionType.EXPENSE, com.example.data.local.entity.TransactionType.LENDING, com.example.data.local.entity.TransactionType.INVESTMENT -> bal -= tx.amount
+                                com.example.data.local.entity.TransactionType.TRANSFER -> {
+                                    if (tx.creditAmount > 0) bal += tx.creditAmount else bal -= tx.debitAmount
+                                }
+                                else -> {}
+                            }
+                        }
+                        database.accountDao().updateBalance(acc.id, bal)
+                    }
+                    database.userProfileDao().updateOnboardingCompleted(true)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Balance recalculation non-fatal failure: ${e.message}")
+                }
                 DriveOperationResult.Success(restoreResult, "Google Drive backup restored successfully!")
             } else {
                 DriveOperationResult.Error(restoreResult.message)

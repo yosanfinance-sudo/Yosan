@@ -214,19 +214,7 @@ object ExcelSyncService {
         val bos = ByteArrayOutputStream()
         val zos = ZipOutputStream(bos)
 
-        val catList = if (categories.isNotEmpty()) categories else listOf(
-            CategoryEntity(name = "Food & Dining", type = CategoryType.EXPENSE),
-            CategoryEntity(name = "Groceries", type = CategoryType.EXPENSE),
-            CategoryEntity(name = "Shopping", type = CategoryType.EXPENSE),
-            CategoryEntity(name = "Bills & Utilities", type = CategoryType.EXPENSE),
-            CategoryEntity(name = "Salary", type = CategoryType.INCOME),
-            CategoryEntity(name = "Investment", type = CategoryType.INVESTMENT),
-            CategoryEntity(name = "Transportation", type = CategoryType.EXPENSE),
-            CategoryEntity(name = "Healthcare", type = CategoryType.EXPENSE),
-            CategoryEntity(name = "Rent", type = CategoryType.EXPENSE),
-            CategoryEntity(name = "Miscellaneous", type = CategoryType.EXPENSE),
-            CategoryEntity(name = "Uncategorized", type = CategoryType.EXPENSE)
-        )
+        val catList = categories
 
         val accList = if (accounts.isNotEmpty()) accounts else listOf(
             AccountEntity(id = 1, bankName = "HDFC Bank", accountName = "Primary Savings", accountNumberMasked = "XX1234"),

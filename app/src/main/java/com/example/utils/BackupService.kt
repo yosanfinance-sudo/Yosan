@@ -392,14 +392,31 @@ object BackupService {
         return try {
             val decryptedJson = try {
                 if (BackupEncryptionUtil.isEncrypted(jsonString)) {
-                    val candidateKeys = listOfNotNull(
-                        passphrase?.takeIf { it.isNotBlank() },
-                        "yosan_secure_drive_backup",
-                        "yosan_secure_backup"
-                    ).distinct()
+                    val candidateKeys = mutableListOf<String>()
+                    if (!passphrase.isNullOrBlank()) {
+                        val splitKeys = passphrase.split(":::").map { it.trim() }.filter { it.isNotBlank() }
+                        candidateKeys.addAll(splitKeys)
+                        candidateKeys.addAll(splitKeys.map { it.lowercase() })
+                        candidateKeys.add(passphrase.trim())
+                        candidateKeys.add(passphrase.trim().lowercase())
+                    }
+                    try {
+                        val prof = database.userProfileDao().getUserProfileOnce()
+                        prof?.googleSub?.takeIf { it.isNotBlank() }?.let {
+                            candidateKeys.add(it.trim())
+                            candidateKeys.add(it.trim().lowercase())
+                        }
+                        prof?.email?.takeIf { it.isNotBlank() }?.let {
+                            candidateKeys.add(it.trim())
+                            candidateKeys.add(it.trim().lowercase())
+                        }
+                    } catch (_: Exception) {}
+                    candidateKeys.add("yosan_secure_drive_backup")
+                    candidateKeys.add("yosan_secure_backup")
+
                     var decrypted: String? = null
                     var lastErr: Exception? = null
-                    for (key in candidateKeys) {
+                    for (key in candidateKeys.distinct()) {
                         try {
                             val res = BackupEncryptionUtil.decrypt(jsonString, key)
                             if (res.isNotBlank() && (res.contains("\"transactions\"") || res.contains("\"accounts\"") || res.contains("\"application\""))) {
@@ -811,6 +828,29 @@ object BackupService {
                     android.util.Log.e("BackupService", "Error restoring statement imports", e)
                 }
             }
+            }
+
+            // Recalculate all account balances from restored transactions
+            try {
+                val allAccounts = database.accountDao().getAllAccountsList()
+                val allTransactions = database.transactionDao().getAllTransactionsList()
+                for (acc in allAccounts) {
+                    val accTxs = allTransactions.filter { it.accountId == acc.id }
+                    var bal = acc.openingBalance
+                    for (tx in accTxs.sortedBy { it.transactionDate }) {
+                        when (tx.transactionType) {
+                            TransactionType.INCOME, TransactionType.REFUND -> bal += tx.amount
+                            TransactionType.EXPENSE, TransactionType.LENDING, TransactionType.INVESTMENT -> bal -= tx.amount
+                            TransactionType.TRANSFER -> {
+                                if (tx.creditAmount > 0) bal += tx.creditAmount else bal -= tx.debitAmount
+                            }
+                            else -> {}
+                        }
+                    }
+                    database.accountDao().updateBalance(acc.id, bal)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BackupService", "Balance recalculation non-fatal failure", e)
             }
 
             RestoreResult(

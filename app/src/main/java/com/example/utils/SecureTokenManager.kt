@@ -112,16 +112,17 @@ class SecureTokenManager(context: Context) {
         // If targetEmail is omitted, default to current active email (e.g. ApiClient token refresh)
         val effectiveEmail = targetEmail ?: currentActive
 
-        // Update active sharedPreferences if target is the active user or if no user is active yet
-        if (currentActive.isNullOrBlank() || targetEmail == null || targetEmail == currentActive) {
-            val editor = sharedPreferences.edit()
-                .putString(KEY_ACCESS_TOKEN, encryptIfFallback(accessToken))
-                .putString(KEY_REFRESH_TOKEN, encryptIfFallback(refreshToken))
-            if (expiresInSeconds != null && expiresInSeconds > 0) {
-                editor.putLong(KEY_EXPIRES_AT, expiresAtMs)
-            }
-            editor.apply()
+        val editor = sharedPreferences.edit()
+            .putString(KEY_ACCESS_TOKEN, encryptIfFallback(accessToken))
+            .putString(KEY_REFRESH_TOKEN, encryptIfFallback(refreshToken))
+        if (expiresInSeconds != null && expiresInSeconds > 0) {
+            editor.putLong(KEY_EXPIRES_AT, expiresAtMs)
         }
+        if (!targetEmail.isNullOrBlank()) {
+            editor.putString(KEY_USER_EMAIL, targetEmail)
+            editor.putString(KEY_ACTIVE_USER_EMAIL, targetEmail)
+        }
+        editor.apply()
 
         // Update persistent session record for the target user if specified or active
         if (!effectiveEmail.isNullOrBlank()) {
@@ -180,19 +181,19 @@ class SecureTokenManager(context: Context) {
         val effectiveAccessToken = accessToken?.takeIf { it.isNotBlank() }
             ?: (if (currentActive == cleanEmail) getAccessToken() else null)?.takeIf { it.isNotBlank() }
             ?: existing?.accessToken?.takeIf { it.isNotBlank() }
-            ?: getAccessToken()
             ?: ""
 
         val effectiveRefreshToken = refreshToken?.takeIf { it.isNotBlank() }
             ?: (if (currentActive == cleanEmail) getRefreshToken() else null)?.takeIf { it.isNotBlank() }
             ?: existing?.refreshToken?.takeIf { it.isNotBlank() }
-            ?: getRefreshToken()
             ?: ""
 
-        val currentDriveAccess = getDriveAccessToken() ?: existing?.driveAccessToken
-        val currentDriveRefresh = getDriveRefreshToken() ?: existing?.driveRefreshToken
-        val currentDriveExpiresAt = getDriveTokenExpiresAt().takeIf { it > 0 } ?: existing?.driveTokenExpiresAt ?: 0L
-        val currentDriveEmail = getDriveEmail() ?: existing?.driveEmail
+        val currentDriveEmail = getDriveEmail()
+        val isSameUser = cleanEmail.equals(currentDriveEmail, ignoreCase = true)
+        val currentDriveAccess = if (isSameUser) (getDriveAccessToken() ?: existing?.driveAccessToken) else existing?.driveAccessToken
+        val currentDriveRefresh = if (isSameUser) (getDriveRefreshToken() ?: existing?.driveRefreshToken) else existing?.driveRefreshToken
+        val currentDriveExpiresAt = if (isSameUser) (getDriveTokenExpiresAt().takeIf { it > 0 } ?: existing?.driveTokenExpiresAt ?: 0L) else (existing?.driveTokenExpiresAt ?: 0L)
+        val targetDriveEmail = if (isSameUser) currentDriveEmail else existing?.driveEmail
         val currentStoragePref = getStoragePreference()
 
         val updatedSession = UserSession(
@@ -208,7 +209,7 @@ class SecureTokenManager(context: Context) {
             driveAccessToken = currentDriveAccess,
             driveRefreshToken = currentDriveRefresh,
             driveTokenExpiresAt = currentDriveExpiresAt,
-            driveEmail = currentDriveEmail,
+            driveEmail = targetDriveEmail,
             storagePreference = currentStoragePref,
             sessionToken = effectiveSessionToken,
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
@@ -220,7 +221,7 @@ class SecureTokenManager(context: Context) {
             registerUserSessionEmail(cleanEmail)
         }
 
-        val editor = sharedPreferences.edit()
+        val sessionEditor = sharedPreferences.edit()
             .putString(KEY_ACTIVE_USER_EMAIL, cleanEmail)
             .putLong(KEY_USER_ID, userId)
             .putString(KEY_GOOGLE_SUB, googleSub)
@@ -231,27 +232,35 @@ class SecureTokenManager(context: Context) {
             .putString(KEY_SESSION_TOKEN, effectiveSessionToken)
 
         if (effectiveAccessToken.isNotBlank()) {
-            editor.putString(KEY_ACCESS_TOKEN, encryptIfFallback(effectiveAccessToken))
+            sessionEditor.putString(KEY_ACCESS_TOKEN, encryptIfFallback(effectiveAccessToken))
         }
         if (effectiveRefreshToken.isNotBlank()) {
-            editor.putString(KEY_REFRESH_TOKEN, encryptIfFallback(effectiveRefreshToken))
+            sessionEditor.putString(KEY_REFRESH_TOKEN, encryptIfFallback(effectiveRefreshToken))
         }
         if (expiresAtMs > 0L) {
-            editor.putLong(KEY_EXPIRES_AT, expiresAtMs)
+            sessionEditor.putLong(KEY_EXPIRES_AT, expiresAtMs)
         }
         if (!currentDriveAccess.isNullOrBlank()) {
-            editor.putString(KEY_DRIVE_ACCESS_TOKEN, encryptIfFallback(currentDriveAccess))
+            sessionEditor.putString(KEY_DRIVE_ACCESS_TOKEN, encryptIfFallback(currentDriveAccess))
+        } else {
+            sessionEditor.remove(KEY_DRIVE_ACCESS_TOKEN)
         }
         if (!currentDriveRefresh.isNullOrBlank()) {
-            editor.putString(KEY_DRIVE_REFRESH_TOKEN, encryptIfFallback(currentDriveRefresh))
+            sessionEditor.putString(KEY_DRIVE_REFRESH_TOKEN, encryptIfFallback(currentDriveRefresh))
+        } else {
+            sessionEditor.remove(KEY_DRIVE_REFRESH_TOKEN)
         }
         if (currentDriveExpiresAt > 0L) {
-            editor.putLong(KEY_DRIVE_TOKEN_EXPIRES_AT, currentDriveExpiresAt)
+            sessionEditor.putLong(KEY_DRIVE_TOKEN_EXPIRES_AT, currentDriveExpiresAt)
+        } else {
+            sessionEditor.remove(KEY_DRIVE_TOKEN_EXPIRES_AT)
         }
-        if (!currentDriveEmail.isNullOrBlank()) {
-            editor.putString(KEY_DRIVE_EMAIL, currentDriveEmail)
+        if (!targetDriveEmail.isNullOrBlank()) {
+            sessionEditor.putString(KEY_DRIVE_EMAIL, targetDriveEmail)
+        } else {
+            sessionEditor.remove(KEY_DRIVE_EMAIL)
         }
-        editor.apply()
+        sessionEditor.apply()
     }
 
     fun getUserId(): Long = sharedPreferences.getLong(KEY_USER_ID, -1L)

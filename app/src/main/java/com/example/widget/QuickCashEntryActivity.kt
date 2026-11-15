@@ -211,17 +211,6 @@ class QuickCashEntryActivity : ComponentActivity() {
     }
 }
 
-private val DEFAULT_SYSTEM_CATEGORIES = listOf(
-    CategoryEntity(name = "Food & Dining", type = CategoryType.EXPENSE, colorHex = "#F59E0B"),
-    CategoryEntity(name = "Groceries", type = CategoryType.EXPENSE, colorHex = "#10B981"),
-    CategoryEntity(name = "Transportation", type = CategoryType.EXPENSE, colorHex = "#3B82F6"),
-    CategoryEntity(name = "Shopping", type = CategoryType.EXPENSE, colorHex = "#EC4899"),
-    CategoryEntity(name = "Bills & Utilities", type = CategoryType.EXPENSE, colorHex = "#8B5CF6"),
-    CategoryEntity(name = "Healthcare", type = CategoryType.EXPENSE, colorHex = "#EF4444"),
-    CategoryEntity(name = "Entertainment", type = CategoryType.EXPENSE, colorHex = "#6366F1"),
-    CategoryEntity(name = "Miscellaneous", type = CategoryType.EXPENSE, colorHex = "#64748B"),
-    CategoryEntity(name = "Salary", type = CategoryType.INCOME, colorHex = "#10B981")
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -286,12 +275,8 @@ fun QuickCashBottomSheetContent(
                     selectedAccountId = handCashAcc.id
                 }
 
-                // 2. Load categories from DB
-                var catList = db.categoryDao().getAllCategoriesList()
-                if (catList.isEmpty()) {
-                    db.categoryDao().insertCategories(DEFAULT_SYSTEM_CATEGORIES)
-                    catList = db.categoryDao().getAllCategoriesList()
-                }
+                // 2. Load categories from DB (never seed defaults - user may have intentionally cleared them)
+                val catList = db.categoryDao().getAllCategoriesList()
                 categories = catList
                 selectedCategory = catList.firstOrNull { it.type == CategoryType.EXPENSE }
             } catch (e: Exception) {

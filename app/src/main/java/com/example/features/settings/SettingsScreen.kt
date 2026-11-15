@@ -191,6 +191,7 @@ fun SettingsScreen(
     var historyErrorMessage by remember { mutableStateOf<String?>(null) }
     var showRestoreConfirmDialog by remember { mutableStateOf(false) }
     var targetRestoreVersion by remember { mutableStateOf<Int?>(null) }
+    var targetRestoreFileId by remember { mutableStateOf<String?>(null) }
     var isRestoringVersion by remember { mutableStateOf(false) }
 
     val driveAuthManager = remember { GoogleDriveAuthManager(context) }
@@ -2352,13 +2353,14 @@ fun SettingsScreen(
                         FilledTonalButton(
                             onClick = {
                                 targetRestoreVersion = null
+                                targetRestoreFileId = null
                                 showRestoreConfirmDialog = true
                             },
                             enabled = !isDriveBackingUp && !isDriveRestoring,
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            if (isDriveRestoring && targetRestoreVersion == null) {
+                            if (isDriveRestoring && targetRestoreVersion == null && targetRestoreFileId == null) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
                                     strokeWidth = 2.dp
@@ -2372,7 +2374,7 @@ fun SettingsScreen(
                             }
                         }
 
-                        // 3. Backup Version History
+                        // 3. Choose Backup Version to Restore
                         OutlinedButton(
                             onClick = {
                                 showBackupHistoryDialog = true
@@ -2383,7 +2385,7 @@ fun SettingsScreen(
                                     if (success) {
                                         backupHistoryList = backups
                                     } else {
-                                        historyErrorMessage = err ?: "Could not fetch versions"
+                                        historyErrorMessage = err ?: "Could not fetch backup versions from Google Drive"
                                     }
                                 }
                             },
@@ -2393,7 +2395,7 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Backup Version History", fontWeight = FontWeight.SemiBold)
+                            Text("Choose Backup Version to Restore", fontWeight = FontWeight.SemiBold)
                         }
 
                         // 4. Disconnect Google Drive
@@ -2844,6 +2846,7 @@ fun SettingsScreen(
                                         Button(
                                             onClick = {
                                                 targetRestoreVersion = item.version
+                                                targetRestoreFileId = item.fileId
                                                 showRestoreConfirmDialog = true
                                             },
                                             shape = RoundedCornerShape(8.dp),
@@ -2855,7 +2858,7 @@ fun SettingsScreen(
                                             Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(14.dp))
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = if (item.isCurrent) "Restore Current Backup" else "Restore Snapshot v${item.version}",
+                                                text = if (item.isCurrent) "Restore Latest (${item.fileName})" else "Restore Snapshot v${item.version} (${item.fileName})",
                                                 style = MaterialTheme.typography.labelMedium
                                             )
                                         }
@@ -2878,6 +2881,7 @@ fun SettingsScreen(
     // Google Drive Restore Confirmation Dialog
     if (showRestoreConfirmDialog) {
         val ver = targetRestoreVersion
+        val fileId = targetRestoreFileId
         AlertDialog(
             onDismissRequest = {
                 if (!isDriveRestoring) showRestoreConfirmDialog = false
@@ -2903,7 +2907,7 @@ fun SettingsScreen(
                         text = if (ver != null)
                             "You are about to restore your financial database to historical snapshot v$ver from Google Drive."
                         else
-                            "You are about to restore your financial database from the latest Google Drive backup (detailsaboutbackup.json).",
+                            "You are about to restore your financial database from the latest Google Drive backup.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
@@ -2917,16 +2921,17 @@ fun SettingsScreen(
                 Button(
                     onClick = {
                         isDriveRestoring = true
-                        if (ver != null) {
-                            authViewModel?.restoreBackupVersion(ver) { success, msg ->
+                        if (!fileId.isNullOrBlank() || ver != null) {
+                            authViewModel?.restoreBackupVersion(version = ver, fileId = fileId) { success, msg ->
                                 isDriveRestoring = false
                                 showRestoreConfirmDialog = false
                                 if (success) {
-                                    statusNotificationMsg = msg ?: "Snapshot v$ver restored successfully!"
+                                    statusNotificationMsg = msg ?: "Backup restored successfully!"
                                     showBackupHistoryDialog = false
                                     showGoogleDriveDialog = false
+                                    viewModel.recalculateAllAccountBalances()
                                 } else {
-                                    driveMismatchError = msg ?: "Failed to restore version $ver"
+                                    driveMismatchError = msg ?: "Failed to restore backup"
                                 }
                             }
                         } else {
@@ -2936,6 +2941,7 @@ fun SettingsScreen(
                                 if (success) {
                                     statusNotificationMsg = msg ?: "Latest backup restored successfully!"
                                     showGoogleDriveDialog = false
+                                    viewModel.recalculateAllAccountBalances()
                                 } else {
                                     driveMismatchError = msg ?: "Failed to restore latest backup"
                                 }
