@@ -141,16 +141,10 @@ fun OnboardingScreen(
         }
     }
 
-    val handleSelectedEmail: (String, String?) -> Unit = { rawEmail, explicitName ->
+    val handleSelectedEmail: (String, String?, String?) -> Unit = { rawEmail, explicitName, idToken ->
         val cleanEmail = rawEmail.trim().lowercase()
         if (cleanEmail.isNotBlank()) {
-            val explicitOrEntered = userName.trim().takeIf { it.length >= 2 }
-            val realName = explicitOrEntered
-                ?: explicitName?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) }
-                ?: GoogleAuthManager.resolveDisplayName(context, cleanEmail)?.takeIf { it.isNotBlank() && !it.contains("@") }
-                ?: rememberedAccounts.firstOrNull { it.email.equals(cleanEmail, ignoreCase = true) }?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
-                ?: GoogleAuthManager.formatEmailAsReadableName(cleanEmail).ifBlank { "User" }
-            val autoName = realName
+            val autoName = GoogleAuthManager.formatEmailAsReadableName(cleanEmail)
 
             userName = autoName
             emailInput = cleanEmail
@@ -159,15 +153,12 @@ fun OnboardingScreen(
             authViewModel.signInWithGoogleAccount(
                 email = cleanEmail,
                 name = autoName,
+                idToken = idToken,
                 markOnboardingCompleted = false
             ) { finalClaims ->
-                val finalName = if (userName.trim().length >= 2) userName.trim()
-                    else finalClaims.name.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) && !it.equals(finalClaims.email.substringBefore("@"), ignoreCase = true) }
-                    ?: GoogleAuthManager.resolveDisplayName(context, finalClaims.email)?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals(finalClaims.email.substringBefore("@"), ignoreCase = true) }
-                    ?: GoogleAuthManager.formatEmailAsReadableName(finalClaims.email).ifBlank { "User" }
+                val finalName = GoogleAuthManager.formatEmailAsReadableName(finalClaims.email)
                 userName = finalName
                 emailInput = finalClaims.email
-                financeViewModel.updateUserProfile(finalName, currencySymbol)
                 authViewModel.setStoragePreference(selectedStorageMode)
                 appPreferences.lastUserName = finalName
                 appPreferences.lastUserEmail = finalClaims.email
@@ -184,38 +175,56 @@ fun OnboardingScreen(
     val systemAccountPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        appPreferences.isExternalIntentActive = false
         val selectedEmail = result.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME)
         if (result.resultCode == android.app.Activity.RESULT_OK && !selectedEmail.isNullOrBlank()) {
-            handleSelectedEmail(selectedEmail, null)
+            handleSelectedEmail(selectedEmail, null, null)
         }
     }
 
     val googleSignInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
-            val googleAuthManager = GoogleAuthManager(context)
-            val claims = googleAuthManager.getSignedInAccountFromIntent(result.data)
-            val selectedEmail = claims?.email
-                ?: result.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME)
-            if (!selectedEmail.isNullOrBlank()) {
-                handleSelectedEmail(selectedEmail, claims?.name)
-            } else {
-                // Fall back cleanly to system account chooser only on valid non-claim result
-                val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
-                if (pickerIntent != null) {
-                    try {
-                        systemAccountPickerLauncher.launch(pickerIntent)
-                    } catch (e: Exception) {
-                        android.util.Log.e("Onboarding", "Picker fallback error: ${e.message}")
-                    }
+        appPreferences.isExternalIntentActive = false
+        val googleAuthManager = GoogleAuthManager(context)
+        val claims = if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
+            googleAuthManager.getSignedInAccountFromIntent(result.data)
+        } else null
+        val selectedEmail = claims?.email
+            ?: result.data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME)
+        if (!selectedEmail.isNullOrBlank()) {
+            handleSelectedEmail(selectedEmail, claims?.name, claims?.idToken)
+        } else if (result.data != null) {
+            // Fall back cleanly to system account chooser on unsuccessful Google Play Services sign-in
+            val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
+            if (pickerIntent != null) {
+                try {
+                    appPreferences.isExternalIntentActive = true
+                    systemAccountPickerLauncher.launch(pickerIntent)
+                } catch (e: Exception) {
+                    appPreferences.isExternalIntentActive = false
+                    android.util.Log.e("Onboarding", "Picker fallback error: ${e.message}")
                 }
             }
         }
-        // When resultCode == RESULT_CANCELED, do nothing so UI never flickers
     }
 
     var showWalkthroughDialog by remember { mutableStateOf(false) }
+
+    androidx.activity.compose.BackHandler(
+        enabled = showSwitchAccountDialog || (accountToRemove != null) || showDriveVersionsDialog ||
+                showBackupFoundDialog || showRestoreSourceDialog || showWalkthroughDialog || isRegistrationConfirmed
+    ) {
+        when {
+            showWalkthroughDialog -> showWalkthroughDialog = false
+            accountToRemove != null -> accountToRemove = null
+            showSwitchAccountDialog -> showSwitchAccountDialog = false
+            showDriveVersionsDialog -> showDriveVersionsDialog = false
+            showBackupFoundDialog -> showBackupFoundDialog = false
+            showRestoreSourceDialog -> showRestoreSourceDialog = false
+            isRegistrationConfirmed -> isRegistrationConfirmed = false
+        }
+    }
 
     val authLoading by authViewModel.isLoading.collectAsState()
     val authError by authViewModel.errorMessage.collectAsState()
@@ -370,7 +379,13 @@ fun OnboardingScreen(
                                             appPreferences.setLoggedOutForUser(finalEmail, false)
                                             appPreferences.setOnboardingCompletedForUser(finalEmail, true)
                                             appPreferences.isOnboardingCompleted = true
-                                            authViewModel.completeOnboarding(confirmedAccountName)
+                                            authViewModel.completeOnboarding(
+                                                customName = confirmedAccountName,
+                                                currencySymbol = currencySymbol,
+                                                themeMode = selectedThemeMode,
+                                                privacyBlurEnabled = isPrivacyBlurEnabled,
+                                                timeoutSeconds = blurTimeoutSeconds
+                                            )
                                             onComplete()
                                         },
                                         modifier = Modifier
@@ -463,16 +478,49 @@ fun OnboardingScreen(
                                     Button(
                                         onClick = {
                                             HapticHelper.vibrateClick(context)
-                                            val googleAuthManager = GoogleAuthManager(context)
-                                            val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
-                                            if (pickerIntent != null) {
-                                                systemAccountPickerLauncher.launch(pickerIntent)
-                                            } else {
-                                                try {
-                                                    val signInIntent = googleAuthManager.getGoogleSignInIntent()
-                                                    googleSignInLauncher.launch(signInIntent)
-                                                } catch (_: Exception) {}
-                                            }
+                                            authViewModel.signInWithGoogle(
+                                                context = context,
+                                                onFallbackPicker = {
+                                                    val googleAuthManager = GoogleAuthManager(context)
+                                                    val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
+                                                    if (pickerIntent != null) {
+                                                        try {
+                                                            appPreferences.isExternalIntentActive = true
+                                                            systemAccountPickerLauncher.launch(pickerIntent)
+                                                        } catch (_: Exception) {
+                                                            appPreferences.isExternalIntentActive = false
+                                                            try {
+                                                                val signInIntent = googleAuthManager.getGoogleSignInIntent()
+                                                                appPreferences.isExternalIntentActive = true
+                                                                googleSignInLauncher.launch(signInIntent)
+                                                            } catch (_: Exception) {
+                                                                appPreferences.isExternalIntentActive = false
+                                                            }
+                                                        }
+                                                    } else {
+                                                        try {
+                                                            val signInIntent = googleAuthManager.getGoogleSignInIntent()
+                                                            appPreferences.isExternalIntentActive = true
+                                                            googleSignInLauncher.launch(signInIntent)
+                                                        } catch (_: Exception) {
+                                                            appPreferences.isExternalIntentActive = false
+                                                        }
+                                                    }
+                                                },
+                                                onComplete = { finalClaims ->
+                                                    val finalName = GoogleAuthManager.formatEmailAsReadableName(finalClaims.email)
+                                                    userName = finalName
+                                                    emailInput = finalClaims.email
+                                                    authViewModel.setStoragePreference(selectedStorageMode)
+                                                    appPreferences.lastUserName = finalName
+                                                    appPreferences.lastUserEmail = finalClaims.email
+
+                                                    confirmedAccountName = finalName
+                                                    confirmedAccountEmail = finalClaims.email
+                                                    isConfirmedOffline = false
+                                                    isRegistrationConfirmed = true
+                                                }
+                                            )
                                         },
                                         enabled = !authLoading,
                                         modifier = Modifier
@@ -597,12 +645,20 @@ fun OnboardingScreen(
                                                 val googleAuthManager = GoogleAuthManager(context)
                                                 val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
                                                 if (pickerIntent != null) {
-                                                    systemAccountPickerLauncher.launch(pickerIntent)
+                                                    try {
+                                                        appPreferences.isExternalIntentActive = true
+                                                        systemAccountPickerLauncher.launch(pickerIntent)
+                                                    } catch (_: Exception) {
+                                                        appPreferences.isExternalIntentActive = false
+                                                    }
                                                 } else {
                                                     try {
                                                         val signInIntent = googleAuthManager.getGoogleSignInIntent()
+                                                        appPreferences.isExternalIntentActive = true
                                                         googleSignInLauncher.launch(signInIntent)
-                                                    } catch (_: Exception) {}
+                                                    } catch (_: Exception) {
+                                                        appPreferences.isExternalIntentActive = false
+                                                    }
                                                 }
                                             }
                                         },
@@ -663,7 +719,12 @@ fun OnboardingScreen(
                                                             val googleAuthManager = GoogleAuthManager(context)
                                                             val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
                                                             if (pickerIntent != null) {
-                                                                systemAccountPickerLauncher.launch(pickerIntent)
+                                                                try {
+                                                                    appPreferences.isExternalIntentActive = true
+                                                                    systemAccountPickerLauncher.launch(pickerIntent)
+                                                                } catch (_: Exception) {
+                                                                    appPreferences.isExternalIntentActive = false
+                                                                }
                                                             }
                                                         },
                                                         modifier = Modifier.weight(1f),
@@ -1395,12 +1456,20 @@ fun OnboardingScreen(
                             val googleAuthManager = GoogleAuthManager(context)
                             val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
                             if (pickerIntent != null) {
-                                systemAccountPickerLauncher.launch(pickerIntent)
+                                try {
+                                    appPreferences.isExternalIntentActive = true
+                                    systemAccountPickerLauncher.launch(pickerIntent)
+                                } catch (_: Exception) {
+                                    appPreferences.isExternalIntentActive = false
+                                }
                             } else {
                                 try {
                                     val signInIntent = googleAuthManager.getGoogleSignInIntent()
+                                    appPreferences.isExternalIntentActive = true
                                     googleSignInLauncher.launch(signInIntent)
-                                } catch (_: Exception) {}
+                                } catch (_: Exception) {
+                                    appPreferences.isExternalIntentActive = false
+                                }
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),

@@ -283,8 +283,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     repository.updateThemePreference(true)
                 }
                 else -> {
-                    appPrefs.isDarkMode = true
-                    repository.updateThemePreference(true)
+                    val isSystemDark = (getApplication<Application>().resources.configuration.uiMode and
+                            android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+                    appPrefs.isDarkMode = isSystemDark
+                    repository.updateThemePreference(isSystemDark)
                 }
             }
         }

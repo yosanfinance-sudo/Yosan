@@ -68,7 +68,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
         val storedAccessToken = tokenManager.getAccessToken()
         val googleSub = tokenManager.getGoogleSub()
-        if (!storedAccessToken.isNullOrBlank() && !userEmail.isNullOrBlank() && !googleSub.isNullOrBlank()) {
+        val isOtpSession = tokenManager.isEmailVerified() && !userEmail.isNullOrBlank()
+        if (!storedAccessToken.isNullOrBlank() && !userEmail.isNullOrBlank() && (!googleSub.isNullOrBlank() || isOtpSession)) {
             val cleanEmail = userEmail.trim().lowercase()
             val isDone = prefs.isOnboardingCompletedForUser(cleanEmail) || prefs.isOnboardingCompleted
             return AuthState.Authenticated(isNewUser = !isDone)
@@ -181,7 +182,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // If user is not logged in via credentials, check if offline mode was completed
-                if (storedAccessToken.isNullOrBlank() || userEmail.isNullOrBlank() || googleSub.isNullOrBlank()) {
+                val isOtpSession = tokenManager.isEmailVerified() && !userEmail.isNullOrBlank()
+                if (storedAccessToken.isNullOrBlank() || userEmail.isNullOrBlank() || (googleSub.isNullOrBlank() && !isOtpSession)) {
                     AppDatabase.setActiveUserKey("guest")
                     if (prefs.isOfflineMode && prefs.isOnboardingCompleted) {
                         val savedProfile = authRepository.getProfileOnce()
@@ -197,7 +199,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // 3. User is logged in: Check token expiration and refresh with backend if needed
-                if (tokenManager.isSessionExpired() && !storedRefreshToken.isNullOrBlank()) {
+                if (tokenManager.isSessionExpired() && !storedRefreshToken.isNullOrBlank() && !storedRefreshToken.startsWith("offline_")) {
                     Log.i(TAG, "Access token expired. Refreshing OAuth 2.0 session...")
                     try {
                         val authApi = ApiClient.getAuthApi(app)
@@ -234,7 +236,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val activeProfile = (savedProfile ?: UserProfileEntity(id = 1)).copy(
                     name = resolvedName,
                     email = userEmail,
-                    googleSub = googleSub,
+                    googleSub = googleSub ?: (if (isOtpSession) "otp_${AppDatabase.sanitizeUserKey(userEmail)}" else ""),
                     profilePictureUrl = resolvedPic,
                     emailVerified = isVerified,
                     storagePreference = resolvedPref,
@@ -305,10 +307,14 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                         val localClaims = decodeGoogleIdTokenLocally(idToken)
                         val email = (result.email ?: localClaims?.email ?: "").trim().lowercase()
-                        var name = result.displayName?.takeIf { it.isNotBlank() && !it.contains("@") }
-                            ?: localClaims?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
-                            ?: GoogleAuthManager.resolveDisplayName(app, email)?.takeIf { it.isNotBlank() }
-                            ?: GoogleAuthManager.formatEmailAsReadableName(email).ifBlank { "User" }
+                        var name = if (email.isNotBlank()) {
+                            GoogleAuthManager.formatEmailAsReadableName(email)
+                        } else {
+                            result.displayName?.takeIf { it.isNotBlank() && !it.contains("@") }
+                                ?: localClaims?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
+                                ?: GoogleAuthManager.resolveDisplayName(app, email)?.takeIf { it.isNotBlank() }
+                                ?: "User"
+                        }
                         val photoUrl = result.photoUrl ?: localClaims?.picture ?: ""
                         val sub = localClaims?.sub ?: email.ifBlank { "google_user" }
 
@@ -325,9 +331,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                                 val body = serverRes.body()!!
                                 accessToken = body.accessToken
                                 refreshToken = body.refreshToken
-                                val serverName = body.user.name.trim()
-                                if (serverName.isNotBlank() && !serverName.contains("@") && !serverName.equals("User", ignoreCase = true)) {
-                                    name = serverName
+                                if (name.isBlank() || name == "User") {
+                                    val serverName = body.user.name.trim()
+                                    if (serverName.isNotBlank() && !serverName.contains("@") && !serverName.equals("User", ignoreCase = true)) {
+                                        name = serverName
+                                    }
                                 }
                                 Log.i(TAG, "Backend Server OAuth authentication successful")
                             } else {
@@ -340,7 +348,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         // 2. Offline-First fallback token generation if backend is unreachable
                         if (accessToken.isBlank()) {
                             accessToken = idToken
-                            refreshToken = "yosan_ref_${com.example.data.local.AppDatabase.sanitizeUserKey(email)}_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "")}"
+                            refreshToken = "offline_ref_${com.example.data.local.AppDatabase.sanitizeUserKey(email)}_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "")}"
                         }
 
                         val sessionToken = SecureTokenManager.generateSessionToken(email)
@@ -409,6 +417,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
 
+                        _syncManager = null
                         syncManager.loadInitialStatus()
                         _user.value = buildLocalUser(updatedProfile)
                         _authState.value = AuthState.Authenticated(
@@ -419,7 +428,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             sub = sub,
                             email = email,
                             name = name,
-                            picture = photoUrl
+                            picture = photoUrl,
+                            idToken = idToken
                         )
                         onComplete?.invoke(claims)
                         return@launch
@@ -539,6 +549,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     prefs.isOfflineMode = true
                 }
 
+                _syncManager = null
                 syncManager.loadInitialStatus()
                 _user.value = buildLocalUser(updatedProfile)
                 _authState.value = AuthState.Authenticated(isNewUser = false)
@@ -578,6 +589,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         name: String? = null,
         bankName: String? = null,
         markOnboardingCompleted: Boolean = true,
+        idToken: String? = null,
         onComplete: ((GoogleClaims) -> Unit)? = null
     ) {
         viewModelScope.launch {
@@ -600,11 +612,52 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Switch database partition for this Google account
                 AppDatabase.setActiveUserKey(cleanEmail)
-                val resolvedName = name?.trim()?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) }
-                    ?: GoogleAuthManager.resolveDisplayName(app, cleanEmail)?.takeIf { it.isNotBlank() }
-                    ?: prefs.getRememberedAccounts().firstOrNull { it.email.equals(cleanEmail, ignoreCase = true) }?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
-                    ?: GoogleAuthManager.formatEmailAsReadableName(cleanEmail).ifBlank { "User" }
-                val sub = "google_${cleanEmail.replace("@", "_").replace(".", "_")}"
+                var resolvedName = if (cleanEmail.isNotBlank()) {
+                    GoogleAuthManager.formatEmailAsReadableName(cleanEmail)
+                } else {
+                    name?.trim()?.takeIf { it.isNotBlank() && !it.contains("@") && !it.equals("User", ignoreCase = true) }
+                        ?: GoogleAuthManager.resolveDisplayName(app, cleanEmail)?.takeIf { it.isNotBlank() }
+                        ?: prefs.getRememberedAccounts().firstOrNull { it.email.equals(cleanEmail, ignoreCase = true) }?.name?.takeIf { it.isNotBlank() && !it.contains("@") }
+                        ?: "User"
+                }
+                var sub = "google_${cleanEmail.replace("@", "_").replace(".", "_")}"
+                var photoUrl = ""
+
+                var effectiveAccessToken = ""
+                var effectiveRefreshToken = ""
+
+                // 1. If ID token is provided, exchange with Backend Server (/api/auth/google)
+                if (!idToken.isNullOrBlank()) {
+                    try {
+                        val authApi = ApiClient.getAuthApi(app)
+                        Log.i(TAG, "Exchanging Google ID token with Backend Server (/api/auth/google)...")
+                        val serverRes = authApi.authenticateGoogle(GoogleAuthRequest(idToken = idToken))
+                        if (serverRes.isSuccessful && serverRes.body() != null) {
+                            val body = serverRes.body()!!
+                            effectiveAccessToken = body.accessToken
+                            effectiveRefreshToken = body.refreshToken
+                            if (!body.user.googleSub.isNullOrBlank()) sub = body.user.googleSub
+                            if (!body.user.profilePictureUrl.isNullOrBlank()) photoUrl = body.user.profilePictureUrl
+                            if (resolvedName.isBlank() || resolvedName == "User") {
+                                val serverName = body.user.name.trim()
+                                if (serverName.isNotBlank() && !serverName.contains("@") && !serverName.equals("User", ignoreCase = true)) {
+                                    resolvedName = serverName
+                                }
+                            }
+                            Log.i(TAG, "Backend Server OAuth authentication successful in signInWithGoogleAccount")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Backend Server offline or unreachable in signInWithGoogleAccount: ${e.message}")
+                    }
+                }
+
+                // 2. Offline-First fallback token generation if backend is unreachable or no ID token
+                if (effectiveAccessToken.isBlank()) {
+                    effectiveAccessToken = idToken?.takeIf { it.isNotBlank() }
+                        ?: "yosan_tok_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "")}"
+                    effectiveRefreshToken = "offline_ref_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "")}"
+                }
+
                 val userDb = com.example.data.local.AppDatabase.getDatabaseForUser(app, cleanEmail)
                 val existingAccounts = userDb.accountDao().getAllAccountsList()
                 val primaryBank = bankName?.ifBlank { null }
@@ -613,12 +666,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     ?: prefs.lastBankName
 
                 val sessionToken = SecureTokenManager.generateSessionToken(cleanEmail)
-                val dynamicAccessToken = "yosan_tok_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "")}"
-                val dynamicRefreshToken = "yosan_ref_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "")}"
 
                 tokenManager.saveTokens(
-                    accessToken = dynamicAccessToken,
-                    refreshToken = dynamicRefreshToken,
+                    accessToken = effectiveAccessToken,
+                    refreshToken = effectiveRefreshToken,
                     email = cleanEmail
                 )
                 tokenManager.saveUserSession(
@@ -626,11 +677,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     googleSub = sub,
                     email = cleanEmail,
                     name = resolvedName,
-                    profilePicture = "",
+                    profilePicture = photoUrl,
                     emailVerified = true,
                     sessionToken = sessionToken,
-                    accessToken = dynamicAccessToken,
-                    refreshToken = dynamicRefreshToken
+                    accessToken = effectiveAccessToken,
+                    refreshToken = effectiveRefreshToken
                 )
                 _isEmailVerified.value = true
 
@@ -682,6 +733,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
+                _syncManager = null
                 syncManager.loadInitialStatus()
                 _user.value = buildLocalUser(updatedProfile)
                 _authState.value = AuthState.Authenticated(isNewUser = !markOnboardingCompleted)
@@ -690,7 +742,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     sub = sub,
                     email = cleanEmail,
                     name = resolvedName,
-                    picture = ""
+                    picture = photoUrl,
+                    idToken = idToken
                 )
                 onComplete?.invoke(claims)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1356,11 +1409,13 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val response = api.verifyOtp(VerifyOtpRequest(email = cleanEmail, otp = cleanOtp, purpose = purpose, name = name.ifBlank { null }))
                 if (response.isSuccessful && response.body() != null) {
                     val authRes = response.body()!!
+                    val effectiveSub = authRes.user.googleSub.takeIf { !it.isNullOrBlank() }
+                        ?: "otp_${com.example.data.local.AppDatabase.sanitizeUserKey(authRes.user.email)}"
                     val sessionToken = SecureTokenManager.generateSessionToken(cleanEmail)
                     tokenManager.saveTokens(authRes.accessToken, authRes.refreshToken, email = authRes.user.email)
                     tokenManager.saveUserSession(
                         userId = authRes.user.id,
-                        googleSub = authRes.user.googleSub,
+                        googleSub = effectiveSub,
                         email = authRes.user.email,
                         name = authRes.user.name,
                         profilePicture = authRes.user.profilePictureUrl ?: "",
@@ -1389,7 +1444,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         email = authRes.user.email,
                         name = authRes.user.name.ifBlank { "User" },
                         profilePicture = authRes.user.profilePictureUrl ?: "",
-                        googleSub = authRes.user.googleSub,
+                        googleSub = effectiveSub,
                         bankName = primaryBank,
                         lastUsedTimestamp = System.currentTimeMillis(),
                         sessionToken = sessionToken
@@ -1398,7 +1453,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                     val existing = authRepository.getProfileOnce()
                     val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
-                        googleSub = authRes.user.googleSub,
+                        googleSub = effectiveSub,
                         email = authRes.user.email,
                         name = authRes.user.name.ifBlank { existing?.name ?: "User" },
                         profilePictureUrl = authRes.user.profilePictureUrl ?: existing?.profilePictureUrl ?: "",
@@ -1408,6 +1463,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     authRepository.updateProfile(updatedProfile)
 
+                    _syncManager = null
                     syncManager.loadInitialStatus()
                     _user.value = authRes.user
                     _authState.value = AuthState.Authenticated(isNewUser = !updatedProfile.isOnboardingCompleted)
@@ -1495,7 +1551,13 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun completeOnboarding(customName: String? = null) {
+    fun completeOnboarding(
+        customName: String? = null,
+        currencySymbol: String? = null,
+        themeMode: String? = null,
+        privacyBlurEnabled: Boolean? = null,
+        timeoutSeconds: Int? = null
+    ) {
         _isNewUser.value = false
         _authState.value = AuthState.Authenticated(isNewUser = false)
         val prefs = com.example.utils.AppPreferences(getApplication())
@@ -1505,22 +1567,21 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         prefs.setOnboardingCompletedForUser(email, true)
         viewModelScope.launch(Dispatchers.IO) {
             val profile = database.userProfileDao().getUserProfileOnce()
-            if (profile != null) {
-                database.userProfileDao().insertOrUpdateProfile(
-                    profile.copy(
-                        name = customName ?: profile.name,
-                        isOnboardingCompleted = true
-                    )
-                )
-            } else {
-                database.userProfileDao().insertOrUpdateProfile(
-                    UserProfileEntity(
-                        id = 1,
-                        name = customName ?: "User",
-                        isOnboardingCompleted = true
-                    )
-                )
+            val isDark = when (themeMode) {
+                "DARK" -> true
+                "LIGHT" -> false
+                else -> profile?.isDarkMode ?: false
             }
+            val updated = (profile ?: UserProfileEntity(id = 1)).copy(
+                name = customName ?: profile?.name ?: "User",
+                currencySymbol = currencySymbol ?: profile?.currencySymbol ?: "₹",
+                isDarkMode = isDark,
+                isPrivacyBlurEnabled = privacyBlurEnabled ?: profile?.isPrivacyBlurEnabled ?: true,
+                blurTimeoutSeconds = timeoutSeconds ?: profile?.blurTimeoutSeconds ?: 5,
+                isOnboardingCompleted = true,
+                updatedAt = System.currentTimeMillis()
+            )
+            database.userProfileDao().insertOrUpdateProfile(updated)
             val active = database.userProfileDao().getUserProfileOnce()
             if (active != null) {
                 _user.value = buildLocalUser(active)
@@ -1584,6 +1645,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 prefs.isLoggedOut = true
             }
             AppDatabase.setActiveUserKey("guest")
+            _syncManager = null
             prefs.isOfflineMode = false
 
             // Clear active session slot while keeping remembered user session for account switching
@@ -1702,6 +1764,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 if (!switched) {
                     Log.w(TAG, "No stored session found for $cleanEmail. Initializing session.")
                     val sessionToken = SecureTokenManager.generateSessionToken(cleanEmail)
+                    val dummyAccess = "yosan_tok_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}_${System.currentTimeMillis()}"
+                    val dummyRefresh = "offline_ref_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}_${System.currentTimeMillis()}"
+                    tokenManager.saveTokens(dummyAccess, dummyRefresh, email = cleanEmail)
                     tokenManager.saveUserSession(
                         userId = 1L,
                         googleSub = "user_${AppDatabase.sanitizeUserKey(cleanEmail)}",
@@ -1713,7 +1778,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             .ifBlank { "User" },
                         profilePicture = "",
                         emailVerified = true,
-                        sessionToken = sessionToken
+                        sessionToken = sessionToken,
+                        accessToken = dummyAccess,
+                        refreshToken = dummyRefresh
                     )
                 }
 
@@ -1739,9 +1806,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     targetAccounts = listOf(defaultCash)
                 }
 
-                val resolvedName = tokenManager.getUserName()
-                    ?: targetProfile?.name
-                    ?: cleanEmail.substringBefore("@")
+                val resolvedName = if (cleanEmail.isNotBlank()) {
+                    GoogleAuthManager.formatEmailAsReadableName(cleanEmail)
+                } else {
+                    tokenManager.getUserName() ?: targetProfile?.name ?: "User"
+                }
                 val resolvedPic = tokenManager.getProfilePic()
                     ?: targetProfile?.profilePictureUrl ?: ""
 
@@ -1754,7 +1823,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     email = cleanEmail,
                     name = resolvedName,
                     profilePictureUrl = resolvedPic,
-                    googleSub = tokenManager.getGoogleSub() ?: targetProfile?.googleSub ?: "",
+                    googleSub = tokenManager.getGoogleSub()?.takeIf { it.isNotBlank() }
+                        ?: targetProfile?.googleSub?.takeIf { it.isNotBlank() }
+                        ?: "user_${AppDatabase.sanitizeUserKey(cleanEmail)}",
                     emailVerified = tokenManager.isEmailVerified() || targetProfile?.emailVerified == true,
                     isOnboardingCompleted = isTargetConfigured,
                     updatedAt = System.currentTimeMillis()
@@ -1836,6 +1907,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Reset active DB partition to guest
                 AppDatabase.setActiveUserKey("guest")
+                _syncManager = null
                 prefs.isLoggedOut = true
                 prefs.isOfflineMode = false
                 prefs.lastUserName = ""
@@ -1939,8 +2011,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 // 4. Update authenticated profile
                 val existingProfile = userDb.userProfileDao().getUserProfileOnce()
-                val currentName = existingProfile?.name?.takeIf { it.isNotBlank() && it != "User" }
-                    ?: claims.name.ifBlank { cleanEmail.substringBefore("@") }
+                val currentName = if (cleanEmail.isNotBlank()) {
+                    GoogleAuthManager.formatEmailAsReadableName(cleanEmail)
+                } else {
+                    existingProfile?.name?.takeIf { it.isNotBlank() && it != "User" }
+                        ?: claims.name.ifBlank { "User" }
+                }
 
                 val updatedProfile = (existingProfile ?: UserProfileEntity(id = 1)).copy(
                     email = cleanEmail,
@@ -1959,14 +2035,40 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     com.example.data.local.DatabaseInitializer.purgeLegacyDemoData(guestDb)
                 }
 
+                var linkAccess = ""
+                var linkRefresh = ""
+                if (!claims.idToken.isNullOrBlank()) {
+                    try {
+                        val authApi = ApiClient.getAuthApi(app)
+                        val res = authApi.authenticateGoogle(GoogleAuthRequest(idToken = claims.idToken))
+                        if (res.isSuccessful && res.body() != null) {
+                            linkAccess = res.body()!!.accessToken
+                            linkRefresh = res.body()!!.refreshToken
+                        }
+                    } catch (_: Exception) {}
+                }
+                if (linkAccess.isBlank()) {
+                    linkAccess = claims.idToken?.takeIf { it.isNotBlank() }
+                        ?: "yosan_tok_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}_${System.currentTimeMillis()}"
+                    linkRefresh = "offline_ref_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}_${System.currentTimeMillis()}"
+                }
+                val sessionToken = SecureTokenManager.generateSessionToken(cleanEmail)
+                tokenManager.saveTokens(linkAccess, linkRefresh, email = cleanEmail)
+
                 tokenManager.saveUserSession(
                     userId = 1L,
-                    googleSub = claims.sub,
+                    googleSub = claims.sub.ifBlank { "google_${com.example.data.local.AppDatabase.sanitizeUserKey(cleanEmail)}" },
                     email = cleanEmail,
                     name = currentName,
                     profilePicture = claims.picture,
-                    emailVerified = true
+                    emailVerified = true,
+                    sessionToken = sessionToken,
+                    accessToken = linkAccess,
+                    refreshToken = linkRefresh
                 )
+
+                _syncManager = null
+                syncManager.loadInitialStatus()
 
                 prefs.isLoggedOut = false
                 prefs.isOfflineMode = false
@@ -2050,6 +2152,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     onComplete?.invoke()
                 }
                 return@launch
+            } else {
+                _syncManager = null
                 AppDatabase.setActiveUserKey("guest")
                 prefs.isLoggedOut = true
                 prefs.isOfflineMode = false
@@ -2145,7 +2249,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         ?: json.optString("preferred_username", "").takeIf { it.isNotBlank() }
                         ?: json.optString("nickname", "").takeIf { it.isNotBlank() }
                         ?: "",
-                    picture = json.optString("picture", "")
+                    picture = json.optString("picture", ""),
+                    idToken = idToken
                 )
             } catch (_: Exception) { null }
         }
@@ -2156,5 +2261,6 @@ data class GoogleClaims(
     val sub: String,
     val email: String,
     val name: String,
-    val picture: String
+    val picture: String,
+    val idToken: String? = null
 )

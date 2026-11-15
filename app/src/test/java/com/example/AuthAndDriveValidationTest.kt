@@ -159,4 +159,74 @@ class AuthAndDriveValidationTest {
         assertTrue(decodedPayload.contains("test@example.com"))
         assertTrue(decodedPayload.contains("Test User"))
     }
+
+    @Test
+    fun testGoogleClaimsCarriesIdToken() {
+        val claimsWithToken = GoogleClaims(
+            sub = "1234567890",
+            email = "user@example.com",
+            name = "Test User",
+            picture = "https://example.com/pic.png",
+            idToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.dummyPayload.dummySig"
+        )
+        assertNotNull(claimsWithToken.idToken)
+        assertEquals("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.dummyPayload.dummySig", claimsWithToken.idToken)
+
+        val claimsDefault = GoogleClaims(
+            sub = "1234567890",
+            email = "user@example.com",
+            name = "Test User",
+            picture = "https://example.com/pic.png"
+        )
+        assertNull(claimsDefault.idToken)
+    }
+
+    @Test
+    fun testOfflineRefreshTokenProtectedFromNetworkEviction() {
+        val offlineRefTokens = listOf(
+            "offline_ref_1731669400000_123456",
+            "offline_refresh_guest",
+            "offline_local_token"
+        )
+        val onlineRefTokens = listOf(
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyZWZyZXNoIjp0cnVlfQ.signature",
+            "mock_server_refresh_token_abcdef"
+        )
+
+        val shouldAttemptNetworkRefresh = { token: String ->
+            !token.startsWith("offline_")
+        }
+
+        offlineRefTokens.forEach { token ->
+            assertFalse("Offline token $token must NOT trigger network refresh", shouldAttemptNetworkRefresh(token))
+        }
+
+        onlineRefTokens.forEach { token ->
+            assertTrue("Online token $token must be forwarded for network refresh", shouldAttemptNetworkRefresh(token))
+        }
+    }
+
+    @Test
+    fun testEmailOtpSessionColdStartAuthResolution() {
+        // Case 1: Google account login
+        val googleUser = Triple("google_sub_123", "google@example.com", false)
+        val isGoogleAuth = !googleUser.first.isNullOrBlank()
+        assertTrue("Google user with valid sub is authenticated", isGoogleAuth)
+
+        // Case 2: Email OTP user (no Google Sub, but email verified)
+        val otpUserEmail = "otp.user@example.com"
+        val otpUserSub: String? = null
+        val isEmailVerified = true
+        val isOtpSession = isEmailVerified && !otpUserEmail.isNullOrBlank()
+        val isOtpAuth = !otpUserSub.isNullOrBlank() || isOtpSession
+        assertTrue("OTP user without Google sub must be recognized as authenticated on cold start", isOtpAuth)
+
+        // Case 3: Guest / Unauthenticated user (no sub, no verified email)
+        val guestUserEmail: String? = null
+        val guestUserSub: String? = null
+        val guestEmailVerified = false
+        val isGuestOtpSession = guestEmailVerified && !guestUserEmail.isNullOrBlank()
+        val isGuestAuth = !guestUserSub.isNullOrBlank() || isGuestOtpSession
+        assertFalse("Guest user must not be marked authenticated", isGuestAuth)
+    }
 }

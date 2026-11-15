@@ -74,14 +74,16 @@ class QuickCashEntryActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val initialMode = intent?.getStringExtra(EXTRA_MODE) ?: MODE_TEXT
+        val prefs = AppPreferences(applicationContext)
+        val currentThemeMode = prefs.themeMode
 
         setContent {
-            FinanceManagerTheme {
+            FinanceManagerTheme(themeMode = currentThemeMode) {
                 QuickCashBottomSheetContent(
                     initialMode = initialMode,
                     onDismiss = { finish() },
-                    onSaveTransaction = { tab, amount, date, description, category, accountId, notes ->
-                        saveTransaction(tab, amount, date, description, category, accountId, notes)
+                    onSaveTransaction = { tab, amount, date, description, category, accountId, targetAccountId, notes ->
+                        saveTransaction(tab, amount, date, description, category, accountId, targetAccountId, notes)
                     }
                 )
             }
@@ -95,6 +97,7 @@ class QuickCashEntryActivity : ComponentActivity() {
         description: String,
         category: CategoryEntity?,
         accountId: Long,
+        targetAccountId: Long? = null,
         notes: String
     ) {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -107,6 +110,7 @@ class QuickCashEntryActivity : ComponentActivity() {
                 val accounts = db.accountDao().getAllAccountsList()
                 var targetAccount = accounts.firstOrNull { it.id == accountId }
                     ?: accounts.firstOrNull { it.accountType == AccountType.CASH }
+                    ?: accounts.firstOrNull()
 
                 if (targetAccount == null) {
                     val newCash = AccountEntity(
@@ -122,13 +126,74 @@ class QuickCashEntryActivity : ComponentActivity() {
                     targetAccount = newCash.copy(id = cashId)
                 }
 
-                // 2. Determine TransactionType & compute new balance
-                val txType = when (tab) {
-                    AddTab.INCOME -> TransactionType.INCOME
-                    AddTab.TRANSFER -> TransactionType.TRANSFER
-                    else -> TransactionType.EXPENSE
+                // 2. Handle Transfer
+                if (tab == AddTab.TRANSFER) {
+                    val destinationAccount = accounts.firstOrNull { it.id == targetAccountId && it.id != targetAccount.id }
+                        ?: accounts.firstOrNull { it.id != targetAccount.id }
+                    if (destinationAccount == null) {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(applicationContext, "Please create a second account to make transfers.", Toast.LENGTH_SHORT).show()
+                        }
+                        return@launch
+                    }
+
+                    val transferSyncId = java.util.UUID.randomUUID().toString()
+                    val fromNewBal = targetAccount.currentBalance - amount
+                    val toNewBal = destinationAccount.currentBalance + amount
+
+                    val outTx = TransactionEntity(
+                        accountId = targetAccount.id,
+                        transactionDate = date,
+                        description = "Transfer to ${destinationAccount.accountName}",
+                        debitAmount = amount,
+                        creditAmount = 0.0,
+                        amount = amount,
+                        transactionType = TransactionType.TRANSFER,
+                        balanceAfterTransaction = fromNewBal,
+                        categoryName = "Transfer",
+                        source = "WIDGET",
+                        notes = notes.ifBlank { "Transfer to ${destinationAccount.accountName}" },
+                        transferId = transferSyncId,
+                        isManual = true,
+                        isCategorized = true
+                    )
+                    val inTx = TransactionEntity(
+                        accountId = destinationAccount.id,
+                        transactionDate = date,
+                        description = "Transfer from ${targetAccount.accountName}",
+                        debitAmount = 0.0,
+                        creditAmount = amount,
+                        amount = amount,
+                        transactionType = TransactionType.TRANSFER,
+                        balanceAfterTransaction = toNewBal,
+                        categoryName = "Transfer",
+                        source = "WIDGET",
+                        notes = notes.ifBlank { "Transfer from ${targetAccount.accountName}" },
+                        transferId = transferSyncId,
+                        isManual = true,
+                        isCategorized = true
+                    )
+
+                    db.transactionDao().insertTransaction(outTx)
+                    db.transactionDao().insertTransaction(inTx)
+                    db.accountDao().updateBalance(targetAccount.id, fromNewBal)
+                    db.accountDao().updateBalance(destinationAccount.id, toNewBal)
+
+                    withContext(Dispatchers.Main) {
+                        triggerSuccessHaptic()
+                        val displayAmount = if (amount % 1.0 == 0.0) amount.toLong().toString() else String.format(Locale.getDefault(), "%.2f", amount)
+                        Toast.makeText(
+                            applicationContext,
+                            "₹$displayAmount transferred from ${targetAccount.accountName} to ${destinationAccount.accountName}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        finish()
+                    }
+                    return@launch
                 }
 
+                // 3. Determine TransactionType & compute new balance for Expense / Income
+                val txType = if (tab == AddTab.INCOME) TransactionType.INCOME else TransactionType.EXPENSE
                 val newBalance = when (txType) {
                     TransactionType.INCOME -> targetAccount.currentBalance + amount
                     else -> targetAccount.currentBalance - amount
@@ -138,7 +203,6 @@ class QuickCashEntryActivity : ComponentActivity() {
                 val credit = if (txType == TransactionType.INCOME) amount else 0.0
                 val catName = category?.name ?: if (txType == TransactionType.INCOME) "Income" else "Cash Expense"
 
-                // 3. Insert transaction
                 val transaction = TransactionEntity(
                     accountId = targetAccount.id,
                     transactionDate = date,
@@ -156,8 +220,6 @@ class QuickCashEntryActivity : ComponentActivity() {
                     isCategorized = true
                 )
                 db.transactionDao().insertTransaction(transaction)
-
-                // 4. Update account balance
                 db.accountDao().updateBalance(targetAccount.id, newBalance)
 
                 withContext(Dispatchers.Main) {
@@ -224,6 +286,7 @@ fun QuickCashBottomSheetContent(
         description: String,
         category: CategoryEntity?,
         accountId: Long,
+        targetAccountId: Long?,
         notes: String
     ) -> Unit
 ) {
@@ -243,6 +306,7 @@ fun QuickCashBottomSheetContent(
     var categories by remember { mutableStateOf<List<CategoryEntity>>(emptyList()) }
     var selectedCategory by remember { mutableStateOf<CategoryEntity?>(null) }
     var selectedAccountId by remember { mutableStateOf(0L) }
+    var targetAccountId by remember { mutableStateOf(0L) }
     var isSaving by remember { mutableStateOf(false) }
 
     // Load database accounts and categories
@@ -273,6 +337,10 @@ fun QuickCashBottomSheetContent(
                 val handCashAcc = accList.firstOrNull { it.accountType == AccountType.CASH } ?: accList.firstOrNull()
                 if (handCashAcc != null) {
                     selectedAccountId = handCashAcc.id
+                }
+                val otherAcc = accList.firstOrNull { it.id != selectedAccountId } ?: accList.firstOrNull()
+                if (otherAcc != null) {
+                    targetAccountId = otherAcc.id
                 }
 
                 // 2. Load categories from DB (never seed defaults - user may have intentionally cleared them)
@@ -627,107 +695,186 @@ fun QuickCashBottomSheetContent(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Category Selector (Exact FilterChip format from AddTransactionSheet with Database Categories)
-                Text(
-                    text = "Select Category",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+                if (selectedTab != AddTab.TRANSFER) {
+                    // Category Selector (Exact FilterChip format from AddTransactionSheet with Database Categories)
+                    Text(
+                        text = "Select Category",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                val filteredCats = categories.filter {
-                    if (selectedTab == AddTab.INCOME) it.type == CategoryType.INCOME else it.type == CategoryType.EXPENSE
-                }
-
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(filteredCats) { cat ->
-                        val isSelected = selectedCategory?.id == cat.id
-                        val catColor = try {
-                            Color(android.graphics.Color.parseColor(cat.colorHex))
-                        } catch (_: Exception) {
-                            MaterialTheme.colorScheme.primary
-                        }
-
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                selectedCategory = if (isSelected) null else cat
-                            },
-                            label = { Text(cat.name) },
-                            leadingIcon = {
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(10.dp)
-                                            .clip(CircleShape)
-                                            .background(catColor)
-                                    )
-                                }
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = catColor.copy(alpha = 0.2f),
-                                selectedLabelColor = MaterialTheme.colorScheme.onSurface,
-                                selectedLeadingIconColor = catColor
-                            )
-                        )
+                    val filteredCats = categories.filter {
+                        if (selectedTab == AddTab.INCOME) it.type == CategoryType.INCOME else it.type == CategoryType.EXPENSE
                     }
-                }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filteredCats) { cat ->
+                            val isSelected = selectedCategory?.id == cat.id
+                            val catColor = try {
+                                Color(android.graphics.Color.parseColor(cat.colorHex))
+                            } catch (_: Exception) {
+                                MaterialTheme.colorScheme.primary
+                            }
 
-                // Account Selector (Exact format as AddTransactionSheet)
-                Text(
-                    text = "Account",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    items(accounts) { acc ->
-                        val isSelected = selectedAccountId == acc.id
-                        Surface(
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                selectedAccountId = acc.id
-                            },
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                if (acc.accountType == AccountType.CASH) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.AccountBalanceWallet,
-                                        contentDescription = null,
-                                        tint = if (isSelected) Color.White else IncomeGreen,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                }
-                                Text(
-                                    text = acc.accountName,
-                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Medium
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    selectedCategory = if (isSelected) null else cat
+                                },
+                                label = { Text(cat.name) },
+                                leadingIcon = {
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(10.dp)
+                                                .clip(CircleShape)
+                                                .background(catColor)
+                                        )
+                                    }
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = catColor.copy(alpha = 0.2f),
+                                    selectedLabelColor = MaterialTheme.colorScheme.onSurface,
+                                    selectedLeadingIconColor = catColor
                                 )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Account Selector (Exact format as AddTransactionSheet)
+                    Text(
+                        text = "Account",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(accounts) { acc ->
+                            val isSelected = selectedAccountId == acc.id
+                            Surface(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    selectedAccountId = acc.id
+                                },
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    if (acc.accountType == AccountType.CASH) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.AccountBalanceWallet,
+                                            contentDescription = null,
+                                            tint = if (isSelected) Color.White else IncomeGreen,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                    }
+                                    Text(
+                                        text = acc.accountName,
+                                        color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Transfer Accounts (From and To)
+                    Text(
+                        text = "From Account",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(accounts) { acc ->
+                            val isSelected = selectedAccountId == acc.id
+                            Surface(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    selectedAccountId = acc.id
+                                },
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = acc.accountName,
+                                        color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = "To Account",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(accounts) { acc ->
+                            val isSelected = targetAccountId == acc.id
+                            Surface(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    targetAccountId = acc.id
+                                },
+                                color = if (isSelected) TransferSlate else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = acc.accountName,
+                                        color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
                             }
                         }
                     }
@@ -763,6 +910,7 @@ fun QuickCashBottomSheetContent(
                                 description.trim(),
                                 selectedCategory,
                                 selectedAccountId,
+                                targetAccountId,
                                 notes.trim()
                             )
                         }

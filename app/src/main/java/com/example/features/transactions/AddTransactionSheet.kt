@@ -252,89 +252,44 @@ fun AddTransactionSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Tab Selector
+            val isDedicatedModule = initialTab == AddTab.LEND_MONEY ||
+                    initialTab == AddTab.BORROW_MONEY ||
+                    initialTab == AddTab.INVESTMENT ||
+                    initialTab == AddTab.COMPANY_EXPENSE
+
+            val availableTabs = if (isDedicatedModule) {
+                listOf(initialTab)
+            } else {
+                listOf(AddTab.EXPENSE, AddTab.INCOME, AddTab.TRANSFER)
+            }
+
+            // Tab Selector (Restricted to Expense, Income, and Transfer for standard quick entry)
             LazyRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                item {
+                items(availableTabs) { tab ->
+                    val isSelected = selectedTab == tab
+                    val (label, selectedColor) = when (tab) {
+                        AddTab.EXPENSE -> "Expense" to ExpenseRed.copy(alpha = 0.2f)
+                        AddTab.INCOME -> "Income" to IncomeGreen.copy(alpha = 0.2f)
+                        AddTab.TRANSFER -> "Transfer" to TransferSlate.copy(alpha = 0.2f)
+                        AddTab.LEND_MONEY -> "Lend Money" to LendingIndigo.copy(alpha = 0.2f)
+                        AddTab.BORROW_MONEY -> "Borrow Money" to OutstandingAmber.copy(alpha = 0.2f)
+                        AddTab.INVESTMENT -> "Investment" to OutstandingAmber.copy(alpha = 0.2f)
+                        AddTab.COMPANY_EXPENSE -> "Company" to CompanySky.copy(alpha = 0.2f)
+                    }
                     FilterChip(
-                        selected = selectedTab == AddTab.EXPENSE,
+                        selected = isSelected,
                         onClick = {
-                            selectedTab = AddTab.EXPENSE
+                            selectedTab = tab
                             selectedCategory = null
+                            if (tab == AddTab.LEND_MONEY && lendId.isBlank()) lendId = viewModel.generateNextLendId()
+                            if (tab == AddTab.BORROW_MONEY && borrowId.isBlank()) borrowId = viewModel.generateNextBorrowId()
+                            if (tab == AddTab.COMPANY_EXPENSE && advanceId.isBlank()) advanceId = viewModel.generateNextAdvanceId()
                         },
-                        label = { Text("Expense") },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = ExpenseRed.copy(alpha = 0.2f))
-                    )
-                }
-                item {
-                    FilterChip(
-                        selected = selectedTab == AddTab.INCOME,
-                        onClick = {
-                            selectedTab = AddTab.INCOME
-                            selectedCategory = null
-                        },
-                        label = { Text("Income") },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = IncomeGreen.copy(alpha = 0.2f))
-                    )
-                }
-                item {
-                    FilterChip(
-                        selected = selectedTab == AddTab.LEND_MONEY,
-                        onClick = {
-                            selectedTab = AddTab.LEND_MONEY
-                            selectedCategory = null
-                            if (lendId.isBlank()) lendId = viewModel.generateNextLendId()
-                        },
-                        label = { Text("Lend Money") },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = LendingIndigo.copy(alpha = 0.2f))
-                    )
-                }
-                item {
-                    FilterChip(
-                        selected = selectedTab == AddTab.BORROW_MONEY,
-                        onClick = {
-                            selectedTab = AddTab.BORROW_MONEY
-                            selectedCategory = null
-                            if (borrowId.isBlank()) borrowId = viewModel.generateNextBorrowId()
-                        },
-                        label = { Text("Borrow Money") },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = OutstandingAmber.copy(alpha = 0.2f))
-                    )
-                }
-                item {
-                    FilterChip(
-                        selected = selectedTab == AddTab.INVESTMENT,
-                        onClick = {
-                            selectedTab = AddTab.INVESTMENT
-                            selectedCategory = null
-                        },
-                        label = { Text("Investment") },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = OutstandingAmber.copy(alpha = 0.2f))
-                    )
-                }
-                item {
-                    FilterChip(
-                        selected = selectedTab == AddTab.COMPANY_EXPENSE,
-                        onClick = {
-                            selectedTab = AddTab.COMPANY_EXPENSE
-                            selectedCategory = null
-                            if (advanceId.isBlank()) advanceId = viewModel.generateNextAdvanceId()
-                        },
-                        label = { Text("Company") },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = CompanySky.copy(alpha = 0.2f))
-                    )
-                }
-                item {
-                    FilterChip(
-                        selected = selectedTab == AddTab.TRANSFER,
-                        onClick = {
-                            selectedTab = AddTab.TRANSFER
-                            selectedCategory = null
-                        },
-                        label = { Text("Transfer") },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = TransferSlate.copy(alpha = 0.2f))
+                        label = { Text(label) },
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = selectedColor)
                     )
                 }
             }

@@ -20,6 +20,7 @@ import com.example.BuildConfig
 import android.content.Intent
 import android.net.Uri
 import java.util.UUID
+import java.util.Locale
 
 sealed class GoogleAuthResult {
     data class Success(
@@ -217,11 +218,14 @@ class GoogleAuthManager(private val context: Context) {
      * Always resets the client so account selection is prompted every time.
      */
     fun getGoogleSignInIntent(): Intent {
-        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+        val builder = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestEmail()
             .requestProfile()
-            .build()
-        val client = GoogleSignIn.getClient(context, gso)
+        val clientId = getWebClientId()
+        if (clientId.isNotBlank() && !clientId.contains("example.apps.googleusercontent.com")) {
+            builder.requestIdToken(clientId)
+        }
+        val client = GoogleSignIn.getClient(context, builder.build())
         return client.signInIntent
     }
 
@@ -243,7 +247,8 @@ class GoogleAuthManager(private val context: Context) {
                     sub = account.id ?: "google_${com.example.data.local.AppDatabase.sanitizeUserKey(email)}",
                     email = email,
                     name = name,
-                    picture = account.photoUrl?.toString() ?: ""
+                    picture = account.photoUrl?.toString() ?: "",
+                    idToken = account.idToken
                 )
             } else null
         } catch (e: Exception) {
@@ -349,6 +354,13 @@ class GoogleAuthManager(private val context: Context) {
         const val DEFAULT_CLIENT_ID = "649210682299-k4cl29pr14o0pkblsodq208iajj2ivad.apps.googleusercontent.com"
 
         fun resolveDisplayName(ctx: Context, email: String? = null): String? {
+            if (!email.isNullOrBlank()) {
+                val formatted = formatEmailAsReadableName(email)
+                if (formatted.isNotBlank() && !formatted.equals("User", ignoreCase = true)) {
+                    return formatted
+                }
+            }
+
             try {
                 val lastSignedIn = GoogleSignIn.getLastSignedInAccount(ctx)
                 if (lastSignedIn != null) {
@@ -394,15 +406,18 @@ class GoogleAuthManager(private val context: Context) {
         }
 
         fun formatEmailAsReadableName(email: String): String {
-            val prefix = email.trim().lowercase().substringBefore("@")
-            val words = prefix.replace(Regex("[._\\-\\d]+"), " ")
-                .split(" ")
-                .filter { it.isNotBlank() && it.length > 1 }
+            val clean = email.trim()
+            if (clean.isBlank()) return "User"
+            val prefix = clean.substringBefore("@")
+            val words = prefix.split(Regex("[._\\-]+"))
+                .filter { it.isNotBlank() }
             return if (words.isNotEmpty()) {
-                words.joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+                words.joinToString(" ") { word ->
+                    word.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase(Locale.getDefault()) else c.toString() }
+                }
             } else {
-                prefix.replaceFirstChar { c -> c.uppercase() }
-            }
+                prefix.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase(Locale.getDefault()) else c.toString() }
+            }.ifBlank { "User" }
         }
 
         fun getSigningCertificateSha1(ctx: Context): String {

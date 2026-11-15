@@ -438,14 +438,14 @@ fun SettingsScreen(
                                         onClick = {
                                             val googleAuthManager = GoogleAuthManager(context)
                                             googleAuthManager.signOut {
-                                                try {
-                                                    val signInIntent = googleAuthManager.getGoogleSignInIntent()
-                                                    linkGoogleAccountLauncher.launch(signInIntent)
-                                                } catch (_: Exception) {
-                                                    val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
-                                                    if (pickerIntent != null) {
-                                                        linkGoogleAccountLauncher.launch(pickerIntent)
-                                                    }
+                                                val pickerIntent = googleAuthManager.createSystemAccountPickerIntent()
+                                                if (pickerIntent != null) {
+                                                    linkGoogleAccountLauncher.launch(pickerIntent)
+                                                } else {
+                                                    try {
+                                                        val signInIntent = googleAuthManager.getGoogleSignInIntent()
+                                                        linkGoogleAccountLauncher.launch(signInIntent)
+                                                    } catch (_: Exception) {}
                                                 }
                                             }
                                         },

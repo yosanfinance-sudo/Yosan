@@ -315,4 +315,55 @@ class MultiUserSessionTest {
         assertTrue("User A must be logged out", appPreferences.isLoggedOutForUser(userA))
         assertFalse("User B must NOT be affected by User A's logout", appPreferences.isLoggedOutForUser(userB))
     }
+
+    @Test
+    fun testEmailOtpSessionPersistenceAndColdStartRestoration() {
+        val otpEmail = "otp.test@example.com"
+        val otpSub = "otp_otp_test_at_example_com"
+        val sessionToken = SecureTokenManager.generateSessionToken(otpEmail)
+
+        // Simulate OTP verification login
+        tokenManager.saveTokens(
+            accessToken = "otp_access_token",
+            refreshToken = "offline_ref_${System.currentTimeMillis()}",
+            expiresInSeconds = 3600L,
+            email = otpEmail
+        )
+        tokenManager.saveUserSession(
+            userId = 200L,
+            googleSub = otpSub,
+            email = otpEmail,
+            name = "OTP User",
+            profilePicture = "",
+            emailVerified = true,
+            sessionToken = sessionToken,
+            accessToken = "otp_access_token",
+            refreshToken = "offline_ref_stored",
+            expiresInSeconds = 3600L
+        )
+
+        // Verify session retrieval
+        assertEquals(otpEmail, tokenManager.getUserEmail())
+        assertTrue("Email must be marked verified for OTP session", tokenManager.isEmailVerified())
+        assertEquals(otpSub, tokenManager.getGoogleSub())
+        assertEquals("otp_access_token", tokenManager.getAccessToken())
+        assertTrue("Offline refresh token must start with offline_", tokenManager.getRefreshToken()?.startsWith("offline_") == true)
+    }
+
+    @Test
+    fun testOfflineFallbackTokenFormatAndSessionSafety() {
+        val offlineEmail = "guest"
+        val offlineRefreshToken = "offline_ref_${System.currentTimeMillis()}_mock"
+
+        tokenManager.saveTokens(
+            accessToken = "dummy_access_token",
+            refreshToken = offlineRefreshToken,
+            expiresInSeconds = 2592000L,
+            email = offlineEmail
+        )
+
+        val retrievedRefreshToken = tokenManager.getRefreshToken()
+        assertNotNull(retrievedRefreshToken)
+        assertTrue("Offline refresh token must have offline_ prefix", retrievedRefreshToken!!.startsWith("offline_"))
+    }
 }

@@ -206,7 +206,7 @@ object ApiClient {
                     tokenManager.saveTokens(newAccess, newRefresh)
                     return newAccess
                 }
-            } else if (res.code == 401 || res.code == 403) {
+            } else if ((res.code == 401 || res.code == 403) && !refreshToken.startsWith("offline_")) {
                 tokenManager.clearSession()
                 com.example.utils.AppPreferences(context).isLoggedOut = true
             }
